@@ -1,0 +1,29 @@
+[gd_scene load_steps=4 format=3 uid="uid://ball001"]
+
+[sub_resource type="SphereShape3D" id=1]
+radius = 0.11
+
+[sub_resource type="StandardMaterial3D" id=2]
+albedo_color = Color(1, 1, 1, 1)
+metallic = 0.0
+roughness = 0.5
+
+[sub_resource type="PhysicsMaterial" id=3]
+friction = 0.8
+bounce = 0.6
+
+[node name="Ball" type="RigidBody3D"]
+gravity_scale = 2.5
+physics_material_override = SubResource(3)
+can_sleep = false
+continuous_cd = true
+contact_monitor = true
+max_contacts_reported = 10
+
+[node name="Mesh" type="MeshInstance3D"]
+mesh = SubResource(1)
+material_override = SubResource(2)
+scale = Vector3(1, 1, 1)
+
+[node name="CollisionShape" type="CollisionShape3D"]
+shape = SubResource(1)

@@ -1,0 +1,104 @@
+extends Node
+
+
+# ═══════════════════════════════════════════
+#  FIELD — реальные размеры FIFA
+# ═══════════════════════════════════════════
+
+const FIELD_LENGTH := 105.0        # полная длина поля (Z)
+const FIELD_WIDTH := 68.0          # полная ширина поля (X)
+const HALF_FIELD_LENGTH := FIELD_LENGTH / 2.0    # 52.5
+const HALF_FIELD_WIDTH := FIELD_WIDTH / 2.0      # 34.0
+
+const GOAL_WIDTH := 7.32           # между стойками
+const GOAL_HEIGHT := 2.44          # от газона до перекладины
+const GOAL_DEPTH := 2.0           # глубина сетки (визуальная)
+const GOAL_POST_RADIUS := 0.08    # толщина штанги
+
+const PENALTY_AREA_DEPTH := 16.5  # от лицевой линии
+const PENALTY_AREA_WIDTH := 40.32 # полная ширина
+
+const GOAL_AREA_DEPTH := 5.5
+const GOAL_AREA_WIDTH := 18.32
+
+const CENTER_CIRCLE_RADIUS := 9.15
+const CENTER_SPOT_RADIUS := 0.15
+const PENALTY_SPOT_DIST := 11.0   # от лицевой линии
+const PENALTY_ARC_RADIUS := 9.15  # радиус дуги штрафной (от точки пенальти)
+const CORNER_ARC_RADIUS := 1.0
+
+const LINE_THICKNESS := 0.12       # ширина линий разметки
+
+
+# ═══════════════════════════════════════════
+#  BALL
+# ═══════════════════════════════════════════
+
+const BALL_RADIUS := 0.11
+const BALL_MASS := 0.43
+const BALL_DRAG := 0.985
+const BALL_AIR_RESISTANCE := 0.999
+const SHOT_POWER := 18.0
+const PASS_POWER := 12.0
+const SHOT_Y_UP := 0.3           # подъём мяча при ударе
+const PASS_Y_UP := 0.1           # подъём мяча при пасе
+
+
+# ═══════════════════════════════════════════
+#  PLAYER
+# ═══════════════════════════════════════════
+
+const PLAYER_SPEED := 8.0
+const PLAYER_HEIGHT := 1.8
+const PLAYER_RADIUS := 0.3
+const PLAYER_CAPSULE_HEIGHT := 1.5
+const PLAYER_ROTATION_SPEED := 10.0
+const PLAYER_START_Z := 0.0         # стартовая позиция Z
+
+
+# ═══════════════════════════════════════════
+#  DRIBBLING
+# ═══════════════════════════════════════════
+
+const DRIBBLE_FORWARD_DIST := 0.5
+const DRIBBLE_HEIGHT := 0.08
+const SPRING_STIFFNESS := 300.0
+const SPRING_DAMPING := 15.0
+const SPRING_MAX_FORCE := 50.0
+const DRIBBLE_DRAG := 0.995
+const DRIBBLE_ACQUIRE_DIST := 1.0
+const DRIBBLE_LOSE_DIST := 3.0
+const DRIBBLE_RELEASE_COOLDOWN_MSEC := 500
+const KICKER_REACQUIRE_COOLDOWN_MSEC := 1500
+
+
+# ═══════════════════════════════════════════
+#  MATCH
+# ═══════════════════════════════════════════
+
+const MATCH_DURATION_MIN := 90
+const HALF_DURATION_MIN := 45
+const HALFTIME_DURATION_MIN := 15
+const RESET_BALL_Y := 0.5
+
+
+# ═══════════════════════════════════════════
+#  AI
+# ═══════════════════════════════════════════
+
+const AI_SPEED := 5.0
+const AI_SHOOT_RANGE := 25.0
+const AI_DRIBBLE_SPEED_FACTOR := 0.8
+const AI_KICK_COOLDOWN := 0.8
+const AI_KICK_POWER := 10.0
+const AI_ACQUIRE_RANGE := 1.8
+
+
+# ═══════════════════════════════════════════
+#  CAMERA
+# ═══════════════════════════════════════════
+
+const CAMERA_FOLLOW_SPEED := 3.0
+const CAMERA_HEIGHT := 25.0
+const CAMERA_Z_OFFSET := 3.0
+const CAMERA_TILT := -55.0         # градусов
