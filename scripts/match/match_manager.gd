@@ -8,8 +8,11 @@ extends Node3D
 var home_score: int = 0
 var away_score: int = 0
 var player_away: CharacterBody3D
+var player_teammate: CharacterBody3D
+var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
+var controlled_player_indicator: MeshInstance3D
 
 
 func _ready() -> void:
@@ -20,7 +23,11 @@ func _ready() -> void:
 	_setup_camera()
 	_setup_goals()
 	_setup_away_player()
+	controlled_player = player_home
+	_setup_teammate()
 	_setup_boundaries()
+	_give_ai_to_player_home()
+	_setup_controlled_indicator()
 
 
 func _setup_inputs() -> void:
@@ -35,6 +42,7 @@ func _setup_inputs() -> void:
 		&"kick": [KEY_SPACE],
 		&"pass": [KEY_E],
 		&"pause": [KEY_ESCAPE],
+		&"swap_player": [KEY_Q],
 	}
 	for action in input_actions:
 		if InputMap.has_action(action):
@@ -296,10 +304,48 @@ func _setup_boundaries() -> void:
 		add_child(body)
 
 
+func _give_ai_to_player_home() -> void:
+	var ai_script = preload("res://scripts/ai/teammate_ai.gd")
+	player_home.set_script(ai_script)
+	player_home.set_physics_process(true)
+	player_home.ball = ball
+	player_home.controlled_player = controlled_player
+	player_home.speed = 7.0
+	player_home.teammate_home_goal = $GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null
+
+
 func _setup_away_player() -> void:
 	var new_player := CharacterBody3D.new()
 	new_player.name = "PlayerAway"
 	new_player.global_position = Vector3(20, 0.5, 0)
+	var mesh := CapsuleMesh.new()
+	mesh.height = 1.5
+	mesh.radius = 0.3
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.9, 0.1, 0.1)
+	mesh.material = mat
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	new_player.add_child(mi)
+	var col := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.height = 1.5
+	shape.radius = 0.3
+	col.shape = shape
+	new_player.add_child(col)
+	add_child(new_player)
+	var ai_script = preload("res://scripts/ai/simple_ai.gd")
+	new_player.set_script(ai_script)
+	new_player.set_physics_process(true)
+	new_player.ball = ball
+	new_player.home_goal = $GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null
+	player_away = new_player
+
+
+func _setup_teammate() -> void:
+	var new_player := CharacterBody3D.new()
+	new_player.name = "PlayerTeammate"
+	new_player.global_position = Vector3(10, 0.5, 5)
 	var mesh := CapsuleMesh.new()
 	mesh.height = 1.5
 	mesh.radius = 0.3
@@ -316,11 +362,13 @@ func _setup_away_player() -> void:
 	col.shape = shape
 	new_player.add_child(col)
 	add_child(new_player)
-	var ai_script = preload("res://scripts/ai/simple_ai.gd")
-	new_player.set_script(ai_script)
+	var teammate_script = preload("res://scripts/ai/teammate_ai.gd")
+	new_player.set_script(teammate_script)
+	new_player.set_physics_process(true)
 	new_player.ball = ball
-	new_player.home_goal = $GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null
-	player_away = new_player
+	new_player.controlled_player = controlled_player
+	new_player.teammate_home_goal = $GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null
+	player_teammate = new_player
 
 
 func _process(delta: float) -> void:
@@ -331,10 +379,59 @@ func _process(delta: float) -> void:
 	)
 	camera_pivot.look_at(Vector3(0, 0, ball_pos.z), Vector3.UP)
 
+	if controlled_player_indicator and controlled_player:
+		controlled_player_indicator.global_position = controlled_player.global_position + Vector3(0, 2.2, 0)
+
 
 func _physics_process(delta: float) -> void:
 	_handle_dribbling()
 	_handle_player_input(delta)
+
+	# Auto-switch control to whoever on our team has the ball
+	if ball.has_method(&"set_dribbler") and ball.dribbler:
+		var db: Node3D = ball.dribbler
+		if (db == player_home or db == player_teammate) and db != controlled_player:
+			controlled_player = db
+			_sync_ai_controllers()
+
+	# Swap player (Q) — manual switch between player_home and player_teammate
+	if Input.is_action_just_pressed(&"swap_player"):
+		controlled_player = player_teammate if controlled_player == player_home else player_home
+		_sync_ai_controllers()
+
+	# Set opponent's target_node to whoever on our team is dribbling
+	if player_away:
+		if ball.has_method(&"set_dribbler") and ball.dribbler:
+			var db: Node3D = ball.dribbler
+			if db == player_home or db == player_teammate:
+				player_away.target_node = db
+		else:
+			player_away.target_node = null
+
+
+func _setup_controlled_indicator() -> void:
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.0
+	mesh.bottom_radius = 0.2
+	mesh.height = 0.4
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.3, 0.6, 1.0)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	mi.position = Vector3(0, 2.2, 0)
+	add_child(mi)
+	controlled_player_indicator = mi
+
+
+func _sync_ai_controllers() -> void:
+	if player_home:
+		player_home.controlled_player = controlled_player
+	if player_teammate:
+		player_teammate.controlled_player = controlled_player
 
 
 func _handle_dribbling() -> void:
@@ -345,7 +442,7 @@ func _handle_dribbling() -> void:
 		if dist > 3.0:
 			ball.release_dribble()
 		return
-	for p in [player_home, player_away]:
+	for p in [player_home, player_teammate, player_away]:
 		if not p or not is_instance_valid(p):
 			continue
 		var dist: float = p.global_position.distance_to(ball.global_position)
@@ -355,6 +452,8 @@ func _handle_dribbling() -> void:
 
 
 func _handle_player_input(delta: float) -> void:
+	if not controlled_player:
+		return
 	var input_dir := Vector2(
 		Input.get_axis(&"move_left", &"move_right"),
 		Input.get_axis(&"move_forward", &"move_back")
@@ -369,16 +468,16 @@ func _handle_player_input(delta: float) -> void:
 	var dir := (cam_forward * -input_dir.y + cam_right * input_dir.x).normalized()
 	if dir.length() > 0.1:
 		var speed := 8.0
-		player_home.global_position.x = move_toward(player_home.global_position.x,
-			player_home.global_position.x + dir.x * speed * delta, speed * delta)
-		player_home.global_position.z = move_toward(player_home.global_position.z,
-			player_home.global_position.z + dir.z * speed * delta, speed * delta)
+		controlled_player.global_position.x = move_toward(controlled_player.global_position.x,
+			controlled_player.global_position.x + dir.x * speed * delta, speed * delta)
+		controlled_player.global_position.z = move_toward(controlled_player.global_position.z,
+			controlled_player.global_position.z + dir.z * speed * delta, speed * delta)
 		var target_angle := atan2(-dir.x, -dir.z)
-		player_home.rotation.y = lerp_angle(player_home.rotation.y, target_angle, 10.0 * delta)
+		controlled_player.rotation.y = lerp_angle(controlled_player.rotation.y, target_angle, 10.0 * delta)
 	if Input.is_action_just_pressed(&"kick"):
-		_kick_ball(player_home)
+		_kick_ball(controlled_player)
 	if Input.is_action_just_pressed(&"pass"):
-		_pass_ball(player_home)
+		_pass_ball(controlled_player)
 
 
 func _kick_ball(player_node: CharacterBody3D) -> void:
@@ -419,5 +518,10 @@ func _reset_ball() -> void:
 
 	# Reset players to their starting positions
 	player_home.global_position = Vector3(0, 0.5, 0)
+	if player_teammate:
+		player_teammate.global_position = Vector3(10, 0.5, 5)
 	if player_away:
 		player_away.global_position = Vector3(20, 0.5, 0)
+
+	controlled_player = player_home
+	_sync_ai_controllers()
