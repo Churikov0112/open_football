@@ -1,6 +1,11 @@
 class_name PlayerVisual
 extends Node3D
 
+## Момент касания мячом ногой (геймплей в этот миг придаёт импульс мячу).
+signal action_contact(action: String)
+## Действие завершилось — управление можно вернуть.
+signal action_finished(action: String)
+
 ## Порог скорости (м/с), при котором бленд = полный бег (1.0).
 const RUN_SPEED_FULL := 5.0
 ## Сглаживание бленда, 1/сек.
@@ -21,6 +26,13 @@ const ACTION_CLIPS := {
 ## Клипы, которые нужно зациклить; остальные one-shot доигрывают и авто-возвращаются.
 const LOOP_CLIPS := [&"idle", &"run", &"fallen_idle"]
 
+## Тайминг действия (реальные секунды): contact — до касания; lock — общая длительность
+## до action_finished; speed — множитель скорости проигрывания (сжать замах, сохранив синхрон).
+## Тюнится визуальной приёмкой. Действия без записи → contact=0, lock=длина_клипа, speed=1.
+const ACTION_TIMING := {
+	"pass": {"contact": 0.2, "lock": 0.4, "speed": 1.5},
+}
+
 @export var model_y_offset: float = 0.0
 @export var model_yaw_deg: float = 0.0
 
@@ -32,6 +44,11 @@ var _explicit_speed: float = -1.0  # >=0 → использовать вмест
 var _playback: AnimationNodeStateMachinePlayback
 var _states: Dictionary = {}  # имя стейта one-shot → true (какие клипы реально есть)
 var _ap: AnimationPlayer
+var _active_action: String = ""   # выполняемое действие ("" = нет)
+var _action_elapsed: float = 0.0  # прошло реальных секунд с старта действия
+var _action_contact_at: float = 0.0
+var _action_lock_at: float = 0.0
+var _action_contact_done: bool = false
 
 ## Чистое отображение скорости (м/с) в позицию бленда [0..1].
 static func speed_to_blend(speed: float) -> float:
@@ -134,21 +151,64 @@ func _process(delta: float) -> void:
 	_blend = lerpf(_blend, target, clampf(BLEND_SMOOTH * delta, 0.0, 1.0))
 	_anim_tree.set(&"parameters/sm/locomotion/blend_position", _blend)
 
+	if _active_action != "":
+		_action_elapsed += delta
+		if not _action_contact_done and _action_elapsed >= _action_contact_at:
+			_action_contact_done = true
+			action_contact.emit(_active_action)
+		if _action_elapsed >= _action_lock_at:
+			var done := _active_action
+			_active_action = ""
+			_set_action_speed(1.0)
+			action_finished.emit(done)
+
 ## Явно задать скорость (для будущих геймплей-вызовов). Vector3.ZERO → снова авто-замер.
 func set_locomotion(velocity: Vector3) -> void:
 	_explicit_speed = Vector3(velocity.x, 0.0, velocity.z).length()
 
-## Разовое действие (kick/pass/header/…): travel в one-shot стейт, авто-возврат в локомоцию.
-## Принимает семантическое имя (см. ACTION_CLIPS) либо прямое имя клипа.
-func trigger(action: String) -> void:
+## Разовое действие (kick/pass/header/…): travel в one-shot стейт + запуск таймингового
+## драйвера (сигналы action_contact/action_finished). Возвращает true, если действие
+## стартовало (иначе — фолбэк/нет клипа, геймплей делает импульс сам).
+func trigger(action: String) -> bool:
 	if _playback == null:
 		push_warning("PlayerVisual.trigger('%s'): AnimationTree не готов (фолбэк-капсула?)" % action)
-		return
+		return false
 	var state := _resolve_action(action)
 	if state == "":
 		push_warning("PlayerVisual.trigger('%s'): нет клипа под это действие" % action)
-		return
+		return false
 	_playback.travel(StringName(state))
+	var contact := 0.0
+	var lock := action_length(action)
+	var speed := 1.0
+	if ACTION_TIMING.has(action):
+		var t: Dictionary = ACTION_TIMING[action]
+		contact = float(t.get("contact", 0.0))
+		lock = float(t.get("lock", lock))
+		speed = float(t.get("speed", 1.0))
+	if lock <= 0.0:
+		lock = 0.5
+	_set_action_speed(speed)
+	_active_action = action
+	_action_elapsed = 0.0
+	_action_contact_at = contact
+	_action_lock_at = lock
+	_action_contact_done = false
+	return true
+
+## Отменить текущее действие без сигнала касания (напр., игрока сбили на замахе).
+func cancel_action() -> void:
+	if _active_action == "":
+		return
+	_active_action = ""
+	_set_action_speed(1.0)
+	if _playback != null:
+		_playback.travel(LOCOMOTION)
+
+## Скорость проигрывания действия через TimeScale-узел BlendTree.
+func _set_action_speed(s: float) -> void:
+	if _anim_tree != null:
+		_anim_tree.set(&"parameters/TimeScale/scale", s)
 
 ## action → имя стейта: сперва семантический маппинг ACTION_CLIPS, затем прямое имя клипа.
 func _resolve_action(action: String) -> String:
