@@ -338,15 +338,9 @@ func _setup_away_player() -> void:
 	var new_player := CharacterBody3D.new()
 	new_player.name = "PlayerAway"
 	new_player.global_position = Vector3(20, 0.5, 0)
-	var mesh := CapsuleMesh.new()
-	mesh.height = 1.5
-	mesh.radius = 0.3
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.9, 0.1, 0.1)
-	mesh.material = mat
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	new_player.add_child(mi)
+	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
+	new_player.add_child(visual)
+	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
 	var col := CollisionShape3D.new()
 	var shape := CapsuleShape3D.new()
 	shape.height = 1.5
