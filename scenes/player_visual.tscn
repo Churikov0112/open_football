@@ -5,5 +5,7 @@
 
 [node name="PlayerVisual" type="Node3D"]
 script = ExtResource("1")
+model_y_offset = -0.5
+model_yaw_deg = 180.0
 
 [node name="Model" parent="." instance=ExtResource("2")]

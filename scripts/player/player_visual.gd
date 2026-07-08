@@ -34,6 +34,12 @@ func _ready() -> void:
 	_last_pos = global_position
 
 func _build_anim_tree(ap: AnimationPlayer) -> void:
+	# glTF-анимации приходят незациклёнными (loop_mode=NONE) → без этого run/idle
+	# проигрываются один раз и замирают. Для локомоции нужен непрерывный цикл.
+	for anim_name in [&"idle", &"run"]:
+		var a := ap.get_animation(anim_name)
+		if a != null:
+			a.loop_mode = Animation.LOOP_LINEAR
 	var idle_node := AnimationNodeAnimation.new()
 	idle_node.animation = &"idle"
 	var run_node := AnimationNodeAnimation.new()
