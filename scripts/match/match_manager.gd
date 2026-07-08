@@ -688,7 +688,10 @@ func _on_tackle_hit_player(body: CharacterBody3D, normal: Vector3) -> void:
 	# Push tackled player back
 	body.global_position += normal.normalized() * FootballConstants.SLIDE_TACKLE_FALL_DISTANCE
 
-	# Fall over
+	# Fall over (if already fallen, extend timer slightly instead of resetting)
+	if body.is_in_group("fallen"):
+		_tackled_fall_timer = max(_tackled_fall_timer, 0.5)
+		return
 	_tackled_player = body
 	_tackled_orig_rotation = body.rotation
 	body.rotation.x = deg_to_rad(90)
