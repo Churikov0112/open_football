@@ -14,6 +14,23 @@ var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var controlled_player_indicator: MeshInstance3D
 
+enum TackleState { NORMAL, SLIDING, RECOVERING }
+
+var _tackle_state: TackleState = TackleState.NORMAL
+var _tackle_player: CharacterBody3D
+var _tackle_dir: Vector3 = Vector3.ZERO
+var _tackle_dist_remaining: float = 0.0
+var _tackle_clean: bool = true
+var _hit_processed: bool = false
+var _tackle_recovery_timer: float = 0.0
+var _tackle_area: Area3D
+var _tackle_player_orig_rotation: Vector3 = Vector3.ZERO
+var _tackle_foul_position: Vector3 = Vector3.ZERO
+var _tackle_fouled_player: Node3D
+var _tackled_player: CharacterBody3D
+var _tackled_fall_timer: float = 0.0
+var _tackled_orig_rotation: Vector3 = Vector3.ZERO
+
 
 func _ready() -> void:
 	_setup_inputs()
@@ -24,10 +41,12 @@ func _ready() -> void:
 	_setup_goals()
 	_setup_away_player()
 	controlled_player = player_home
+	player_home.add_to_group("team_1")
 	_setup_teammate()
 	_setup_boundaries()
 	_give_ai_to_player_home()
 	_setup_controlled_indicator()
+	_setup_tackle_area()
 
 
 func _setup_inputs() -> void:
@@ -334,6 +353,7 @@ func _setup_away_player() -> void:
 	col.shape = shape
 	new_player.add_child(col)
 	add_child(new_player)
+	new_player.add_to_group("team_2")
 	var ai_script = preload("res://scripts/ai/simple_ai.gd")
 	new_player.set_script(ai_script)
 	new_player.set_physics_process(true)
@@ -362,6 +382,7 @@ func _setup_teammate() -> void:
 	col.shape = shape
 	new_player.add_child(col)
 	add_child(new_player)
+	new_player.add_to_group("team_1")
 	var teammate_script = preload("res://scripts/ai/teammate_ai.gd")
 	new_player.set_script(teammate_script)
 	new_player.set_physics_process(true)
@@ -408,6 +429,9 @@ func _physics_process(delta: float) -> void:
 		else:
 			player_away.target_node = null
 
+	_handle_tackle(delta)
+	_poll_ai_tackles()
+
 
 func _setup_controlled_indicator() -> void:
 	var mesh := CylinderMesh.new()
@@ -434,12 +458,27 @@ func _sync_ai_controllers() -> void:
 		player_teammate.controlled_player = controlled_player
 
 
+func _setup_tackle_area() -> void:
+	_tackle_area = Area3D.new()
+	_tackle_area.name = "TackleArea"
+	var col := CollisionShape3D.new()
+	var shape := SphereShape3D.new()
+	shape.radius = FootballConstants.SLIDE_TACKLE_AREA_RADIUS
+	col.shape = shape
+	_tackle_area.add_child(col)
+	_tackle_area.monitoring = false
+	_tackle_area.monitorable = false
+	_tackle_area.body_entered.connect(_on_tackle_body_entered)
+	add_child(_tackle_area)
+
+
 func _handle_dribbling() -> void:
 	if not ball.has_method(&"release_dribble"):
 		return
 	if ball.dribbler:
 		var dist: float = ball.dribbler.global_position.distance_to(ball.global_position)
 		if dist > 3.0:
+			print("[TACKLE_DEBUG] Dribbler ", ball.dribbler.name, " too far (", dist, "), releasing")
 			ball.release_dribble()
 		return
 	for p in [player_home, player_teammate, player_away]:
@@ -447,11 +486,14 @@ func _handle_dribbling() -> void:
 			continue
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
+			print("[TACKLE_DEBUG] Auto-assign dribbler: ", p.name, " is within 1.0m of ball")
 			ball.set_dribbler(p)
 			return
 
 
 func _handle_player_input(delta: float) -> void:
+	if _tackle_state != TackleState.NORMAL:
+		return
 	if not controlled_player:
 		return
 	var input_dir := Vector2(
@@ -475,7 +517,10 @@ func _handle_player_input(delta: float) -> void:
 		var target_angle := atan2(-dir.x, -dir.z)
 		controlled_player.rotation.y = lerp_angle(controlled_player.rotation.y, target_angle, 10.0 * delta)
 	if Input.is_action_just_pressed(&"kick"):
-		_kick_ball(controlled_player)
+		print("[TACKLE_DEBUG] Space pressed! dribbler=", ball.dribbler.name if ball.has_method(&"set_dribbler") and ball.dribbler else "null", " last_touch=", ball.get_last_touch().name if ball.has_method(&"get_last_touch") and ball.get_last_touch() else "null")
+		if not _try_tackle(controlled_player):
+			print("[TACKLE_DEBUG] _try_tackle failed, falling through to _kick_ball")
+			_kick_ball(controlled_player)
 	if Input.is_action_just_pressed(&"pass"):
 		_pass_ball(controlled_player)
 
@@ -503,6 +548,189 @@ func _pass_ball(player_node: CharacterBody3D) -> void:
 	ball.kick(dir, 8.0)
 
 
+func _can_tackle(tackler: Node3D) -> bool:
+	# Can't tackle yourself — you have the ball
+	if ball.has_method(&"set_dribbler") and ball.dribbler == tackler:
+		return false
+
+	# Check 1: opponent is actively dribbling
+	if ball.has_method(&"set_dribbler") and ball.dribbler:
+		if not _same_team(tackler, ball.dribbler):
+			return true
+
+	# Check 2: opponent last touched the ball
+	if ball.has_method(&"get_last_touch"):
+		var last: Node3D = ball.get_last_touch()
+		if last and not _same_team(tackler, last):
+			return true
+
+	# Check 3: opponent exists on the field
+	var opponent_group := "team_2" if tackler.is_in_group("team_1") else "team_1"
+	for node in get_tree().get_nodes_in_group(opponent_group):
+		if is_instance_valid(node):
+			return true
+
+	return false
+
+
+
+func _try_tackle(player: CharacterBody3D) -> bool:
+	if _tackle_state != TackleState.NORMAL:
+		print("[TACKLE_DEBUG] _try_tackle: blocked, state=", _tackle_state)
+		return false
+	if not _can_tackle(player):
+		print("[TACKLE_DEBUG] _try_tackle: _can_tackle returned false")
+		return false
+	print("[TACKLE_DEBUG] _try_tackle: SUCCESS, starting tackle toward ball")
+	_start_tackle(player, ball)
+	return true
+
+
+func _start_tackle(player: CharacterBody3D, target: Node3D = null) -> void:
+	if _tackle_state != TackleState.NORMAL:
+		print("[TACKLE_DEBUG] _start_tackle: blocked, state=", _tackle_state)
+		return
+	if not _can_tackle(player):
+		print("[TACKLE_DEBUG] _start_tackle: _can_tackle returned false")
+		return
+
+	if not target:
+		target = ball
+	if not target:
+		print("[TACKLE_DEBUG] _start_tackle: no target")
+		return
+
+	print("[TACKLE_DEBUG] _start_tackle: TACKLE STARTED! player=", player.name, " target=", target.name)
+
+	_tackle_state = TackleState.SLIDING
+	_tackle_player = player
+	_tackle_clean = true
+	_hit_processed = false
+	_tackle_fouled_player = null
+
+	var dir: Vector3 = target.global_position - player.global_position
+	dir.y = 0.0
+	_tackle_dir = dir.normalized()
+	_tackle_dist_remaining = FootballConstants.SLIDE_TACKLE_RANGE
+
+	var area_pos := player.global_position
+	area_pos.y = 0.3
+	_tackle_area.global_position = area_pos
+	_tackle_area.monitoring = true
+
+	_tackle_player_orig_rotation = player.rotation
+	player.rotation.x = deg_to_rad(90)
+
+
+func _on_tackle_body_entered(body: Node) -> void:
+	if _hit_processed:
+		return
+	if not _tackle_player or not is_instance_valid(_tackle_player):
+		return
+
+	# Ball → clean tackle
+	if body == ball:
+		_hit_processed = true
+		_tackle_clean = true
+		if ball.has_method(&"release_dribble"):
+			ball.release_dribble()
+		if ball.has_method(&"kick"):
+			var kick_dir := _tackle_dir
+			kick_dir.y = FootballConstants.SLIDE_TACKLE_BALL_DIR_Y
+			ball.kick(kick_dir, FootballConstants.SLIDE_TACKLE_BALL_POWER)
+		_tackle_enter_recovery()
+		return
+
+	# Player on opposite team → foul (disabled for testing)
+	# if (body.is_in_group("team_1") or body.is_in_group("team_2")) \
+	# 	and not _same_team(_tackle_player, body):
+	# 	_hit_processed = true
+	# 	_tackle_clean = false
+	# 	_tackle_foul_position = body.global_position
+	# 	_tackle_fouled_player = body
+	# 	_tackle_enter_recovery()
+	# 	return
+
+	# Same team player → ignore
+
+
+func _handle_tackle(delta: float) -> void:
+	match _tackle_state:
+		TackleState.SLIDING:
+			_tackle_slide(delta)
+		TackleState.RECOVERING:
+			_tackle_recover(delta)
+
+
+func _tackle_slide(delta: float) -> void:
+	if not _tackle_player or not is_instance_valid(_tackle_player):
+		_tackle_state = TackleState.NORMAL
+		return
+
+	var step := FootballConstants.SLIDE_TACKLE_SPEED * delta
+	_tackle_player.global_position.x += _tackle_dir.x * step
+	_tackle_player.global_position.z += _tackle_dir.z * step
+	_tackle_dist_remaining -= step
+
+	# Keep Area3D at player feet
+	var area_pos := _tackle_player.global_position
+	area_pos.y = 0.3
+	_tackle_area.global_position = area_pos
+
+	if _tackle_dist_remaining <= 0.0:
+		_tackle_enter_recovery()
+
+
+func _tackle_enter_recovery() -> void:
+	_tackle_state = TackleState.RECOVERING
+	_tackle_recovery_timer = FootballConstants.SLIDE_TACKLE_RECOVERY_TIME
+	_tackle_area.monitoring = false
+
+
+func _tackle_recover(delta: float) -> void:
+	_tackle_recovery_timer -= delta
+	if not _tackle_player or not is_instance_valid(_tackle_player):
+		_tackle_state = TackleState.NORMAL
+		return
+
+	# Lerp capsule rotation back to original
+	_tackle_player.rotation.x = lerp_angle(_tackle_player.rotation.x,
+		_tackle_player_orig_rotation.x, 5.0 * delta)
+
+	if _tackle_recovery_timer <= 0.0:
+		_tackle_player.rotation = _tackle_player_orig_rotation
+		if not _tackle_clean and ball.has_method(&"set_dribbler"):
+			ball.release_dribble()
+			ball.linear_velocity = Vector3.ZERO
+			ball.angular_velocity = Vector3.ZERO
+			ball.global_position = _tackle_foul_position + Vector3(0, 0.5, 0)
+			# Give ball to the fouled player's team
+			var fouled_team := "team_1" if _tackle_fouled_player and _tackle_fouled_player.is_in_group("team_1") else "team_2"
+			var nearest := _find_nearest_on_team(_tackle_foul_position, fouled_team)
+			if nearest:
+				ball.set_dribbler(nearest)
+		_tackle_state = TackleState.NORMAL
+		_tackle_player = null
+
+
+func _find_nearest_on_team(from_pos: Vector3, team_group: String) -> CharacterBody3D:
+	var nearest: CharacterBody3D = null
+	var nearest_dist: float = INF
+	for node in get_tree().get_nodes_in_group(team_group):
+		var p := node as CharacterBody3D
+		if p and is_instance_valid(p):
+			var d := p.global_position.distance_squared_to(from_pos)
+			if d < nearest_dist:
+				nearest_dist = d
+				nearest = p
+	return nearest
+
+
+func _same_team(a: Node, b: Node) -> bool:
+	return (a.is_in_group("team_1") and b.is_in_group("team_1")) \
+		or (a.is_in_group("team_2") and b.is_in_group("team_2"))
+
+
 func _on_ball_collision(body: Node) -> void:
 	pass
 
@@ -514,7 +742,7 @@ func _reset_ball() -> void:
 		ball.clear_last_kicker()
 	ball.linear_velocity = Vector3.ZERO
 	ball.angular_velocity = Vector3.ZERO
-	ball.global_position = Vector3(0, 0.5, 0)
+	ball.global_position = Vector3(0, 0.5, -0.6)
 
 	# Reset players to their starting positions
 	player_home.global_position = Vector3(0, 0.5, 0)
@@ -525,3 +753,14 @@ func _reset_ball() -> void:
 
 	controlled_player = player_home
 	_sync_ai_controllers()
+
+
+func _poll_ai_tackles() -> void:
+	for node in get_tree().get_nodes_in_group("team_2"):
+		var ai := node as CharacterBody3D
+		if not ai or not is_instance_valid(ai):
+			continue
+		if "wants_to_tackle" in ai:
+			if ai.wants_to_tackle:
+				_start_tackle(ai)
+				ai.wants_to_tackle = false
