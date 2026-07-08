@@ -30,6 +30,13 @@ var _tackle_fouled_player: Node3D
 var _tackled_player: CharacterBody3D
 var _tackled_fall_timer: float = 0.0
 var _tackled_orig_rotation: Vector3 = Vector3.ZERO
+
+# Commit-действие с мячом (пас/удар): пока идёт клип, управление игроком заблокировано.
+# Тайминг живёт в PlayerVisual — импульс применяется по сигналу action_contact,
+# блокировка снимается по action_finished.
+var _action_player: CharacterBody3D     # кто выполняет действие (управление заблокировано)
+var _action_dir: Vector3 = Vector3.ZERO
+var _action_power: float = 0.0
 var _manual_swap_cooldown: int = 0
 
 
@@ -49,6 +56,8 @@ func _ready() -> void:
 	var home_visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
 	player_home.add_child(home_visual)
 	home_visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
+	home_visual.action_contact.connect(_on_action_contact.bind(player_home))
+	home_visual.action_finished.connect(_on_action_finished.bind(player_home))
 	_setup_teammate()
 	_setup_boundaries()
 	_give_ai_to_player_home()
@@ -347,6 +356,8 @@ func _setup_away_player() -> void:
 	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
 	new_player.add_child(visual)
 	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
+	visual.action_contact.connect(_on_action_contact.bind(new_player))
+	visual.action_finished.connect(_on_action_finished.bind(new_player))
 	var col := CollisionShape3D.new()
 	var shape := CapsuleShape3D.new()
 	shape.height = 1.5
@@ -370,6 +381,8 @@ func _setup_teammate() -> void:
 	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
 	new_player.add_child(visual)
 	visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
+	visual.action_contact.connect(_on_action_contact.bind(new_player))
+	visual.action_finished.connect(_on_action_finished.bind(new_player))
 	var col := CollisionShape3D.new()
 	var shape := CapsuleShape3D.new()
 	shape.height = 1.5
@@ -509,6 +522,9 @@ func _handle_player_input(delta: float) -> void:
 		return
 	if not controlled_player:
 		return
+	# Управление перехвачено commit-действием (пас/удар): ни движения, ни нового действия.
+	if _action_player == controlled_player:
+		return
 	var input_dir := Vector2(
 		Input.get_axis(&"move_left", &"move_right"),
 		Input.get_axis(&"move_forward", &"move_back")
@@ -547,7 +563,8 @@ func _kick_ball(player_node: CharacterBody3D) -> void:
 	# Use the ball's dribble direction (movement direction) instead of facing direction.
 	var dir: Vector3 = ball.get_dribble_direction()
 	dir.y = 0.3
-	ball.kick(dir, 12.0)
+	# Временно бьём клипом паса (in-place); при появлении отдельного клипа удара — "kick".
+	_start_ball_action(player_node, dir, 12.0, "pass")
 
 
 func _pass_ball(player_node: CharacterBody3D) -> void:
@@ -558,7 +575,58 @@ func _pass_ball(player_node: CharacterBody3D) -> void:
 		return
 	var dir: Vector3 = ball.get_dribble_direction()
 	dir.y = 0.1
-	ball.kick(dir, 8.0)
+	_start_ball_action(player_node, dir, 8.0, "pass")
+
+
+## Начать commit-действие с мячом: развернуть игрока, проиграть анимацию, заблокировать
+## управление. Импульс мячу и снятие блокировки — по сигналам визуала (contact/finished).
+## Если визуала/клипа нет (фолбэк) — импульс сразу, без блокировки.
+func _start_ball_action(player_node: CharacterBody3D, dir: Vector3, power: float, action: String) -> void:
+	if _action_player != null:
+		return  # уже идёт действие — игнорируем повторный ввод
+	var flat := Vector3(dir.x, 0.0, dir.z)
+	if flat.length() > 0.01:
+		player_node.rotation.y = atan2(-flat.x, -flat.z)
+	var visual := _player_visual(player_node)
+	if visual != null and visual.trigger(action):
+		_action_player = player_node
+		_action_dir = dir
+		_action_power = power
+	else:
+		if ball.has_method(&"kick"):
+			ball.kick(dir, power)  # фолбэк без анимации: бьём сразу
+
+
+## Момент касания ногой: придать импульс мячу.
+func _on_action_contact(_action: String, player: Node) -> void:
+	if player == _action_player and ball.has_method(&"kick"):
+		ball.kick(_action_dir, _action_power)
+
+
+## Действие завершилось: вернуть управление.
+func _on_action_finished(_action: String, player: Node) -> void:
+	if player == _action_player:
+		_action_player = null
+
+
+## Отменить действие игрока (сбили подкатом на замахе): без импульса, вернуть управление.
+func _cancel_ball_action(player: Node) -> void:
+	if _action_player != player:
+		return
+	_action_player = null
+	var visual := _player_visual(player)
+	if visual != null:
+		visual.cancel_action()
+
+
+## Найти дочерний PlayerVisual у игрового узла (визуал добавляется ребёнком при спавне).
+func _player_visual(player_node: Node) -> PlayerVisual:
+	if player_node == null:
+		return null
+	for c in player_node.get_children():
+		if c is PlayerVisual:
+			return c
+	return null
 
 
 func _can_tackle(tackler: Node3D) -> bool:
@@ -691,6 +759,7 @@ func _on_tackle_hit_player(body: CharacterBody3D, normal: Vector3) -> void:
 	body.rotation.x = deg_to_rad(90)
 	_tackled_fall_timer = FootballConstants.SLIDE_TACKLE_FALL_TIME
 	body.add_to_group("fallen")
+	_cancel_ball_action(body)
 
 func _handle_tackle(delta: float) -> void:
 	match _tackle_state:
