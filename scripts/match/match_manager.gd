@@ -50,6 +50,8 @@ func _ready() -> void:
 	_setup_away_player()
 	controlled_player = player_home
 	player_home.add_to_group("team_1")
+	player_home.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
+	player_home.collision_mask = FootballConstants.PLAYER_COLLISION_MASK
 	var home_mesh := player_home.get_node_or_null(^"Mesh")
 	if home_mesh:
 		home_mesh.queue_free()
@@ -369,6 +371,8 @@ func _setup_away_player() -> void:
 	new_player.add_child(col)
 	add_child(new_player)
 	new_player.add_to_group("team_2")
+	new_player.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
+	new_player.collision_mask = FootballConstants.PLAYER_COLLISION_MASK
 	var ai_script = preload("res://scripts/ai/simple_ai.gd")
 	new_player.set_script(ai_script)
 	new_player.set_physics_process(true)
@@ -395,6 +399,8 @@ func _setup_teammate() -> void:
 	new_player.add_child(col)
 	add_child(new_player)
 	new_player.add_to_group("team_1")
+	new_player.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
+	new_player.collision_mask = FootballConstants.PLAYER_COLLISION_MASK
 	var teammate_script = preload("res://scripts/ai/teammate_ai.gd")
 	new_player.set_script(teammate_script)
 	new_player.set_physics_process(true)
