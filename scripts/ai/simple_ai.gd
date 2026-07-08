@@ -12,6 +12,17 @@ var wants_to_tackle: bool = false
 var tackle_cooldown: float = 0.0
 
 
+func _motor() -> PlayerMotor:
+	for c in get_children():
+		if c is PlayerMotor:
+			return c
+	return null
+
+## Скорость этого ИИ относительно общей максимальной — сохраняет прежний относительный темп.
+func _base_scale() -> float:
+	return speed / FootballConstants.LOCO_TOP_SPEED
+
+
 func _physics_process(delta: float) -> void:
 	if not ball or not is_instance_valid(ball):
 		return
@@ -96,11 +107,9 @@ func _dribble_toward_goal(delta: float) -> void:
 
 func _move_or_wander(dir: Vector3, delta: float, speed_multiplier: float = 1.0) -> void:
 	if dir.length() > 0.1:
-		var move_speed := speed * speed_multiplier
-		global_position.x += dir.x * move_speed * delta
-		global_position.z += dir.z * move_speed * delta
-		var target_angle := atan2(-dir.x, -dir.z)
-		rotation.y = lerp_angle(rotation.y, target_angle, 8.0 * delta)
+		var m := _motor()
+		if m != null:
+			m.set_move_intent(dir, _base_scale() * speed_multiplier)
 	else:
 		_wander(delta, speed_multiplier)
 
@@ -113,11 +122,9 @@ func _wander(delta: float, speed_multiplier: float = 1.0) -> void:
 	var wander_x := sin(Time.get_ticks_msec() * 0.001 + global_position.z) * 0.5
 	var wander_z := cos(Time.get_ticks_msec() * 0.001 + global_position.x) * 0.5
 	var wander_dir := Vector3(wander_x, 0, wander_z).normalized()
-	var wander_speed := speed * 0.3 * speed_multiplier
-	global_position.x += wander_dir.x * wander_speed * delta
-	global_position.z += wander_dir.z * wander_speed * delta
-	var target_angle := atan2(-wander_dir.x, -wander_dir.z)
-	rotation.y = lerp_angle(rotation.y, target_angle, 4.0 * delta)
+	var m := _motor()
+	if m != null:
+		m.set_move_intent(wander_dir, _base_scale() * 0.3 * speed_multiplier)
 
 
 func _kick_towards_goal() -> void:
