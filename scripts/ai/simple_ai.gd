@@ -8,10 +8,18 @@ extends CharacterBody3D
 var can_kick: bool = true
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var _wander_timer: float = 0.0
+var wants_to_tackle: bool = false
+var tackle_cooldown: float = 0.0
 
 
 func _physics_process(delta: float) -> void:
 	if not ball or not is_instance_valid(ball):
+		return
+
+	if is_in_group("fallen"):
+		return
+
+	if wants_to_tackle:
 		return
 
 	if _is_dribbling():
@@ -20,6 +28,22 @@ func _physics_process(delta: float) -> void:
 		_chase_target(target_node, delta)
 	else:
 		_chase_ball(delta)
+
+	# Tackle decision
+	tackle_cooldown -= delta
+	if tackle_cooldown < 0.0:
+		tackle_cooldown = 0.0
+	if tackle_cooldown <= 0.0:
+		var target: Node3D = null
+		if ball.has_method(&"set_dribbler") and ball.dribbler and ball.dribbler.is_in_group("team_1"):
+			target = ball.dribbler
+		elif ball.has_method(&"get_last_touch") and ball.get_last_touch() and ball.get_last_touch().is_in_group("team_1"):
+			target = ball.get_last_touch()
+		if target:
+			var dist := global_position.distance_to(target.global_position)
+			if dist < FootballConstants.AI_TACKLE_RANGE:
+				wants_to_tackle = true
+				tackle_cooldown = FootballConstants.AI_TACKLE_COOLDOWN
 
 
 func _is_dribbling() -> bool:

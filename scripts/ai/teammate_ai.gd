@@ -14,6 +14,9 @@ func _physics_process(delta: float) -> void:
 	if not ball or not is_instance_valid(ball):
 		return
 
+	if is_in_group("fallen"):
+		return
+
 	# If human controls this player → skip
 	if controlled_player == self:
 		return

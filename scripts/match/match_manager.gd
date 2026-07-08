@@ -504,6 +504,8 @@ func _handle_dribbling() -> void:
 
 
 func _handle_player_input(delta: float) -> void:
+	if controlled_player and controlled_player.is_in_group("fallen"):
+		return
 	if _tackle_state != TackleState.NORMAL:
 		return
 	if not controlled_player:
