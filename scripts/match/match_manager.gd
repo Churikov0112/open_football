@@ -432,6 +432,18 @@ func _physics_process(delta: float) -> void:
 	_handle_tackle(delta)
 	_poll_ai_tackles()
 
+	# Handle tackled player fall
+	if _tackled_player and is_instance_valid(_tackled_player):
+		if _tackled_fall_timer > 0:
+			_tackled_fall_timer -= delta
+		else:
+			_tackled_player.rotation.x = move_toward(_tackled_player.rotation.x,
+				_tackled_orig_rotation.x, 3.0 * delta)
+			if abs(_tackled_player.rotation.x - _tackled_orig_rotation.x) < 0.01:
+				_tackled_player.rotation.x = _tackled_orig_rotation.x
+				_tackled_player.remove_from_group("fallen")
+				_tackled_player = null
+
 
 func _setup_controlled_indicator() -> void:
 	var mesh := CylinderMesh.new()
