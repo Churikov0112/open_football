@@ -562,9 +562,9 @@ func _kick_ball(player_node: CharacterBody3D) -> void:
 		return
 	# Use the ball's dribble direction (movement direction) instead of facing direction.
 	var dir: Vector3 = ball.get_dribble_direction()
-	dir.y = 0.3
+	dir.y = 0.5
 	# Временно бьём клипом паса (in-place); при появлении отдельного клипа удара — "kick".
-	_start_ball_action(player_node, dir, 12.0, "pass")
+	_start_ball_action(player_node, dir, 18.0, "pass")
 
 
 func _pass_ball(player_node: CharacterBody3D) -> void:
@@ -575,7 +575,7 @@ func _pass_ball(player_node: CharacterBody3D) -> void:
 		return
 	var dir: Vector3 = ball.get_dribble_direction()
 	dir.y = 0.1
-	_start_ball_action(player_node, dir, 8.0, "pass")
+	_start_ball_action(player_node, dir, 12.0, "pass")
 
 
 ## Начать commit-действие с мячом: развернуть игрока, проиграть анимацию, заблокировать
