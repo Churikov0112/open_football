@@ -55,6 +55,7 @@ func _ready() -> void:
 		home_mesh.queue_free()
 	var home_visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
 	player_home.add_child(home_visual)
+	player_home.add_child(PlayerMotor.new())
 	home_visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
 	home_visual.action_contact.connect(_on_action_contact.bind(player_home))
 	home_visual.action_finished.connect(_on_action_finished.bind(player_home))
@@ -78,6 +79,7 @@ func _setup_inputs() -> void:
 		&"pass": [KEY_E],
 		&"pause": [KEY_ESCAPE],
 		&"swap_player": [KEY_Q],
+		&"sprint": [KEY_SHIFT],
 	}
 	for action in input_actions:
 		if InputMap.has_action(action):
@@ -355,6 +357,7 @@ func _setup_away_player() -> void:
 	new_player.global_position = Vector3(20, 0.5, 0)
 	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
 	new_player.add_child(visual)
+	new_player.add_child(PlayerMotor.new())
 	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
 	visual.action_contact.connect(_on_action_contact.bind(new_player))
 	visual.action_finished.connect(_on_action_finished.bind(new_player))
@@ -380,6 +383,7 @@ func _setup_teammate() -> void:
 	new_player.global_position = Vector3(10, 0.5, 5)
 	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
 	new_player.add_child(visual)
+	new_player.add_child(PlayerMotor.new())
 	visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
 	visual.action_contact.connect(_on_action_contact.bind(new_player))
 	visual.action_finished.connect(_on_action_finished.bind(new_player))
@@ -537,14 +541,12 @@ func _handle_player_input(delta: float) -> void:
 	cam_right.y = 0
 	cam_right = cam_right.normalized()
 	var dir := (cam_forward * -input_dir.y + cam_right * input_dir.x).normalized()
-	if dir.length() > 0.1:
-		var speed := 8.0
-		controlled_player.global_position.x = move_toward(controlled_player.global_position.x,
-			controlled_player.global_position.x + dir.x * speed * delta, speed * delta)
-		controlled_player.global_position.z = move_toward(controlled_player.global_position.z,
-			controlled_player.global_position.z + dir.z * speed * delta, speed * delta)
-		var target_angle := atan2(-dir.x, -dir.z)
-		controlled_player.rotation.y = lerp_angle(controlled_player.rotation.y, target_angle, 10.0 * delta)
+	var sprint_scale := 1.0
+	if Input.is_action_pressed(&"sprint"):
+		sprint_scale = FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED
+	var motor := _player_motor(controlled_player)
+	if motor != null:
+		motor.set_move_intent(dir, sprint_scale)  # dir == ZERO при отсутствии ввода → торможение
 	if Input.is_action_just_pressed(&"kick"):
 		print("[TACKLE_DEBUG] Space pressed! dribbler=", ball.dribbler.name if ball.has_method(&"set_dribbler") and ball.dribbler else "null", " last_touch=", ball.get_last_touch().name if ball.has_method(&"get_last_touch") and ball.get_last_touch() else "null")
 		if not _try_tackle(controlled_player):
@@ -592,6 +594,9 @@ func _start_ball_action(player_node: CharacterBody3D, dir: Vector3, power: float
 		_action_player = player_node
 		_action_dir = dir
 		_action_power = power
+		var lock_motor := _player_motor(player_node)
+		if lock_motor != null:
+			lock_motor.set_control_locked(true)
 	else:
 		if ball.has_method(&"kick"):
 			ball.kick(dir, power)  # фолбэк без анимации: бьём сразу
@@ -607,6 +612,9 @@ func _on_action_contact(_action: String, player: Node) -> void:
 func _on_action_finished(_action: String, player: Node) -> void:
 	if player == _action_player:
 		_action_player = null
+		var motor := _player_motor(player)
+		if motor != null:
+			motor.set_control_locked(false)
 
 
 ## Отменить действие игрока (сбили подкатом на замахе): без импульса, вернуть управление.
@@ -614,6 +622,9 @@ func _cancel_ball_action(player: Node) -> void:
 	if _action_player != player:
 		return
 	_action_player = null
+	var motor := _player_motor(player)
+	if motor != null:
+		motor.set_control_locked(false)
 	var visual := _player_visual(player)
 	if visual != null:
 		visual.cancel_action()
@@ -625,6 +636,16 @@ func _player_visual(player_node: Node) -> PlayerVisual:
 		return null
 	for c in player_node.get_children():
 		if c is PlayerVisual:
+			return c
+	return null
+
+
+## Найти дочерний PlayerMotor у игрового узла (добавляется ребёнком при спавне).
+func _player_motor(player_node: Node) -> PlayerMotor:
+	if player_node == null:
+		return null
+	for c in player_node.get_children():
+		if c is PlayerMotor:
 			return c
 	return null
 
@@ -682,6 +703,12 @@ func _start_tackle(player: CharacterBody3D, target: Node3D = null) -> void:
 		return
 
 	print("[TACKLE_DEBUG] _start_tackle: TACKLE STARTED! player=", player.name, " target=", target.name)
+
+	# Лочим только когда такл реально стартует (после всех guard-выходов выше) —
+	# иначе на раннем return лок повиснет без парной разблокировки в _tackle_recover.
+	var tackler_motor := _player_motor(player)
+	if tackler_motor != null:
+		tackler_motor.set_control_locked(true)
 
 	_tackle_state = TackleState.SLIDING
 	_tackle_player = player
@@ -829,6 +856,9 @@ func _tackle_recover(delta: float) -> void:
 			var nearest := _find_nearest_on_team(_tackle_foul_position, fouled_team)
 			if nearest:
 				ball.set_dribbler(nearest)
+		var motor := _player_motor(_tackle_player)
+		if motor != null:
+			motor.set_control_locked(false)
 		_tackle_state = TackleState.NORMAL
 		_tackle_player = null
 
