@@ -13,10 +13,7 @@ var tackle_cooldown: float = 0.0
 
 
 func _motor() -> PlayerMotor:
-	for c in get_children():
-		if c is PlayerMotor:
-			return c
-	return null
+	return PlayerMotor.find_on(self)
 
 ## Скорость этого ИИ относительно общей максимальной — сохраняет прежний относительный темп.
 func _base_scale() -> float:

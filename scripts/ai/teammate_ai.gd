@@ -11,10 +11,7 @@ var _wander_timer: float = 0.0
 
 
 func _motor() -> PlayerMotor:
-	for c in get_children():
-		if c is PlayerMotor:
-			return c
-	return null
+	return PlayerMotor.find_on(self)
 
 func _base_scale() -> float:
 	return speed / FootballConstants.LOCO_TOP_SPEED

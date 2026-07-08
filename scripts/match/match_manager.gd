@@ -51,7 +51,7 @@ func _ready() -> void:
 	controlled_player = player_home
 	player_home.add_to_group("team_1")
 	player_home.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	player_home.collision_mask = FootballConstants.PLAYER_COLLISION_MASK
+	player_home.collision_mask = 1 | FootballConstants.PLAYER_COLLISION_MASK
 	var home_mesh := player_home.get_node_or_null(^"Mesh")
 	if home_mesh:
 		home_mesh.queue_free()
@@ -372,7 +372,7 @@ func _setup_away_player() -> void:
 	add_child(new_player)
 	new_player.add_to_group("team_2")
 	new_player.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	new_player.collision_mask = FootballConstants.PLAYER_COLLISION_MASK
+	new_player.collision_mask = 1 | FootballConstants.PLAYER_COLLISION_MASK
 	var ai_script = preload("res://scripts/ai/simple_ai.gd")
 	new_player.set_script(ai_script)
 	new_player.set_physics_process(true)
@@ -400,7 +400,7 @@ func _setup_teammate() -> void:
 	add_child(new_player)
 	new_player.add_to_group("team_1")
 	new_player.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	new_player.collision_mask = FootballConstants.PLAYER_COLLISION_MASK
+	new_player.collision_mask = 1 | FootballConstants.PLAYER_COLLISION_MASK
 	var teammate_script = preload("res://scripts/ai/teammate_ai.gd")
 	new_player.set_script(teammate_script)
 	new_player.set_physics_process(true)
@@ -527,8 +527,14 @@ func _handle_dribbling() -> void:
 
 func _handle_player_input(delta: float) -> void:
 	if controlled_player and controlled_player.is_in_group("fallen"):
+		var fallen_motor := _player_motor(controlled_player)
+		if fallen_motor != null:
+			fallen_motor.set_move_intent(Vector3.ZERO)
 		return
 	if _tackle_state != TackleState.NORMAL:
+		var blocked_motor := _player_motor(controlled_player)
+		if blocked_motor != null:
+			blocked_motor.set_move_intent(Vector3.ZERO)
 		return
 	if not controlled_player:
 		return
@@ -650,10 +656,7 @@ func _player_visual(player_node: Node) -> PlayerVisual:
 func _player_motor(player_node: Node) -> PlayerMotor:
 	if player_node == null:
 		return null
-	for c in player_node.get_children():
-		if c is PlayerMotor:
-			return c
-	return null
+	return PlayerMotor.find_on(player_node)
 
 
 func _can_tackle(tackler: Node3D) -> bool:

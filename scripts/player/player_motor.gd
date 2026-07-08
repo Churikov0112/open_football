@@ -51,17 +51,31 @@ func set_move_intent(dir: Vector3, speed_scale: float = 1.0) -> void:
 func set_control_locked(on: bool) -> void:
 	_locked = on
 
+## Найти дочерний PlayerMotor у произвольного узла (общая логика для AI/match_manager).
+static func find_on(node: Node) -> PlayerMotor:
+	if node == null:
+		return null
+	for c in node.get_children():
+		if c is PlayerMotor:
+			return c
+	return null
+
 func _physics_process(delta: float) -> void:
 	if _body == null or delta <= 0.0:
 		return
 
 	# Намерение: ноль, если заблокированы или сбиты (fallen).
+	var locked_or_fallen := _locked or _body.is_in_group("fallen")
 	var desired := Vector3.ZERO
-	if not _locked and not _body.is_in_group("fallen"):
+	if not locked_or_fallen:
 		desired = PlayerMotor.desired_velocity(_intent_dir, FootballConstants.LOCO_TOP_SPEED, _intent_scale)
 
 	var prev := _body.velocity
-	var new_vel := PlayerMotor.integrate_velocity(prev, desired, FootballConstants.LOCO_ACCEL, FootballConstants.LOCO_DECEL, delta)
+	# Заблокирован/сбит: скорость гасится мгновенно, а не decel-темпом —
+	# иначе move_and_slide() ниже продолжает толкать тело остаточной скоростью
+	# (двойное движение поверх ручного move_and_collide() в подкате).
+	var new_vel := Vector3.ZERO if locked_or_fallen else \
+		PlayerMotor.integrate_velocity(prev, desired, FootballConstants.LOCO_ACCEL, FootballConstants.LOCO_DECEL, delta)
 	var speed := new_vel.length()
 
 	# Доворот тела к направлению движения (тело остаётся вертикальным).
@@ -77,7 +91,8 @@ func _physics_process(delta: float) -> void:
 
 	_body.velocity = new_vel
 	_body.move_and_slide()
-	_body.global_position.y = _ground_y  # поле плоское — пиннинг высоты
+	if not _body.is_in_group("fallen"):
+		_body.global_position.y = _ground_y  # поле плоское — пиннинг высоты (кроме сбитых: не гасить вертикальный отскок такла)
 
 	if _visual != null:
 		_visual.set_locomotion(new_vel)
