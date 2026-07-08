@@ -654,6 +654,29 @@ func _on_tackle_body_entered(body: Node) -> void:
 	# Same team player → ignore
 
 
+func _on_tackle_hit_player(body: CharacterBody3D, normal: Vector3) -> void:
+	_hit_processed = true
+	_tackle_clean = true
+
+	# Pop the ball loose in collision direction
+	if ball.has_method(&"release_dribble"):
+		ball.release_dribble()
+	var pop_dir := normal.normalized()
+	pop_dir.y = FootballConstants.SLIDE_TACKLE_BALL_DIR_Y
+	if ball.has_method(&"kick"):
+		ball.kick(pop_dir, FootballConstants.SLIDE_TACKLE_BALL_POWER)
+
+	# Push tackled player back
+	body.global_position += normal.normalized() * FootballConstants.SLIDE_TACKLE_FALL_DISTANCE
+
+	# Fall over
+	_tackled_player = body
+	_tackled_orig_rotation = body.rotation
+	body.rotation.x = deg_to_rad(90)
+	_tackled_fall_timer = FootballConstants.SLIDE_TACKLE_FALL_TIME
+	body.add_to_group("fallen")
+
+
 func _handle_tackle(delta: float) -> void:
 	match _tackle_state:
 		TackleState.SLIDING:
@@ -668,8 +691,21 @@ func _tackle_slide(delta: float) -> void:
 		return
 
 	var step := FootballConstants.SLIDE_TACKLE_SPEED * delta
-	_tackle_player.global_position.x += _tackle_dir.x * step
-	_tackle_player.global_position.z += _tackle_dir.z * step
+	var motion := _tackle_dir * step
+	var collision := _tackle_player.move_and_collide(motion)
+
+	# Check what we hit
+	if collision:
+		var body := collision.get_collider()
+		if body is CharacterBody3D and not _same_team(_tackle_player, body):
+			_on_tackle_hit_player(body, collision.get_normal())
+			_tackle_enter_recovery()
+			return
+		else:
+			_tackle_dist_remaining = 0.0
+			_tackle_enter_recovery()
+			return
+
 	_tackle_dist_remaining -= step
 
 	# Keep Area3D at player feet
