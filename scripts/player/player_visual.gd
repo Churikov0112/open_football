@@ -1,10 +1,37 @@
 class_name PlayerVisual
 extends Node3D
 
+## Момент касания мячом ногой (геймплей в этот миг придаёт импульс мячу).
+signal action_contact(action: String)
+## Действие завершилось — управление можно вернуть.
+signal action_finished(action: String)
+
 ## Порог скорости (м/с), при котором бленд = полный бег (1.0).
 const RUN_SPEED_FULL := 5.0
 ## Сглаживание бленда, 1/сек.
 const BLEND_SMOOTH := 10.0
+
+## Имя стейта локомоции в StateMachine.
+const LOCOMOTION := &"locomotion"
+## Семантическое действие (trigger) → имя клипа в glb. Стейт создаётся, только если клип есть.
+const ACTION_CLIPS := {
+	"kick": "strike_forward",
+	"pass": "pass",
+	"penalty": "penalty_kick",
+	"header": "idle_header",
+	"header_alt": "idle_header_2",
+	"header_jump": "idle_header_jump",
+	"throw_in": "throw_in",
+}
+## Клипы, которые нужно зациклить; остальные one-shot доигрывают и авто-возвращаются.
+const LOOP_CLIPS := [&"idle", &"run", &"fallen_idle"]
+
+## Тайминг действия (реальные секунды): contact — до касания; lock — общая длительность
+## до action_finished; speed — множитель скорости проигрывания (сжать замах, сохранив синхрон).
+## Тюнится визуальной приёмкой. Действия без записи → contact=0, lock=длина_клипа, speed=1.
+const ACTION_TIMING := {
+	"pass": {"contact": 0.2, "lock": 0.4, "speed": 1.5},
+}
 
 @export var model_y_offset: float = 0.0
 @export var model_yaw_deg: float = 0.0
@@ -14,6 +41,14 @@ var _model: Node3D
 var _last_pos: Vector3
 var _blend: float = 0.0
 var _explicit_speed: float = -1.0  # >=0 → использовать вместо авто-замера
+var _playback: AnimationNodeStateMachinePlayback
+var _states: Dictionary = {}  # имя стейта one-shot → true (какие клипы реально есть)
+var _ap: AnimationPlayer
+var _active_action: String = ""   # выполняемое действие ("" = нет)
+var _action_elapsed: float = 0.0  # прошло реальных секунд с старта действия
+var _action_contact_at: float = 0.0
+var _action_lock_at: float = 0.0
+var _action_contact_done: bool = false
 
 ## Чистое отображение скорости (м/с) в позицию бленда [0..1].
 static func speed_to_blend(speed: float) -> float:
@@ -34,24 +69,72 @@ func _ready() -> void:
 	_last_pos = global_position
 
 func _build_anim_tree(ap: AnimationPlayer) -> void:
-	# glTF-анимации приходят незациклёнными (loop_mode=NONE) → без этого run/idle
-	# проигрываются один раз и замирают. Для локомоции нужен непрерывный цикл.
-	for anim_name in [&"idle", &"run"]:
-		var a := ap.get_animation(anim_name)
-		if a != null:
-			a.loop_mode = Animation.LOOP_LINEAR
+	# glTF-анимации приходят незациклёнными (loop_mode=NONE). Локомоцию/лежание зацикливаем;
+	# one-shot (удары/падение/вставание) оставляем незациклёнными — иначе не сработает
+	# авто-возврат по AT_END.
+	for anim_name in LOOP_CLIPS:
+		if ap.has_animation(anim_name):
+			ap.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
+
+	# Локомоция: idle(0) ↔ run(1), блендится по измеренной скорости.
 	var idle_node := AnimationNodeAnimation.new()
 	idle_node.animation = &"idle"
 	var run_node := AnimationNodeAnimation.new()
 	run_node.animation = &"run"
-	var bs := AnimationNodeBlendSpace1D.new()
-	bs.add_blend_point(idle_node, 0.0)
-	bs.add_blend_point(run_node, 1.0)
+	var loco := AnimationNodeBlendSpace1D.new()
+	loco.add_blend_point(idle_node, 0.0)
+	loco.add_blend_point(run_node, 1.0)
+
+	# StateMachine: локомоция — базовый стейт; каждое one-shot действие — свой стейт,
+	# вход по travel() из локомоции, авто-возврат в локомоцию по концу клипа.
+	var sm := AnimationNodeStateMachine.new()
+	sm.add_node(LOCOMOTION, loco, Vector2(400, 100))
+	var y := 40.0
+	for action in ACTION_CLIPS:
+		var clip: String = ACTION_CLIPS[action]
+		if not ap.has_animation(clip):
+			continue
+		var node := AnimationNodeAnimation.new()
+		node.animation = clip
+		sm.add_node(clip, node, Vector2(120, y))
+		y += 80.0
+		sm.add_transition(LOCOMOTION, clip, _make_transition(false))
+		sm.add_transition(clip, LOCOMOTION, _make_transition(true))
+		_states[clip] = true
+
+	# Оборачиваем StateMachine в BlendTree с TimeScale — единый рычаг скорости проигрывания
+	# действий (сжать замах, сохранив синхрон «нога↔мяч»). Локомоция идёт при scale=1.0.
+	var bt := AnimationNodeBlendTree.new()
+	bt.add_node(&"sm", sm, Vector2(200, 100))
+	var ts := AnimationNodeTimeScale.new()
+	bt.add_node(&"TimeScale", ts, Vector2(500, 100))
+	bt.connect_node(&"TimeScale", 0, &"sm")
+	bt.connect_node(&"output", 0, &"TimeScale")
+
+	_ap = ap
 	_anim_tree = AnimationTree.new()
-	_anim_tree.tree_root = bs
+	_anim_tree.name = "AnimTree"
+	_anim_tree.tree_root = bt
 	add_child(_anim_tree)
 	_anim_tree.anim_player = _anim_tree.get_path_to(ap)
 	_anim_tree.active = true
+	_anim_tree.set(&"parameters/TimeScale/scale", 1.0)
+	_playback = _anim_tree.get(&"parameters/sm/playback")
+	if _playback != null:
+		_playback.start(LOCOMOTION)
+
+## Переход StateMachine. auto_return=true → авто-возврат в конце клипа (AT_END/AUTO);
+## иначе — переход только по travel() (ENABLED, без авто-срабатывания), с кроссфейдом.
+func _make_transition(auto_return: bool) -> AnimationNodeStateMachineTransition:
+	var t := AnimationNodeStateMachineTransition.new()
+	if auto_return:
+		t.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_AT_END
+		t.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO
+	else:
+		t.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_IMMEDIATE
+		t.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_ENABLED
+		t.xfade_time = 0.15
+	return t
 
 func _process(delta: float) -> void:
 	if _anim_tree == null or delta <= 0.0:
@@ -66,17 +149,89 @@ func _process(delta: float) -> void:
 	_last_pos = global_position
 	var target := speed_to_blend(speed)
 	_blend = lerpf(_blend, target, clampf(BLEND_SMOOTH * delta, 0.0, 1.0))
-	_anim_tree.set(&"parameters/blend_position", _blend)
+	_anim_tree.set(&"parameters/sm/locomotion/blend_position", _blend)
+
+	if _active_action != "":
+		_action_elapsed += delta
+		if not _action_contact_done and _action_elapsed >= _action_contact_at:
+			_action_contact_done = true
+			action_contact.emit(_active_action)
+		if _action_elapsed >= _action_lock_at:
+			var done := _active_action
+			_active_action = ""
+			_set_action_speed(1.0)
+			action_finished.emit(done)
 
 ## Явно задать скорость (для будущих геймплей-вызовов). Vector3.ZERO → снова авто-замер.
 func set_locomotion(velocity: Vector3) -> void:
 	_explicit_speed = Vector3(velocity.x, 0.0, velocity.z).length()
 
-## Заготовка под one-shot (kick/header) — реализуется на этапе полного набора анимаций.
-func trigger(action: String) -> void:
-	push_warning("PlayerVisual.trigger('%s') ещё не реализован (пилот: только idle/run)" % action)
+## Разовое действие (kick/pass/header/…): travel в one-shot стейт + запуск таймингового
+## драйвера (сигналы action_contact/action_finished). Возвращает true, если действие
+## стартовало (иначе — фолбэк/нет клипа, геймплей делает импульс сам).
+func trigger(action: String) -> bool:
+	if _playback == null:
+		push_warning("PlayerVisual.trigger('%s'): AnimationTree не готов (фолбэк-капсула?)" % action)
+		return false
+	var state := _resolve_action(action)
+	if state == "":
+		push_warning("PlayerVisual.trigger('%s'): нет клипа под это действие" % action)
+		return false
+	_playback.travel(StringName(state))
+	var contact := 0.0
+	var lock := action_length(action)
+	var speed := 1.0
+	if ACTION_TIMING.has(action):
+		var t: Dictionary = ACTION_TIMING[action]
+		contact = float(t.get("contact", 0.0))
+		lock = float(t.get("lock", lock))
+		speed = float(t.get("speed", 1.0))
+	if lock <= 0.0:
+		lock = 0.5
+	_set_action_speed(speed)
+	_active_action = action
+	_action_elapsed = 0.0
+	_action_contact_at = contact
+	_action_lock_at = lock
+	_action_contact_done = false
+	return true
 
-## Заготовка под длящиеся состояния (sliding/fallen) — будущий этап.
+## Отменить текущее действие без сигнала касания (напр., игрока сбили на замахе).
+func cancel_action() -> void:
+	if _active_action == "":
+		return
+	_active_action = ""
+	_set_action_speed(1.0)
+	if _playback != null:
+		_playback.travel(LOCOMOTION)
+
+## Скорость проигрывания действия через TimeScale-узел BlendTree.
+func _set_action_speed(s: float) -> void:
+	if _anim_tree != null:
+		_anim_tree.set(&"parameters/TimeScale/scale", s)
+
+## action → имя стейта: сперва семантический маппинг ACTION_CLIPS, затем прямое имя клипа.
+func _resolve_action(action: String) -> String:
+	if ACTION_CLIPS.has(action) and _states.has(ACTION_CLIPS[action]):
+		return ACTION_CLIPS[action]
+	if _states.has(action):
+		return action
+	return ""
+
+## Есть ли зарегистрированный one-shot стейт под это действие (для тестов/отладки).
+func has_action(action: String) -> bool:
+	return _resolve_action(action) != ""
+
+## Длина клипа действия в секундах (0.0, если действия/клипа нет). Геймплей использует её
+## для длительности commit-окна и тайминга касания мячом.
+func action_length(action: String) -> float:
+	var state := _resolve_action(action)
+	if state == "" or _ap == null:
+		return 0.0
+	var anim := _ap.get_animation(StringName(state))
+	return anim.length if anim != null else 0.0
+
+## Заготовка под длящиеся состояния (sliding/fallen) — этапы 3c/3d.
 func set_flag(flag: String, on: bool) -> void:
 	push_warning("PlayerVisual.set_flag('%s', %s) ещё не реализован" % [flag, str(on)])
 

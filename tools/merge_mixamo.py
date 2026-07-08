@@ -19,8 +19,22 @@ if main_arm.animation_data is None:
 # убрать возможный T-pose action, чтобы не экспортировался лишний клип
 main_arm.animation_data.action = None
 
-# 2) Импорт анимаций, перенос экшенов на главный армейчер через NLA-треки
-anim_files = {"idle": "idle.fbx", "run": "run.fbx"}
+# 2) Импорт анимаций, перенос экшенов на главный армейчер через NLA-треки.
+# Берём ЛЮБОЙ *.fbx в src_dir, кроме character.fbx; имя файла (без .fbx) → имя анимации.
+# Так добавление клипа = положить файл + пересобрать, без правки этого скрипта.
+anim_files = {}
+for fname in sorted(os.listdir(src_dir)):
+    if not fname.lower().endswith(".fbx"):
+        continue
+    if fname.lower() == "character.fbx":
+        continue
+    anim_files[os.path.splitext(fname)[0].lower()] = fname
+
+if not anim_files:
+    raise RuntimeError("В %s не найдено ни одного FBX-клипа (кроме character.fbx)" % src_dir)
+
+print("MERGE_ANIMS: " + ", ".join(anim_files.keys()))
+
 for anim_name, fname in anim_files.items():
     before = set(bpy.data.objects)
     bpy.ops.import_scene.fbx(filepath=os.path.join(src_dir, fname),
