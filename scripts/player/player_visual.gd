@@ -11,8 +11,10 @@ const RUN_SPEED_FULL := 5.0
 ## Сглаживание бленда, 1/сек.
 const BLEND_SMOOTH := 10.0
 
-## Имя стейта локомоции в StateMachine.
-const LOCOMOTION := &"locomotion"
+## Имена стейтов локомоции в StateMachine (LOCOMOTION = idle-хаб, из него travel в остальные).
+const LOCOMOTION := &"loco_idle"
+const LOCO_RUN := &"loco_run"
+const LOCO_SPRINT := &"loco_sprint"
 ## Семантическое действие (trigger) → имя клипа в glb. Стейт создаётся, только если клип есть.
 const ACTION_CLIPS := {
 	"kick": "strike_forward",
@@ -24,7 +26,7 @@ const ACTION_CLIPS := {
 	"throw_in": "throw_in",
 }
 ## Клипы, которые нужно зациклить; остальные one-shot доигрывают и авто-возвращаются.
-const LOOP_CLIPS := [&"idle", &"run", &"fallen_idle"]
+const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
 
 ## Тайминг действия (реальные секунды): contact — до касания; lock — общая длительность
 ## до action_finished; speed — множитель скорости проигрывания (сжать замах, сохранив синхрон).
@@ -54,6 +56,18 @@ var _action_contact_done: bool = false
 static func speed_to_blend(speed: float) -> float:
 	return clampf(speed / RUN_SPEED_FULL, 0.0, 1.0)
 
+## Анти-слайд: множитель скорости клипа бега/спринта = (speed/top)*fudge (клампится снизу).
+static func run_timescale(speed: float, top_speed: float, fudge: float) -> float:
+	if top_speed <= 0.0:
+		return 1.0
+	return maxf(0.1, (speed / top_speed) * fudge)
+
+## Наклон корпуса (banking): крен узла Model по локальной оси Z. deg тюнится по знаку живьём.
+func set_lean(deg: float) -> void:
+	if _model == null:
+		return
+	_model.rotation.z = deg_to_rad(deg)
+
 func _ready() -> void:
 	_model = get_node_or_null(^"Model") as Node3D
 	if _model == null:
@@ -76,19 +90,18 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 		if ap.has_animation(anim_name):
 			ap.get_animation(anim_name).loop_mode = Animation.LOOP_LINEAR
 
-	# Локомоция: idle(0) ↔ run(1), блендится по измеренной скорости.
+	# StateMachine: idle-хаб + run/sprint (скорость клипа привязана к реальной) + one-shot действия.
+	var sm := AnimationNodeStateMachine.new()
 	var idle_node := AnimationNodeAnimation.new()
 	idle_node.animation = &"idle"
-	var run_node := AnimationNodeAnimation.new()
-	run_node.animation = &"run"
-	var loco := AnimationNodeBlendSpace1D.new()
-	loco.add_blend_point(idle_node, 0.0)
-	loco.add_blend_point(run_node, 1.0)
-
-	# StateMachine: локомоция — базовый стейт; каждое one-shot действие — свой стейт,
-	# вход по travel() из локомоции, авто-возврат в локомоцию по концу клипа.
-	var sm := AnimationNodeStateMachine.new()
-	sm.add_node(LOCOMOTION, loco, Vector2(400, 100))
+	sm.add_node(LOCOMOTION, idle_node, Vector2(400, 60))
+	sm.add_node(LOCO_RUN, _make_speed_state(&"run"), Vector2(400, 140))
+	var sprint_clip: StringName = &"sprint" if ap.has_animation(&"sprint") else &"run"
+	sm.add_node(LOCO_SPRINT, _make_speed_state(sprint_clip), Vector2(400, 220))
+	# звёздчатые переходы: idle ↔ run, idle ↔ sprint (хаб = idle, travel строит путь через него)
+	for st in [LOCO_RUN, LOCO_SPRINT]:
+		sm.add_transition(LOCOMOTION, st, _make_transition(false))
+		sm.add_transition(st, LOCOMOTION, _make_transition(false))
 	var y := 40.0
 	for action in ACTION_CLIPS:
 		var clip: String = ACTION_CLIPS[action]
@@ -123,6 +136,18 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 	if _playback != null:
 		_playback.start(LOCOMOTION)
 
+## Стейт локомоции со скоростью клипа: Animation("clip") → TimeScale("speed") → output.
+func _make_speed_state(clip: StringName) -> AnimationNodeBlendTree:
+	var bt := AnimationNodeBlendTree.new()
+	var anim := AnimationNodeAnimation.new()
+	anim.animation = clip
+	bt.add_node(&"clip", anim, Vector2(100, 100))
+	var ts := AnimationNodeTimeScale.new()
+	bt.add_node(&"speed", ts, Vector2(300, 100))
+	bt.connect_node(&"speed", 0, &"clip")
+	bt.connect_node(&"output", 0, &"speed")
+	return bt
+
 ## Переход StateMachine. auto_return=true → авто-возврат в конце клипа (AT_END/AUTO);
 ## иначе — переход только по travel() (ENABLED, без авто-срабатывания), с кроссфейдом.
 func _make_transition(auto_return: bool) -> AnimationNodeStateMachineTransition:
@@ -147,9 +172,20 @@ func _process(delta: float) -> void:
 		d.y = 0.0
 		speed = d.length() / delta
 	_last_pos = global_position
-	var target := speed_to_blend(speed)
-	_blend = lerpf(_blend, target, clampf(BLEND_SMOOTH * delta, 0.0, 1.0))
-	_anim_tree.set(&"parameters/sm/locomotion/blend_position", _blend)
+	# Выбор стейта локомоции по порогам скорости (пока не идёт action).
+	if _active_action == "" and _playback != null:
+		var want := LOCOMOTION
+		if speed >= FootballConstants.LOCO_SPRINT_ANIM_SPEED:
+			want = LOCO_SPRINT
+		elif speed >= FootballConstants.LOCO_RUN_ANIM_SPEED:
+			want = LOCO_RUN
+		if _playback.get_current_node() != want:
+			_playback.travel(want)
+	# Анти-слайд: скорость клипов run/sprint по реальной скорости.
+	_anim_tree.set("parameters/sm/%s/speed/scale" % LOCO_RUN,
+		PlayerVisual.run_timescale(speed, FootballConstants.LOCO_TOP_SPEED, FootballConstants.LOCO_RUN_SCALE_FUDGE))
+	_anim_tree.set("parameters/sm/%s/speed/scale" % LOCO_SPRINT,
+		PlayerVisual.run_timescale(speed, FootballConstants.LOCO_SPRINT_SPEED, FootballConstants.LOCO_RUN_SCALE_FUDGE))
 
 	if _active_action != "":
 		_action_elapsed += delta
