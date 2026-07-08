@@ -74,6 +74,26 @@ func trigger(action: String) -> void:
 func set_flag(flag: String, on: bool) -> void:
 	push_warning("PlayerVisual.set_flag('%s', %s) ещё не реализован" % [flag, str(on)])
 
+## Применить внешность при спавне. Пилот использует только "kit_color".
+func apply_appearance(cfg: Dictionary) -> void:
+	if cfg.has("kit_color"):
+		var root: Node = _model if _model != null else self
+		var n := PlayerVisual.tint_tree(root, cfg["kit_color"] as Color)
+		if n == 0:
+			push_warning("apply_appearance: не найдено мешей для тинта")
+
+## Рекурсивно затинтить все MeshInstance3D под root. Возвращает число мешей.
+static func tint_tree(root: Node, color: Color) -> int:
+	var count := 0
+	if root is MeshInstance3D:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = color
+		(root as MeshInstance3D).material_override = mat
+		count += 1
+	for c in root.get_children():
+		count += tint_tree(c, color)
+	return count
+
 func _use_fallback(reason: String) -> void:
 	push_warning("PlayerVisual фолбэк-капсула: " + reason)
 	var mesh := CapsuleMesh.new()
