@@ -43,6 +43,12 @@ func _ready() -> void:
 	_setup_away_player()
 	controlled_player = player_home
 	player_home.add_to_group("team_1")
+	var home_mesh := player_home.get_node_or_null(^"Mesh")
+	if home_mesh:
+		home_mesh.queue_free()
+	var home_visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
+	player_home.add_child(home_visual)
+	home_visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
 	_setup_teammate()
 	_setup_boundaries()
 	_give_ai_to_player_home()
@@ -361,15 +367,9 @@ func _setup_teammate() -> void:
 	var new_player := CharacterBody3D.new()
 	new_player.name = "PlayerTeammate"
 	new_player.global_position = Vector3(10, 0.5, 5)
-	var mesh := CapsuleMesh.new()
-	mesh.height = 1.5
-	mesh.radius = 0.3
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.1, 0.1, 0.9)
-	mesh.material = mat
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	new_player.add_child(mi)
+	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
+	new_player.add_child(visual)
+	visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
 	var col := CollisionShape3D.new()
 	var shape := CapsuleShape3D.new()
 	shape.height = 1.5
