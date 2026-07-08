@@ -55,6 +55,19 @@ const PLAYER_CAPSULE_HEIGHT := 1.5
 const PLAYER_ROTATION_SPEED := 10.0
 const PLAYER_START_Z := 0.0         # стартовая позиция Z
 
+# --- Living locomotion (velocity+inertia, рецепт OpenSoccer; тюнинг-старт) ---
+const LOCO_TOP_SPEED := 8.0          # обычная максимальная скорость, м/с
+const LOCO_SPRINT_SPEED := 12.0      # максимальная при спринте (≈1.5×)
+const LOCO_ACCEL := 25.0             # разгон, м/с² (≈0.32 с до полной)
+const LOCO_DECEL := 20.0             # торможение, м/с² (мягче разгона → глайд)
+const LOCO_TURN_ROT := 18.0          # темп доворота тела, 1/с
+const LOCO_TURN_MIN_SPEED := 1.0     # ниже этой скорости не доворачиваемся
+const LOCO_MAX_BANK_DEG := 20.0      # макс. крен корпуса в повороте, градусы
+const LOCO_RUN_SCALE_FUDGE := 1.33   # анти-слайд: scale = (speed/top)*fudge
+const LOCO_RUN_ANIM_SPEED := 1.5     # порог входа в стейт run, м/с
+const LOCO_SPRINT_ANIM_SPEED := 9.0  # порог входа в стейт sprint, м/с
+const PLAYER_COLLISION_MASK := 2     # слой полевых игроков (bit2): бьются только друг о друга
+
 
 # ═══════════════════════════════════════════
 #  DRIBBLING
