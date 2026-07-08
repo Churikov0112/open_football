@@ -30,6 +30,7 @@ var _tackle_fouled_player: Node3D
 var _tackled_player: CharacterBody3D
 var _tackled_fall_timer: float = 0.0
 var _tackled_orig_rotation: Vector3 = Vector3.ZERO
+var _manual_swap_cooldown: int = 0
 
 
 func _ready() -> void:
@@ -408,17 +409,21 @@ func _physics_process(delta: float) -> void:
 	_handle_dribbling()
 	_handle_player_input(delta)
 
-	# Auto-switch control to whoever on our team has the ball
-	if ball.has_method(&"set_dribbler") and ball.dribbler:
-		var db: Node3D = ball.dribbler
-		if (db == player_home or db == player_teammate) and db != controlled_player:
-			controlled_player = db
-			_sync_ai_controllers()
+	# Auto-switch to whoever on our team has the ball (skip if Q was just pressed)
+	if _manual_swap_cooldown > 0:
+		_manual_swap_cooldown -= 1
+	else:
+		if ball.has_method(&"set_dribbler") and ball.dribbler:
+			var db: Node3D = ball.dribbler
+			if (db == player_home or db == player_teammate) and db != controlled_player:
+				controlled_player = db
+				_sync_ai_controllers()
 
 	# Swap player (Q) — manual switch between player_home and player_teammate
 	if Input.is_action_just_pressed(&"swap_player"):
 		controlled_player = player_teammate if controlled_player == player_home else player_home
 		_sync_ai_controllers()
+		_manual_swap_cooldown = 10
 
 	# Set opponent's target_node to whoever on our team is dribbling
 	if player_away:
@@ -690,7 +695,6 @@ func _on_tackle_hit_player(body: CharacterBody3D, normal: Vector3) -> void:
 	_tackled_fall_timer = FootballConstants.SLIDE_TACKLE_FALL_TIME
 	body.add_to_group("fallen")
 
-
 func _handle_tackle(delta: float) -> void:
 	match _tackle_state:
 		TackleState.SLIDING:
@@ -713,7 +717,7 @@ func _tackle_slide(delta: float) -> void:
 		var body := collision.get_collider()
 		if body is CharacterBody3D and not _same_team(_tackle_player, body):
 			_on_tackle_hit_player(body, collision.get_normal())
-			_tackle_enter_recovery()
+			_tackle_enter_recovery(0.5)
 			return
 		else:
 			_tackle_dist_remaining = 0.0
@@ -731,9 +735,9 @@ func _tackle_slide(delta: float) -> void:
 		_tackle_enter_recovery()
 
 
-func _tackle_enter_recovery() -> void:
+func _tackle_enter_recovery(recovery_time: float = -1.0) -> void:
 	_tackle_state = TackleState.RECOVERING
-	_tackle_recovery_timer = FootballConstants.SLIDE_TACKLE_RECOVERY_TIME
+	_tackle_recovery_timer = FootballConstants.SLIDE_TACKLE_RECOVERY_TIME if recovery_time < 0 else recovery_time
 	_tackle_area.monitoring = false
 
 
