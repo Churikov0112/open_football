@@ -47,23 +47,23 @@ func _initialize() -> void:
 		print("CHECK FAIL: слишком мало физкостей построено: ", n); ok = false
 
 	var has_hips := false
-	var has_arm := false
+	var has_forearm := false
 	var has_excluded := false
 	var excluded_substrings := ["finger", "index", "thumb", "hand", "toe"]
 	for bone_name in names:
 		var lower: String = String(bone_name).to_lower()
 		if lower.contains("hips"):
 			has_hips = true
-		if lower.contains("arm"):
-			has_arm = true
+		if lower.contains("forearm"):
+			has_forearm = true
 		for ex in excluded_substrings:
 			if lower.contains(ex):
 				has_excluded = true
 
 	if not has_hips:
 		print("CHECK FAIL: среди построенных костей нет 'hips'"); ok = false
-	if not has_arm:
-		print("CHECK FAIL: среди построенных костей нет 'arm' (предплечья/руки потеряны?)"); ok = false
+	if not has_forearm:
+		print("CHECK FAIL: среди построенных костей нет 'forearm' (предплечья потеряны?)"); ok = false
 	if has_excluded:
 		print("CHECK FAIL: среди построенных костей есть исключённая (палец/кисть/носок)"); ok = false
 
