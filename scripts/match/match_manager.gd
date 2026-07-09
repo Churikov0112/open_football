@@ -409,6 +409,7 @@ func _setup_away_player() -> void:
 	shape.height = 1.5
 	shape.radius = 0.3
 	col.shape = shape
+	col.position = Vector3(0, 0.25, 0)
 	new_player.add_child(col)
 	add_child(new_player)
 	new_player.add_to_group("team_2")
@@ -437,6 +438,7 @@ func _setup_teammate() -> void:
 	shape.height = 1.5
 	shape.radius = 0.3
 	col.shape = shape
+	col.position = Vector3(0, 0.25, 0)
 	new_player.add_child(col)
 	add_child(new_player)
 	new_player.add_to_group("team_1")
