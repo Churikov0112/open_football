@@ -30,8 +30,9 @@ for fname in sorted(os.listdir(src_dir)):
         continue
     anim_files[os.path.splitext(fname)[0].lower()] = fname
 
-# Клипы, приехавшие с root motion → морозим горизонтальную трансляцию корневой кости
-# (делаем in-place). Для уже-in-place клипов это no-op. standing_up НЕ трогаем.
+# Клипы, приехавшие с root motion → морозим ВСЮ трансляцию корневой кости (делаем
+# in-place, включая вертикаль — см. freeze_root_translation). Для уже-in-place клипов
+# это no-op. standing_up НЕ трогаем.
 IN_PLACE_CLIPS = {"tackle", "roll_left", "roll_right"}
 
 def _action_fcurves(act):
@@ -49,7 +50,7 @@ def _action_fcurves(act):
                     fcurves.extend(cb.fcurves)
     return fcurves
 
-def freeze_root_horizontal(imp_arm, act):
+def freeze_root_translation(imp_arm, act):
     # Корневая кость Mixamo (без родителя), обычно "mixamorig:Hips".
     root_bone = None
     for b in imp_arm.data.bones:
@@ -60,13 +61,14 @@ def freeze_root_horizontal(imp_arm, act):
         print("IN_PLACE: не найдена корневая кость, пропуск")
         return
     path = 'pose.bones["%s"].location' % root_bone
+    # Морозим ВСЕ три оси (0,1,2) — горизонталь (индексы 0,1 → Godot X,Z) и вертикаль
+    # (индекс 2 → Godot Y). Изначально вертикаль оставляли живой ("естественный боб"),
+    # но у tackle.fbx она оказалась не бобом, а НЕОГРАНИЧЕННЫМ ДРЕЙФОМ (Hips монотонно
+    # уезжает вверх ~4.4м за клип при исходном масштабе 0.01 — на экране это подкатчик,
+    # зависающий в воздухе). У roll_left/roll_right вертикальная амплитуда и так мала
+    # (~5-6см), так что полная заморозка ничего не портит визуально.
     for fc in _action_fcurves(act):
-        # Blender — Z-up: индекс 2 (Z) кости уходит в export как вертикаль
-        # (glTF/Godot Y после Z-up→Y-up конверсии), а индексы 0 (X) и 1 (Y) —
-        # это горизонтальная плоскость (становится Godot X и Z). Проверено
-        # эмпирически: диапазон индекса 0 совпал с дрейфом Godot X, индекса 1 —
-        # с дрейфом Godot Z. Морозим 0 и 1, индекс 2 (вертикаль) оставляем.
-        if fc.data_path == path and fc.array_index in (0, 1):
+        if fc.data_path == path and fc.array_index in (0, 1, 2):
             if not fc.keyframe_points:
                 continue
             first = fc.keyframe_points[0].co[1]
@@ -75,7 +77,7 @@ def freeze_root_horizontal(imp_arm, act):
                 kp.handle_left[1] = first
                 kp.handle_right[1] = first
             fc.update()
-    print("IN_PLACE: заморожена горизонталь Hips для action %s" % act.name)
+    print("IN_PLACE: заморожена трансляция Hips (все оси) для action %s" % act.name)
 
 if not anim_files:
     raise RuntimeError("В %s не найдено ни одного FBX-клипа (кроме character.fbx)" % src_dir)
@@ -91,7 +93,7 @@ for anim_name, fname in anim_files.items():
     act = imp_arm.animation_data.action
     act.name = anim_name
     if anim_name in IN_PLACE_CLIPS:
-        freeze_root_horizontal(imp_arm, act)
+        freeze_root_translation(imp_arm, act)
     start = int(act.frame_range[0])
     track = main_arm.animation_data.nla_tracks.new()
     track.name = anim_name

@@ -1,7 +1,10 @@
 extends SceneTree
 
-# Проверяет, что у клипов из IN_PLACE_CLIPS горизонтальная позиция Hips (X,Z) почти
-# не меняется вдоль клипа — т.е. root motion убран (клип in-place).
+# Проверяет, что у клипов из IN_PLACE_CLIPS позиция Hips (X, Y, Z) почти не меняется
+# вдоль клипа — т.е. root motion убран (клип in-place) по всем трём осям. Раньше
+# проверяли только горизонталь (X,Z), считая вертикаль (Y) безобидным "бобом" — но
+# у tackle.fbx она оказалась неограниченным дрейфом (Hips монотонно уезжал вверх на
+# несколько метров за клип), из-за чего подкатчик визуально зависал в воздухе.
 func _initialize() -> void:
 	var ok := true
 	var scene: PackedScene = load("res://assets/models/footballer.glb")
@@ -20,15 +23,17 @@ func _initialize() -> void:
 		var ti := _hips_position_track(anim)
 		if ti < 0:
 			print("CHECK FAIL: нет position-трека Hips в ", clip); ok = false; continue
-		var min_x := INF; var max_x := -INF; var min_z := INF; var max_z := -INF
+		var min_x := INF; var max_x := -INF; var min_y := INF; var max_y := -INF; var min_z := INF; var max_z := -INF
 		for k in anim.track_get_key_count(ti):
 			var v: Vector3 = anim.track_get_key_value(ti, k)
 			min_x = minf(min_x, v.x); max_x = maxf(max_x, v.x)
+			min_y = minf(min_y, v.y); max_y = maxf(max_y, v.y)
 			min_z = minf(min_z, v.z); max_z = maxf(max_z, v.z)
 		var drift_x := max_x - min_x
+		var drift_y := max_y - min_y
 		var drift_z := max_z - min_z
-		if drift_x > eps or drift_z > eps:
-			print("CHECK FAIL: ", clip, " дрейф Hips X=", drift_x, " Z=", drift_z); ok = false
+		if drift_x > eps or drift_y > eps or drift_z > eps:
+			print("CHECK FAIL: ", clip, " дрейф Hips X=", drift_x, " Y=", drift_y, " Z=", drift_z); ok = false
 
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
