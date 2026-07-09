@@ -10,11 +10,14 @@
 - **All match logic** lives in `match_manager.gd` (controls input, AI, dribbling, goals, camera)
 - **Player scripts** live on the CharacterBody3D nodes: `simple_ai.gd` (opponent), `teammate_ai.gd` (our team AI)
 - **Player visuals** are a separate presentation layer: each field player gets a `scenes/player_visual.tscn` (`PlayerVisual`) child holding a rigged Mixamo model + AnimationTree. Gameplay (physics/AI) and presentation (model/anim) are kept decoupled.
+- **Player locomotion** is a third component: every field player also gets a `PlayerMotor` child (`player_motor.gd`), spawned AFTER `PlayerVisual` (order matters — it finds its sibling visual once in `_ready()`). It owns all movement physics; callers only call `motor.set_move_intent(dir, speed_scale)`, never write `global_position`/`rotation` directly.
 - **Ball physics** in `ball_controller.gd` (`_integrate_forces` — velocity-matching dribbling, no spring)
 
 ## Key quirks
 - **InputMap** is set up **programmatically** in `match_manager.gd:_setup_inputs()` — `project.godot` input bindings are unused/overridden. Always edit there, not in `project.godot`.
-- **Player movement** uses **direct position manipulation** (`move_toward`), not `velocity`/`move_and_slide()`
+- **Player movement** is **velocity + `move_and_slide()`** via `PlayerMotor` (accel/decel, smoothed turn, smoothed lean/banking, sprint) — NOT direct position manipulation anymore. The slide tackle is still the one exception, moving the tackler via manual `move_and_collide()` while that player's motor is control-locked.
+- **Sprint:** hold Shift — human only, no stamina, just a higher `speed_scale` into `set_move_intent`.
+- **Collision layers are split three ways** — default layer (pitch + ball, for goal/tackle-`Area3D` detection), player layer (`PLAYER_COLLISION_MASK`, bit 2), boundary-wall layer (`BOUNDARY_COLLISION_LAYER`, bit 3). Players mask in player+boundary but NOT the ball's layer — if a player's mask ever includes the ball's layer, `move_and_slide()` physically snags on the ball (juddery dribbling, spawn-point shove).
 - **Dribbling** = velocity matching in `_integrate_forces` (ball matches player velocity + position correction `*30`, clamped to 12)
 - **Camera:** sideline broadcast style — `camera_pivot` at X=-40, Y=20, follows ball Z, `look_at(Vector3(0,0,ballZ), UP)`
 - **WASD** is camera-relative (uses `camera_pivot.global_transform.basis`)
@@ -39,19 +42,25 @@ scenes/player_visual.tscn       — rigged model + team-tint wrapper (child of e
 scripts/match/match_manager.gd  — all game logic
 scripts/ai/simple_ai.gd         — opponent AI (red, chases target/ball, shoots)
 scripts/ai/teammate_ai.gd       — teammate AI (blue, positions for pass / chases ball)
-scripts/player/player_visual.gd — PlayerVisual: idle/run AnimationTree + apply_appearance tint
+scripts/player/player_visual.gd — PlayerVisual: idle/run/sprint AnimationTree + apply_appearance tint + set_lean
+scripts/player/player_motor.gd  — PlayerMotor: velocity+inertia locomotion (accel/decel/turn/lean/sprint)
 scripts/ball/ball_controller.gd — ball physics, dribbling, kick
 scripts/camera/match_camera.gd  — camera tracking
 scripts/data/football_constants.gd — all game constants (autoloaded)
-assets/models/footballer.glb    — Mixamo model + idle/run (built by tools/merge_mixamo.py)
+assets/models/footballer.glb    — Mixamo model + idle/run/sprint + action clips (built by tools/merge_mixamo.py)
 tools/merge_mixamo.py           — Blender headless FBX→glb merge
 tests/                          — headless CHECK scripts (godot --headless -s res://tests/<x>.gd)
 ```
 
 ## Asset pipeline (players)
 - Players are **rigged Mixamo models**, not procedural capsules. Raw FBX in `assets/models/mixamo_src/` are **gitignored** (public repo — ship only the `.glb`).
-- Rebuild the model with Blender 5.1 headless: `tools/merge_mixamo.py` merges character + idle + run into `assets/models/footballer.glb`; then run Godot `--headless --import`.
+- Rebuild the model with Blender 5.1 headless: `tools/merge_mixamo.py` merges the character + every FBX in `assets/models/mixamo_src/` into `assets/models/footballer.glb`; then run Godot `--headless --import`.
 - Provenance/licenses in `ASSET_CREDITS.md`. Full design in `docs/superpowers/specs/2026-07-08-3d-assets-pipeline-design.md`.
+
+## Locomotion
+- Full design in `docs/superpowers/specs/2026-07-09-living-locomotion-design.md`; executed plan in `docs/superpowers/plans/2026-07-09-living-locomotion.md`.
+- Tuning constants: `FootballConstants.LOCO_*` (top/sprint speed, accel, decel, turn rate, bank angle + smoothing, anti-slide fudge, animation-state speed thresholds).
+- Out of scope for now (deliberately): foot IK, ragdoll/physics-blending, motion matching.
 
 ## Constraints
 - No test framework/CI/lint — only manual headless validation + `tests/` CHECK scripts; rendered visuals need a human running the game
