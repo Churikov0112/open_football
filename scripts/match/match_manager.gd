@@ -26,12 +26,8 @@ var _tackle_clean: bool = true
 var _hit_processed: bool = false
 var _tackle_recovery_timer: float = 0.0
 var _tackle_area: Area3D
-var _tackle_player_orig_rotation: Vector3 = Vector3.ZERO
 var _tackle_foul_position: Vector3 = Vector3.ZERO
 var _tackle_fouled_player: Node3D
-var _tackled_player: CharacterBody3D
-var _tackled_fall_timer: float = 0.0
-var _tackled_orig_rotation: Vector3 = Vector3.ZERO
 
 var _fall_state: FallState = FallState.NONE
 var _fall_player: CharacterBody3D
@@ -592,7 +588,6 @@ func _handle_dribbling() -> void:
 	if ball.dribbler:
 		var dist: float = ball.dribbler.global_position.distance_to(ball.global_position)
 		if dist > 3.0:
-			print("[TACKLE_DEBUG] Dribbler ", ball.dribbler.name, " too far (", dist, "), releasing")
 			ball.release_dribble()
 		return
 	for p in [player_home, player_teammate, player_away]:
@@ -600,7 +595,6 @@ func _handle_dribbling() -> void:
 			continue
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
-			print("[TACKLE_DEBUG] Auto-assign dribbler: ", p.name, " is within 1.0m of ball")
 			ball.set_dribbler(p)
 			return
 
@@ -829,31 +823,23 @@ func _can_tackle(tackler: Node3D) -> bool:
 
 func _try_tackle(player: CharacterBody3D) -> bool:
 	if _tackle_state != TackleState.NORMAL:
-		print("[TACKLE_DEBUG] _try_tackle: blocked, state=", _tackle_state)
 		return false
 	if not _can_tackle(player):
-		print("[TACKLE_DEBUG] _try_tackle: _can_tackle returned false")
 		return false
-	print("[TACKLE_DEBUG] _try_tackle: SUCCESS, starting tackle toward ball")
 	_start_tackle(player, ball)
 	return true
 
 
 func _start_tackle(player: CharacterBody3D, target: Node3D = null) -> void:
 	if _tackle_state != TackleState.NORMAL:
-		print("[TACKLE_DEBUG] _start_tackle: blocked, state=", _tackle_state)
 		return
 	if not _can_tackle(player):
-		print("[TACKLE_DEBUG] _start_tackle: _can_tackle returned false")
 		return
 
 	if not target:
 		target = ball
 	if not target:
-		print("[TACKLE_DEBUG] _start_tackle: no target")
 		return
-
-	print("[TACKLE_DEBUG] _start_tackle: TACKLE STARTED! player=", player.name, " target=", target.name)
 
 	# Лочим только когда такл реально стартует (после всех guard-выходов выше) —
 	# иначе на раннем return лок повиснет без парной разблокировки в _tackle_recover.
@@ -877,8 +863,9 @@ func _start_tackle(player: CharacterBody3D, target: Node3D = null) -> void:
 	_tackle_area.global_position = area_pos
 	_tackle_area.monitoring = true
 
-	_tackle_player_orig_rotation = player.rotation
-	player.rotation.x = deg_to_rad(90)
+	var tackler_visual := _player_visual(player)
+	if tackler_visual != null and tackler_visual.has_method(&"play_oneshot"):
+		tackler_visual.play_oneshot(&"tackle")
 
 
 func _on_tackle_body_entered(body: Node) -> void:
@@ -1133,12 +1120,10 @@ func _tackle_recover(delta: float) -> void:
 		_tackle_state = TackleState.NORMAL
 		return
 
-	# Lerp capsule rotation back to original
-	_tackle_player.rotation.x = lerp_angle(_tackle_player.rotation.x,
-		_tackle_player_orig_rotation.x, 5.0 * delta)
-
 	if _tackle_recovery_timer <= 0.0:
-		_tackle_player.rotation = _tackle_player_orig_rotation
+		var trec_visual := _player_visual(_tackle_player)
+		if trec_visual != null and trec_visual.has_method(&"recover"):
+			trec_visual.recover()
 		if not _tackle_clean and ball.has_method(&"set_dribbler"):
 			ball.release_dribble()
 			ball.linear_velocity = Vector3.ZERO
