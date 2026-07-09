@@ -52,9 +52,14 @@ func _initialize() -> void:
 	for name in pb_names.keys():
 		if String(name).to_lower().contains("index") or String(name).to_lower().contains("finger"):
 			print("CHECK FAIL: пальцевая кость не исключена: ", name); ok = false
-	# Должна быть физкость хотя бы для Hips и LeftUpLeg (не-листовые).
+	# Должна быть физкость для Hips, Spine (единственный ребёнок которого — исключённый
+	# палец: регрессия на конфликт leaf-test/sizing) и LeftUpLeg (не-листовые).
 	if not pb_names.has("Hips"):
 		print("CHECK FAIL: нет физкости для Hips"); ok = false
+	if not pb_names.has("Spine"):
+		print("CHECK FAIL: нет физкости для Spine (единственный ребёнок — исключённый палец)"); ok = false
+	if not pb_names.has("LeftUpLeg"):
+		print("CHECK FAIL: нет физкости для LeftUpLeg"); ok = false
 
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)

@@ -15,8 +15,15 @@ func _skip(bone_name: String) -> bool:
 			return true
 	return false
 
-## Первый не-исключённый ребёнок кости (для размера капсулы), или -1.
+## Первый ребёнок любого рода (для теста «лист» и фолбэка размера капсулы), или -1.
 func _first_child(skel: Skeleton3D, bone_id: int) -> int:
+	for b in skel.get_bone_count():
+		if skel.get_bone_parent(b) == bone_id:
+			return b
+	return -1
+
+## Первый НЕ-исключённый ребёнок (предпочтительно им меряем капсулу), или -1.
+func _first_unskipped_child(skel: Skeleton3D, bone_id: int) -> int:
 	for b in skel.get_bone_count():
 		if skel.get_bone_parent(b) == bone_id and not _skip(skel.get_bone_name(b)):
 			return b
@@ -30,10 +37,13 @@ func build(skeleton: Skeleton3D, layer: int) -> int:
 		var bone_name := skeleton.get_bone_name(bone_id)
 		if _skip(bone_name):
 			continue
-		var child := _first_child(skeleton, bone_id)
-		if child < 0:
-			continue  # лист — накрыт капсулой родителя
-		var child_rest := skeleton.get_bone_rest(child)
+		var any_child := _first_child(skeleton, bone_id)
+		if any_child < 0:
+			continue  # истинный лист — физкость не строим
+		var sizing_child := _first_unskipped_child(skeleton, bone_id)
+		if sizing_child < 0:
+			sizing_child = any_child  # единственный ребёнок исключён (напр. кисть) — мерим по нему
+		var child_rest := skeleton.get_bone_rest(sizing_child)
 		var length := maxf(child_rest.origin.length(), 0.05)
 		var pb := PhysicalBone3D.new()
 		pb.bone_name = bone_name
