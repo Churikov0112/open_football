@@ -933,6 +933,13 @@ func _on_tackle_hit_player(body: CharacterBody3D, normal: Vector3) -> void:
 
 ## Запустить физ-ragdoll падение жертвы + завести автомат вставания.
 func _begin_fall(body: CharacterBody3D, normal: Vector3) -> void:
+	# Re-entrancy: другое падение ещё идёт (tackle-recovery 0.5с короче цепочки падения ~3с) —
+	# корректно завершаем прошлую жертву, иначе она осиротеет с вечным _fall_lock/motor-lock/fallen.
+	if _fall_state != FallState.NONE:
+		if is_instance_valid(_fall_player):
+			_finish_fall()
+		else:
+			_abort_fall()
 	var visual := _player_visual(body)
 	if visual == null or not visual.has_method(&"start_ragdoll"):
 		# Фолбэк: нет визуала/ragdoll — просто помечаем fallen на короткое время.
@@ -1051,7 +1058,7 @@ func _advance_roll(delta: float, next_state: FallState, to_getup: bool = false) 
 ## Завершить падение: вернуть idle, снять fallen, разлочить motor.
 ## Единственный штатный путь очистки состояния падения.
 func _finish_fall() -> void:
-	if _fall_visual != null:
+	if _fall_visual != null and is_instance_valid(_fall_visual):
 		_fall_visual.recover()
 	if is_instance_valid(_fall_player):
 		_fall_player.remove_from_group("fallen")
