@@ -102,8 +102,11 @@ func _physics_process(delta: float) -> void:
 	var ramp := speed / (0.5 * FootballConstants.LOCO_TOP_SPEED)
 
 	# Вертикаль: гравитация + приземление на пол-коллайдер (вместо ручного пина Y).
-	# Пока сбиты (fallen) — телом владеет ragdoll/оркестратор, motor вертикаль не трогает.
-	if _body.is_in_group("fallen"):
+	# Пока заблокированы/сбиты — телом владеет внешняя система (ручной move_and_collide()
+	# в подкате, либо ragdoll/оркестратор при fallen), motor вертикаль не трогает — иначе
+	# move_and_slide() ниже спорит за Y с той системой в тот же кадр (тот же риск, что и
+	# комментарий про гашение скорости выше, только по вертикали).
+	if locked_or_fallen:
 		_vy = 0.0
 		new_vel.y = 0.0
 	else:
