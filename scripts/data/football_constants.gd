@@ -127,6 +127,21 @@ const AI_TACKLE_COOLDOWN := 2.0
 
 
 # ═══════════════════════════════════════════
+#  RAGDOLL TACKLE / GRAVITY (тюнинг-старт)
+# ═══════════════════════════════════════════
+
+const GRAVITY := 20.0                 # аркадная гравитация, м/с²
+const RAGDOLL_COLLISION_LAYER := 8    # bit4: физкости ragdoll, маскируют только пол (слой1)
+const RAGDOLL_TACKLE_IMPULSE := 6.0   # сила сбивающего импульса вдоль подката
+const RAGDOLL_UP_IMPULSE := 2.0       # вертикальная добавка импульса
+const RAGDOLL_SETTLE_SPEED := 0.6     # ниже этой скорости таза (м/с) → ragdoll осел
+const RAGDOLL_MIN_DOWN_TIME := 0.4    # минимум фазы физики, с
+const RAGDOLL_MAX_DOWN_TIME := 1.5    # хард-кап фазы физики, с
+const PRONE_BLEND_TIME := 0.2         # кроссфейд ragdoll→анимация, с
+const ROLL_DISTANCE := 1.2            # смещение тела за один перекат, м
+
+
+# ═══════════════════════════════════════════
 #  CAMERA
 # ═══════════════════════════════════════════
 

@@ -27,13 +27,19 @@ static func lean_deg(lateral_norm: float, speed_ramp: float, max_bank_deg: float
 static func smooth_scalar(current: float, target: float, rate: float, delta: float) -> float:
 	return lerpf(current, target, clampf(rate * delta, 0.0, 1.0))
 
+## Вертикальная скорость: на земле обнуляется (стоим на полу), в воздухе копит g.
+static func gravity_step(vy: float, grounded: bool, gravity: float, delta: float) -> float:
+	if grounded:
+		return 0.0
+	return vy - gravity * delta
+
 var _intent_dir: Vector3 = Vector3.ZERO
 var _intent_scale: float = 1.0
 var _locked: bool = false
-var _ground_y: float = 0.5
 var _body: CharacterBody3D
 var _visual: PlayerVisual
 var _lean_deg: float = 0.0
+var _vy: float = 0.0
 
 func _ready() -> void:
 	_body = get_parent() as CharacterBody3D
@@ -41,7 +47,8 @@ func _ready() -> void:
 		push_warning("PlayerMotor: родитель не CharacterBody3D — motor выключен")
 		set_physics_process(false)
 		return
-	_ground_y = _body.global_position.y
+	_body.up_direction = Vector3.UP
+	_body.floor_snap_length = 0.3
 	for c in _body.get_children():
 		if c is PlayerVisual:
 			_visual = c
@@ -94,10 +101,18 @@ func _physics_process(delta: float) -> void:
 	var lateral := right.dot(accel_vec) / FootballConstants.LOCO_ACCEL
 	var ramp := speed / (0.5 * FootballConstants.LOCO_TOP_SPEED)
 
+	# Вертикаль: гравитация + приземление на пол-коллайдер (вместо ручного пина Y).
+	# Пока сбиты (fallen) — телом владеет ragdoll/оркестратор, motor вертикаль не трогает.
+	if _body.is_in_group("fallen"):
+		_vy = 0.0
+		new_vel.y = 0.0
+	else:
+		_vy = PlayerMotor.gravity_step(_vy, _body.is_on_floor(), FootballConstants.GRAVITY, delta)
+		new_vel.y = _vy
 	_body.velocity = new_vel
 	_body.move_and_slide()
-	if not _body.is_in_group("fallen"):
-		_body.global_position.y = _ground_y  # поле плоское — пиннинг высоты (кроме сбитых: не гасить вертикальный отскок такла)
+	if _body.is_on_floor():
+		_vy = 0.0
 
 	# Сырой целевой крен скачет вместе с ускорением (WASD — не аналоговый ввод,
 	# направление меняется мгновенно) — сглаживаем само значение, а не только вход в него.

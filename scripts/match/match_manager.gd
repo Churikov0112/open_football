@@ -56,6 +56,7 @@ const KICK_POWER_MAX: float = 25.0
 
 func _ready() -> void:
 	_setup_inputs()
+	_setup_floor()
 	_setup_grass()
 	_setup_field_markings()
 	_setup_ball()
@@ -561,6 +562,24 @@ func _setup_tackle_area() -> void:
 	_tackle_area.monitorable = false
 	_tackle_area.body_entered.connect(_on_tackle_body_entered)
 	add_child(_tackle_area)
+
+
+## Статический пол на y=0: опора для локомоции и приземления ragdoll.
+## ПРИМЕЧАНИЕ (отклонение от брифа): бриф просил collision_layer=1 («питч+мяч»), но
+## поле-игроков collision_mask = PLAYER_COLLISION_MASK | BOUNDARY_COLLISION_LAYER
+## намеренно НЕ включает слой 1 (чтобы капсула не толкала мяч физически — см. CLAUDE.md
+## и хотфикс 78990c8). Проверено эмпирически: пол на слое 1 → игрок проваливается
+## насквозь (is_on_floor() всегда false). Кладём пол на BOUNDARY_COLLISION_LAYER —
+## его уже видят и игроки (маска 2|4), и мяч (маска 1|4) — без правки чужих масок.
+func _setup_floor() -> void:
+	var floor_body := StaticBody3D.new()
+	floor_body.name = "Floor"
+	floor_body.collision_layer = FootballConstants.BOUNDARY_COLLISION_LAYER
+	floor_body.collision_mask = 0
+	var col := CollisionShape3D.new()
+	col.shape = WorldBoundaryShape3D.new()  # бесконечная плоскость, нормаль +Y, y=0
+	floor_body.add_child(col)
+	add_child(floor_body)
 
 
 func _handle_dribbling() -> void:

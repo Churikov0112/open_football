@@ -40,5 +40,11 @@ func _initialize() -> void:
 	if not is_equal_approx(PlayerMotor.smooth_scalar(0.0, 20.0, 8.0, 1.0), 20.0):
 		print("CHECK FAIL: smooth_scalar full"); ok = false
 
+	# gravity_step: в воздухе копит вниз; на земле обнуляется (не накапливает бесконечно).
+	if not is_equal_approx(PlayerMotor.gravity_step(0.0, false, 20.0, 0.1), -2.0):
+		print("CHECK FAIL: gravity_step air → ", PlayerMotor.gravity_step(0.0, false, 20.0, 0.1)); ok = false
+	if not is_equal_approx(PlayerMotor.gravity_step(-5.0, true, 20.0, 0.1), 0.0):
+		print("CHECK FAIL: gravity_step grounded → ", PlayerMotor.gravity_step(-5.0, true, 20.0, 0.1)); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
