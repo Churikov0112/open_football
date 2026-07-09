@@ -23,12 +23,17 @@ static func smooth_yaw(current_yaw: float, target_yaw: float, turn_rot: float, d
 static func lean_deg(lateral_norm: float, speed_ramp: float, max_bank_deg: float) -> float:
 	return clampf(lateral_norm, -1.0, 1.0) * max_bank_deg * clampf(speed_ramp, 0.0, 1.0)
 
+## Экспоненциальное сглаживание скаляра к цели темпом rate (1/сек).
+static func smooth_scalar(current: float, target: float, rate: float, delta: float) -> float:
+	return lerpf(current, target, clampf(rate * delta, 0.0, 1.0))
+
 var _intent_dir: Vector3 = Vector3.ZERO
 var _intent_scale: float = 1.0
 var _locked: bool = false
 var _ground_y: float = 0.5
 var _body: CharacterBody3D
 var _visual: PlayerVisual
+var _lean_deg: float = 0.0
 
 func _ready() -> void:
 	_body = get_parent() as CharacterBody3D
@@ -94,6 +99,11 @@ func _physics_process(delta: float) -> void:
 	if not _body.is_in_group("fallen"):
 		_body.global_position.y = _ground_y  # поле плоское — пиннинг высоты (кроме сбитых: не гасить вертикальный отскок такла)
 
+	# Сырой целевой крен скачет вместе с ускорением (WASD — не аналоговый ввод,
+	# направление меняется мгновенно) — сглаживаем само значение, а не только вход в него.
+	var target_lean := PlayerMotor.lean_deg(lateral, ramp, FootballConstants.LOCO_MAX_BANK_DEG)
+	_lean_deg = PlayerMotor.smooth_scalar(_lean_deg, target_lean, FootballConstants.LOCO_BANK_SMOOTH, delta)
+
 	if _visual != null:
 		_visual.set_locomotion(new_vel)
-		_visual.set_lean(PlayerMotor.lean_deg(lateral, ramp, FootballConstants.LOCO_MAX_BANK_DEG))
+		_visual.set_lean(_lean_deg)

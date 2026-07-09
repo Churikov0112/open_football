@@ -63,6 +63,7 @@ const LOCO_DECEL := 20.0             # торможение, м/с² (мягче
 const LOCO_TURN_ROT := 18.0          # темп доворота тела, 1/с
 const LOCO_TURN_MIN_SPEED := 1.0     # ниже этой скорости не доворачиваемся
 const LOCO_MAX_BANK_DEG := 20.0      # макс. крен корпуса в повороте, градусы
+const LOCO_BANK_SMOOTH := 8.0        # сглаживание крена, 1/сек (гасит рывки от дискретного WASD-ввода)
 const LOCO_RUN_SCALE_FUDGE := 1.33   # анти-слайд: scale = (speed/top)*fudge
 const LOCO_RUN_ANIM_SPEED := 1.5     # порог входа в стейт run, м/с
 const LOCO_SPRINT_ANIM_SPEED := 9.0  # порог входа в стейт sprint, м/с

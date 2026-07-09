@@ -33,5 +33,12 @@ func _initialize() -> void:
 	if not is_equal_approx(PlayerMotor.lean_deg(2.0, 3.0, 20.0), 20.0):
 		print("CHECK FAIL: lean_deg clamp"); ok = false
 
+	# smooth_scalar: движется к цели, не скачет мгновенно; при rate*delta≥1 доходит до цели
+	var s := PlayerMotor.smooth_scalar(0.0, 20.0, 8.0, 0.1)
+	if not is_equal_approx(s, 16.0):
+		print("CHECK FAIL: smooth_scalar step → ", s); ok = false
+	if not is_equal_approx(PlayerMotor.smooth_scalar(0.0, 20.0, 8.0, 1.0), 20.0):
+		print("CHECK FAIL: smooth_scalar full"); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
