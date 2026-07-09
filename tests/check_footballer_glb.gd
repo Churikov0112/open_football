@@ -16,7 +16,7 @@ func _initialize() -> void:
 	else:
 		var anims := ap.get_animation_list()
 		print("CHECK: анимации в glb = ", anims)
-		for want in ["idle", "run"]:
+		for want in ["idle", "run", "roll_left", "roll_right"]:
 			if not ap.has_animation(want):
 				print("CHECK FAIL: нет анимации '" + want + "'")
 				ok = false
