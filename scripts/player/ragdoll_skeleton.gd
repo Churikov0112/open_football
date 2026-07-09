@@ -4,6 +4,14 @@ extends RefCounted
 ## Кости, которые не превращаем в физкости (мелкие → взрыв солвера, невидимы с камеры).
 const SKIP_SUBSTRINGS := ["Hand", "Finger", "Toe", "Thumb", "Index", "Middle", "Ring", "Pinky"]
 
+## Угловые лимиты cone-джойнта (градусы; тюнинг-старт). PIN-джойнты (было изначально)
+## не ограничивают вращение вообще — цепочка из 18 капсул с нулевым сопротивлением
+## вращению от одного импульса схлопывается в спутанную массу ("гигантский блин" из
+## живого прогона). swing — раскрыв конуса относительно направления кости; twist —
+## вращение вокруг собственной оси (Godot-дефолт 180° — фактически свободное).
+const JOINT_SWING_SPAN_DEG := 45.0
+const JOINT_TWIST_SPAN_DEG := 30.0
+
 var _skeleton: Skeleton3D
 var _bones: Array = []          # созданные PhysicalBone3D
 var _hip: PhysicalBone3D
@@ -59,8 +67,12 @@ func build(skeleton: Skeleton3D, layer: int) -> int:
 		pb.bone_name = bone_name
 		pb.collision_layer = layer
 		pb.collision_mask = FootballConstants.BOUNDARY_COLLISION_LAYER   # слой пола — приземляемся на пол, не трогая мяч(слой1)/игроков(слой2)
-		pb.joint_type = PhysicalBone3D.JOINT_TYPE_PIN  # старт: свободные пины (стабильно);
-		                                               # cone-лимиты — живой тюнинг
+		pb.joint_type = PhysicalBone3D.JOINT_TYPE_CONE
+		# joint_constraints/*_span у PhysicalBone3D — в градусах (дефолт движка сам это
+		# подтверждает: swing_span=45.0, twist_span=180.0 — разумные "45°"/"180°", а не
+		# абсурдные тысячи градусов, какими были бы 45/180 радиан).
+		pb.set("joint_constraints/swing_span", JOINT_SWING_SPAN_DEG)
+		pb.set("joint_constraints/twist_span", JOINT_TWIST_SPAN_DEG)
 		# Капсула вдоль направления к ребёнку, центр на середине кости.
 		var dir := child_rest.origin.normalized()
 		var cs := CollisionShape3D.new()
