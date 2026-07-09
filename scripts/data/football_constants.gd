@@ -131,7 +131,7 @@ const AI_TACKLE_COOLDOWN := 2.0
 # ═══════════════════════════════════════════
 
 const GRAVITY := 20.0                 # аркадная гравитация, м/с²
-const RAGDOLL_COLLISION_LAYER := 8    # bit4: физкости ragdoll, маскируют только пол (слой1)
+const RAGDOLL_COLLISION_LAYER := 8    # bit4: физкости ragdoll; маскируют слой пола (BOUNDARY_COLLISION_LAYER=4) — приземляются на пол, не трогая мяч (слой1)/игроков
 const RAGDOLL_TACKLE_IMPULSE := 6.0   # сила сбивающего импульса вдоль подката
 const RAGDOLL_UP_IMPULSE := 2.0       # вертикальная добавка импульса
 const RAGDOLL_SETTLE_SPEED := 0.6     # ниже этой скорости таза (м/с) → ragdoll осел
