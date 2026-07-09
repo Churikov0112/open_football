@@ -51,7 +51,7 @@ func _ready() -> void:
 	controlled_player = player_home
 	player_home.add_to_group("team_1")
 	player_home.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	player_home.collision_mask = 1 | FootballConstants.PLAYER_COLLISION_MASK
+	player_home.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
 	var home_mesh := player_home.get_node_or_null(^"Mesh")
 	if home_mesh:
 		home_mesh.queue_free()
@@ -240,6 +240,9 @@ func _setup_field_markings() -> void:
 func _setup_ball() -> void:
 	ball.script = preload("res://scripts/ball/ball_controller.gd")
 	ball.set_script(ball.script)
+	# Мяч остаётся на слое 1 (гол-детект и подкат-детект завязаны на это), но должен
+	# сталкиваться и с питчем (слой 1), и с границами (ушли на отдельный слой) — иначе улетит за поле.
+	ball.collision_mask = 1 | FootballConstants.BOUNDARY_COLLISION_LAYER
 	ball.body_entered.connect(_on_ball_collision)
 
 
@@ -339,6 +342,8 @@ func _setup_boundaries() -> void:
 		shape.size = w.size
 		col.shape = shape
 		body.add_child(col)
+		body.collision_layer = FootballConstants.BOUNDARY_COLLISION_LAYER
+		body.collision_mask = 0
 		body.global_position = w.pos
 		add_child(body)
 
@@ -372,7 +377,7 @@ func _setup_away_player() -> void:
 	add_child(new_player)
 	new_player.add_to_group("team_2")
 	new_player.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	new_player.collision_mask = 1 | FootballConstants.PLAYER_COLLISION_MASK
+	new_player.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
 	var ai_script = preload("res://scripts/ai/simple_ai.gd")
 	new_player.set_script(ai_script)
 	new_player.set_physics_process(true)
@@ -400,7 +405,7 @@ func _setup_teammate() -> void:
 	add_child(new_player)
 	new_player.add_to_group("team_1")
 	new_player.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	new_player.collision_mask = 1 | FootballConstants.PLAYER_COLLISION_MASK
+	new_player.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
 	var teammate_script = preload("res://scripts/ai/teammate_ai.gd")
 	new_player.set_script(teammate_script)
 	new_player.set_physics_process(true)

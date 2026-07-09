@@ -67,6 +67,8 @@ const LOCO_RUN_SCALE_FUDGE := 1.33   # анти-слайд: scale = (speed/top)*
 const LOCO_RUN_ANIM_SPEED := 1.5     # порог входа в стейт run, м/с
 const LOCO_SPRINT_ANIM_SPEED := 9.0  # порог входа в стейт sprint, м/с
 const PLAYER_COLLISION_MASK := 2     # слой полевых игроков (bit2): бьются только друг о друга
+const BOUNDARY_COLLISION_LAYER := 4  # слой границ поля (bit3): отдельно от мяча/питча (слой1),
+                                     # чтобы игрок упирался в стены, но НЕ толкал мяч физически
 
 
 # ═══════════════════════════════════════════
