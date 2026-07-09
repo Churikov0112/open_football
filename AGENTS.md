@@ -19,6 +19,9 @@
 - **Sprint:** hold Shift — human only, no stamina, just a higher `speed_scale` into `set_move_intent`.
 - **Collision layers are split three ways** — default layer (pitch + ball, for goal/tackle-`Area3D` detection), player layer (`PLAYER_COLLISION_MASK`, bit 2), boundary-wall layer (`BOUNDARY_COLLISION_LAYER`, bit 3). Players mask in player+boundary but NOT the ball's layer — if a player's mask ever includes the ball's layer, `move_and_slide()` physically snags on the ball (juddery dribbling, spawn-point shove).
 - **Dribbling** = velocity matching in `_integrate_forces` (ball matches player velocity + position correction `*30`, clamped to 12)
+- **Kick/pass** = commit-action deferred impulse system. `_fire_kick()`/`_pass_ball()` set `_action_player`/`_action_power`/`_kick_action_active=true`, trigger animation (currently `pass` clip for both), defer `ball.kick()` to `PlayerVisual.action_contact` signal. No `set_control_locked()` during kick/pass — `_kick_action_active` flag skips the motor-lock early-return in `_handle_player_input`.
+- **Kick charge:** hold Space (max 1s), release fires. PowerBar (green→red gradient) visible during charge. Auto-fire at max charge. Power: 12–25 lerp.
+- **Animation timing:** `PlayerVisual.ACTION_TIMING` dict — `kick`: `{contact: 0.35, lock: 0.5, speed: 1.0}`, `pass`: `{contact: 0.2, lock: 0.4, speed: 1.0}`. `action_contact` emitted at contact time, `action_finished` at lock time.
 - **Camera:** sideline broadcast style — `camera_pivot` at X=-40, Y=20, follows ball Z, `look_at(Vector3(0,0,ballZ), UP)`
 - **WASD** is camera-relative (uses `camera_pivot.global_transform.basis`)
 - **Controlled player** switch: **Q** key (manual), auto-switch to whoever on our team has the ball

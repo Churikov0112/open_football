@@ -17,7 +17,7 @@ const LOCO_RUN := &"loco_run"
 const LOCO_SPRINT := &"loco_sprint"
 ## Семантическое действие (trigger) → имя клипа в glb. Стейт создаётся, только если клип есть.
 const ACTION_CLIPS := {
-	"kick": "kick",
+	"kick": "pass",
 	"pass": "pass",
 	"penalty": "penalty_kick",
 	"header": "idle_header",
@@ -32,7 +32,7 @@ const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
 ## до action_finished; speed — множитель скорости проигрывания (сжать замах, сохранив синхрон).
 ## Тюнится визуальной приёмкой. Действия без записи → contact=0, lock=длина_клипа, speed=1.
 const ACTION_TIMING := {
-	"kick": {"contact": 0.35, "lock": 0.7, "speed": 1.0},
+	"kick": {"contact": 0.35, "lock": 0.5, "speed": 1.0},
 	"pass": {"contact": 0.2, "lock": 0.4, "speed": 1.5},
 }
 

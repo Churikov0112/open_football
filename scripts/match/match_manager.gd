@@ -4,6 +4,7 @@ extends Node3D
 @onready var player_home: CharacterBody3D = $PlayerHome
 @onready var camera_pivot: Node3D = $CameraPivot
 @onready var score_label: Label = $HUD/ScoreLabel
+@onready var power_bar: ProgressBar = $HUD/PowerBar
 
 var home_score: int = 0
 var away_score: int = 0
@@ -39,6 +40,19 @@ var _action_dir: Vector3 = Vector3.ZERO
 var _action_power: float = 0.0
 var _manual_swap_cooldown: int = 0
 
+# true → kick animation is playing; ball.kick() deferred to action_contact;
+# movement is NOT locked (unlike pass which uses _action_player + motor lock)
+var _kick_action_active: bool = false
+
+# Kick charge system (hold Space to charge, release to fire)
+var _kick_charging: bool = false
+var _kick_charge: float = 0.0
+var _kick_charge_player: CharacterBody3D
+const KICK_CHARGE_MIN_TIME: float = 0.3
+const KICK_CHARGE_MAX_TIME: float = 1.0
+const KICK_POWER_MIN: float = 12.0
+const KICK_POWER_MAX: float = 25.0
+
 
 func _ready() -> void:
 	_setup_inputs()
@@ -66,6 +80,27 @@ func _ready() -> void:
 	_give_ai_to_player_home()
 	_setup_controlled_indicator()
 	_setup_tackle_area()
+	_setup_power_bar()
+
+
+func _setup_power_bar() -> void:
+	power_bar.min_value = 0.0
+	power_bar.max_value = 1.0
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.1, 0.1, 0.15, 0.6)
+	bg.corner_radius_top_left = 4
+	bg.corner_radius_top_right = 4
+	bg.corner_radius_bottom_left = 4
+	bg.corner_radius_bottom_right = 4
+	power_bar.add_theme_stylebox_override("background", bg)
+
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(0.2, 0.9, 0.2, 0.9)
+	fill.corner_radius_top_left = 3
+	fill.corner_radius_top_right = 3
+	fill.corner_radius_bottom_left = 3
+	fill.corner_radius_bottom_right = 3
+	power_bar.add_theme_stylebox_override("fill", fill)
 
 
 func _setup_inputs() -> void:
@@ -426,6 +461,23 @@ func _process(delta: float) -> void:
 	if controlled_player_indicator and controlled_player:
 		controlled_player_indicator.global_position = controlled_player.global_position + Vector3(0, 2.2, 0)
 
+	# Kick charge: accumulate while holding Space
+	if _kick_charging and _kick_charge_player == controlled_player:
+		_kick_charge += delta
+		if _kick_charge >= KICK_CHARGE_MAX_TIME:
+			_kick_charge = KICK_CHARGE_MAX_TIME
+			_fire_kick()
+		var ratio := clampf(_kick_charge / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
+		power_bar.value = ratio
+		var fill := power_bar.get_theme_stylebox("fill")
+		if fill:
+			var c := Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+			fill.bg_color = c
+	elif _kick_charging:
+		# Player switched or lost ball — cancel charge
+		_cancel_kick_charge()
+	power_bar.visible = _kick_charging and _kick_charge_player == controlled_player
+
 
 func _physics_process(delta: float) -> void:
 	_handle_dribbling()
@@ -543,8 +595,7 @@ func _handle_player_input(delta: float) -> void:
 		return
 	if not controlled_player:
 		return
-	# Управление перехвачено commit-действием (пас/удар): ни движения, ни нового действия.
-	if _action_player == controlled_player:
+	if _action_player == controlled_player and not _kick_action_active:
 		return
 	var input_dir := Vector2(
 		Input.get_axis(&"move_left", &"move_right"),
@@ -563,26 +614,76 @@ func _handle_player_input(delta: float) -> void:
 		sprint_scale = FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED
 	var motor := _player_motor(controlled_player)
 	if motor != null:
-		motor.set_move_intent(dir, sprint_scale)  # dir == ZERO при отсутствии ввода → торможение
+		motor.set_move_intent(dir, sprint_scale)
+
+	# Kick charge system (OpenSoccer-style)
 	if Input.is_action_just_pressed(&"kick"):
-		print("[TACKLE_DEBUG] Space pressed! dribbler=", ball.dribbler.name if ball.has_method(&"set_dribbler") and ball.dribbler else "null", " last_touch=", ball.get_last_touch().name if ball.has_method(&"get_last_touch") and ball.get_last_touch() else "null")
-		if not _try_tackle(controlled_player):
-			print("[TACKLE_DEBUG] _try_tackle failed, falling through to _kick_ball")
-			_kick_ball(controlled_player)
+		if _kick_charging:
+			pass  # already charging, ignore
+		elif _is_near_ball(controlled_player) and _is_our_dribbler(controlled_player):
+			_start_kick_charge(controlled_player)
+		else:
+			_try_tackle(controlled_player)
+
+	if Input.is_action_just_released(&"kick") and _kick_charging and _kick_charge_player == controlled_player:
+		_fire_kick()
+
 	if Input.is_action_just_pressed(&"pass"):
 		_pass_ball(controlled_player)
 
 
-func _kick_ball(player_node: CharacterBody3D) -> void:
+func _is_near_ball(player_node: Node3D) -> bool:
 	if not ball.has_method(&"kick"):
+		return false
+	return player_node.global_position.distance_to(ball.global_position) <= 2.0
+
+func _is_our_dribbler(player_node: Node3D) -> bool:
+	if not ball.has_method(&"set_dribbler"):
+		return false
+	return ball.dribbler == player_node
+
+func _start_kick_charge(player_node: CharacterBody3D) -> void:
+	_kick_charging = true
+	_kick_charge = 0.0
+	_kick_charge_player = player_node
+	var dir: Vector3 = ball.get_dribble_direction()
+	var flat := Vector3(dir.x, 0.0, dir.z)
+	if flat.length() > 0.01:
+		player_node.rotation.y = atan2(-flat.x, -flat.z)
+
+func _fire_kick() -> void:
+	if not _kick_charging or not _kick_charge_player:
+		_cancel_kick_charge()
 		return
-	var dist := player_node.global_position.distance_to(ball.global_position)
-	if dist > 2.0:
+	if not is_instance_valid(_kick_charge_player) or not ball.has_method(&"kick"):
+		_cancel_kick_charge()
 		return
-	# Use the ball's dribble direction (movement direction) instead of facing direction.
+	var ratio := clampf(_kick_charge / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
+	var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
 	var dir: Vector3 = ball.get_dribble_direction()
 	dir.y = 0.5
-	_start_ball_action(player_node, dir, 18.0, "kick")
+	var player := _kick_charge_player
+	_cancel_kick_charge()
+
+	# Подключаемся к commit-action системе, но БЕЗ блокировки мотора.
+	# ball.kick() будет вызван из _on_action_contact по сигналу анимации.
+	_action_player = player
+	_action_dir = dir
+	_action_power = power
+	_kick_action_active = true
+	var visual := _player_visual(player)
+	if visual != null and visual.trigger("kick"):
+		return  # ждём action_contact
+	# Фолбэк без анимации: бьём сразу
+	ball.kick(dir, power)
+	_action_player = null
+	_kick_action_active = false
+
+func _cancel_kick_charge() -> void:
+	_kick_charging = false
+	_kick_charge = 0.0
+	_kick_charge_player = null
+	power_bar.visible = false
 
 
 func _pass_ball(player_node: CharacterBody3D) -> void:
@@ -591,9 +692,21 @@ func _pass_ball(player_node: CharacterBody3D) -> void:
 	var dist := player_node.global_position.distance_to(ball.global_position)
 	if dist > 2.0:
 		return
+	# Не даём пасу прервать текущее действие kick (pass же идёт на E, не конфликтует)
+	if _action_player != null:
+		return
 	var dir: Vector3 = ball.get_dribble_direction()
 	dir.y = 0.1
-	_start_ball_action(player_node, dir, 12.0, "pass")
+	_action_player = player_node
+	_action_dir = dir
+	_action_power = 12.0
+	_kick_action_active = true  # pass тоже без блокировки мотора, флаг один на оба
+	var visual := _player_visual(player_node)
+	if visual != null and visual.trigger("pass"):
+		return
+	ball.kick(dir, 12.0)
+	_action_player = null
+	_kick_action_active = false
 
 
 ## Начать commit-действие с мячом: развернуть игрока, проиграть анимацию, заблокировать
@@ -628,6 +741,7 @@ func _on_action_contact(_action: String, player: Node) -> void:
 func _on_action_finished(_action: String, player: Node) -> void:
 	if player == _action_player:
 		_action_player = null
+		_kick_action_active = false
 		var motor := _player_motor(player)
 		if motor != null:
 			motor.set_control_locked(false)
@@ -638,6 +752,7 @@ func _cancel_ball_action(player: Node) -> void:
 	if _action_player != player:
 		return
 	_action_player = null
+	_kick_action_active = false
 	var motor := _player_motor(player)
 	if motor != null:
 		motor.set_control_locked(false)
