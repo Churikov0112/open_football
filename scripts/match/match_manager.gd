@@ -49,7 +49,7 @@ var _kick_charging: bool = false
 var _kick_charge: float = 0.0
 var _kick_charge_player: CharacterBody3D
 const KICK_CHARGE_MIN_TIME: float = 0.3
-const KICK_CHARGE_MAX_TIME: float = 1.0
+const KICK_CHARGE_MAX_TIME: float = 0.5
 const KICK_POWER_MIN: float = 12.0
 const KICK_POWER_MAX: float = 25.0
 
@@ -661,7 +661,7 @@ func _fire_kick() -> void:
 	var ratio := clampf(_kick_charge / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
 	var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
 	var dir: Vector3 = ball.get_dribble_direction()
-	dir.y = 0.5
+	dir.y = lerpf(0.05, 0.5, ratio)  # слабый удар — низом, сильный — с подъёмом
 	var player := _kick_charge_player
 	_cancel_kick_charge()
 
