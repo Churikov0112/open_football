@@ -33,6 +33,16 @@ func _first_unskipped_child(skel: Skeleton3D, bone_id: int) -> int:
 ## не-исключённую кость; капсула тянется к её первому ребёнку. Возвращает число костей.
 func build(skeleton: Skeleton3D, layer: int) -> int:
 	_skeleton = skeleton
+	# Skeleton3D часто сидит под масштабированным предком (Mixamo-риги: 0.01, cm→m без
+	# запекания при экспорте). PhysicalBone3D всегда работает в НАСТОЯЩИХ мировых
+	# единицах (Godot сам компенсирует масштаб предка в собственном transform физкости —
+	# её глобальный scale всегда 1.0), а get_bone_rest() отдаёт длины в "сырых" локальных
+	# единицах скелета (сотни вместо метров при scale=0.01). Без этой поправки капсулы
+	# получаются в 1/scale раз больше нужного — отсюда гигантский, разлетающийся при
+	# столкновениях ragdoll.
+	var world_scale := skeleton.global_transform.basis.get_scale().x
+	if world_scale <= 0.0:
+		world_scale = 1.0
 	for bone_id in skeleton.get_bone_count():
 		var bone_name := skeleton.get_bone_name(bone_id)
 		if _skip(bone_name):
@@ -44,7 +54,7 @@ func build(skeleton: Skeleton3D, layer: int) -> int:
 		if sizing_child < 0:
 			sizing_child = any_child  # единственный ребёнок исключён (напр. кисть) — мерим по нему
 		var child_rest := skeleton.get_bone_rest(sizing_child)
-		var length := maxf(child_rest.origin.length(), 0.05)
+		var length := maxf(child_rest.origin.length() * world_scale, 0.05)
 		var pb := PhysicalBone3D.new()
 		pb.bone_name = bone_name
 		pb.collision_layer = layer
