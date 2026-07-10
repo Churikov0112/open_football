@@ -10,6 +10,13 @@ var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var _wander_timer: float = 0.0
 
 
+func _motor() -> PlayerMotor:
+	return PlayerMotor.find_on(self)
+
+func _base_scale() -> float:
+	return speed / FootballConstants.LOCO_TOP_SPEED
+
+
 func _physics_process(delta: float) -> void:
 	if not ball or not is_instance_valid(ball):
 		return
@@ -59,10 +66,9 @@ func _chase_ball(delta: float) -> void:
 
 func _move_or_wander(dir: Vector3, delta: float) -> void:
 	if dir.length() > 0.1:
-		global_position.x += dir.x * speed * delta
-		global_position.z += dir.z * speed * delta
-		var target_angle := atan2(-dir.x, -dir.z)
-		rotation.y = lerp_angle(rotation.y, target_angle, 8.0 * delta)
+		var m := _motor()
+		if m != null:
+			m.set_move_intent(dir, _base_scale())
 	else:
 		_wander(delta)
 
@@ -75,7 +81,6 @@ func _wander(delta: float) -> void:
 	var wander_x := sin(Time.get_ticks_msec() * 0.001 + global_position.z) * 0.5
 	var wander_z := cos(Time.get_ticks_msec() * 0.001 + global_position.x) * 0.5
 	var wander_dir := Vector3(wander_x, 0, wander_z).normalized()
-	global_position.x += wander_dir.x * speed * 0.3 * delta
-	global_position.z += wander_dir.z * speed * 0.3 * delta
-	var target_angle := atan2(-wander_dir.x, -wander_dir.z)
-	rotation.y = lerp_angle(rotation.y, target_angle, 4.0 * delta)
+	var m := _motor()
+	if m != null:
+		m.set_move_intent(wander_dir, _base_scale() * 0.3)

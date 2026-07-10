@@ -55,6 +55,22 @@ const PLAYER_CAPSULE_HEIGHT := 1.5
 const PLAYER_ROTATION_SPEED := 10.0
 const PLAYER_START_Z := 0.0         # стартовая позиция Z
 
+# --- Living locomotion (velocity+inertia, рецепт OpenSoccer; тюнинг-старт) ---
+const LOCO_TOP_SPEED := 8.0          # обычная максимальная скорость, м/с
+const LOCO_SPRINT_SPEED := 12.0      # максимальная при спринте (≈1.5×)
+const LOCO_ACCEL := 25.0             # разгон, м/с² (≈0.32 с до полной)
+const LOCO_DECEL := 20.0             # торможение, м/с² (мягче разгона → глайд)
+const LOCO_TURN_ROT := 18.0          # темп доворота тела, 1/с
+const LOCO_TURN_MIN_SPEED := 1.0     # ниже этой скорости не доворачиваемся
+const LOCO_MAX_BANK_DEG := 20.0      # макс. крен корпуса в повороте, градусы
+const LOCO_BANK_SMOOTH := 8.0        # сглаживание крена, 1/сек (гасит рывки от дискретного WASD-ввода)
+const LOCO_RUN_SCALE_FUDGE := 1.33   # анти-слайд: scale = (speed/top)*fudge
+const LOCO_RUN_ANIM_SPEED := 1.5     # порог входа в стейт run, м/с
+const LOCO_SPRINT_ANIM_SPEED := 9.0  # порог входа в стейт sprint, м/с
+const PLAYER_COLLISION_MASK := 2     # слой полевых игроков (bit2): бьются только друг о друга
+const BOUNDARY_COLLISION_LAYER := 4  # слой границ поля (bit3): отдельно от мяча/питча (слой1),
+                                     # чтобы игрок упирался в стены, но НЕ толкал мяч физически
+
 
 # ═══════════════════════════════════════════
 #  DRIBBLING
@@ -98,16 +114,55 @@ const AI_ACQUIRE_RANGE := 1.8
 #  SLIDE TACKLE
 # ═══════════════════════════════════════════
 
-const SLIDE_TACKLE_SPEED := 18.0
+# Скорость/дистанция скольжения подобраны так, чтобы физический слайд (move_and_collide)
+# занимал заметную часть длины клипа tackle (~1.8с), а не долетал до конца дистанции за
+# долю секунды, пока клип ещё продолжает играть — раньше (SPEED=18.0) слайд укладывался
+# в ~0.22с, и игрок визуально телепортировался в точку, а затем ещё ~1.6с доигрывал
+# подкат стоя на месте. Первая попытка (SPEED=5.0) была МЕДЛЕННЕЕ реальной скорости бега
+# соперника (simple_ai.gd @export var speed = 6.5 — константа AI_SPEED=5.0 выше по файлу
+# им не используется, легаси) — подкат сзади (сближение вдогонку) физически никогда не
+# догонял цель, хотя сбоку (сближение поперёк) работал. SPEED поднят с запасом выше 6.5,
+# чтобы вдогонку соперника хватало. RECOVERY_TIME подобран так, чтобы суммарный commit
+# (слайд + recovery) остался близко к длине клипа, как было тюнено раньше (~1.7-1.8с).
+const SLIDE_TACKLE_SPEED := 9.0
 const SLIDE_TACKLE_RANGE := 4.0
-const SLIDE_TACKLE_RECOVERY_TIME := 1.5
+# Диагностический флаг (подкат на месте, без move_and_collide) для изоляции анимации
+# tackle от скольжения — см. tools/merge_mixamo.py IN_PLACE_CLIPS. Причина зависания
+# найдена и исправлена там (заморозка вертикали Hips для tackle убрана), возвращаем
+# обычное поведение со скольжением.
+const SLIDE_TACKLE_INPLACE := false
+const SLIDE_TACKLE_RECOVERY_TIME := 1.3
 const SLIDE_TACKLE_AREA_RADIUS := 1.5
+# Порог сбивания игрока-соперника с ног (match_manager._check_tackle_player_hit) —
+# НАМНОГО теснее SLIDE_TACKLE_AREA_RADIUS выше. Тот радиус щедрый специально (дотянуться
+# до мяча), но раньше от него же ронялся и игрок — с разницей центров тел до ~1.5м, когда
+# капсулы (radius=0.3 у каждой, см. _setup_away_player/_setup_teammate) визуально даже не
+# соприкасались.
+# 0.9 ≈ сумма радиусов капсул (0.6) + небольшой запас, чтобы не мазать по кадру.
+const SLIDE_TACKLE_HIT_RADIUS := 0.9
 const SLIDE_TACKLE_BALL_DIR_Y := 0.15
 const SLIDE_TACKLE_BALL_POWER := 7.0
-const SLIDE_TACKLE_FALL_DISTANCE := 2.0
-const SLIDE_TACKLE_FALL_TIME := 1.0
-const AI_TACKLE_RANGE := 2.5
+# Было 2.5 — решение "подкатывать" принималось иногда слишком издалека, и с добавленным
+# упреждением цели (_start_tackle) чем дальше цель в момент решения, тем грубее оценка
+# lead_time (нет итерации схождения). Урезано, чтобы ИИ решался ближе — упреждение точнее.
+const AI_TACKLE_RANGE := 2.0
 const AI_TACKLE_COOLDOWN := 2.0
+
+
+# ═══════════════════════════════════════════
+#  TACKLE FALL / GRAVITY (тюнинг-старт)
+# ═══════════════════════════════════════════
+
+const GRAVITY := 20.0                 # аркадная гравитация, м/с²
+# Анимационное падение жертвы подката (Path B: физ-ragdoll несовместим с масштабированным
+# Mixamo-скелетом в Godot). Фаза knockdown держит позу «лежит» (fallen_idle) и отбрасывает
+# тело кодом, затем 2 переката и вставание.
+const KNOCKDOWN_TIME := 0.5           # длительность фазы «сбит/лежит» до первого переката, с
+const KNOCKBACK_DISTANCE := 1.0       # отброс тела в сторону от подкатчика за knockdown, м
+const ROLL_DISTANCE := 1.2            # смещение тела за один перекат, м
+# Слой физкостей для дремлющей библиотеки RagdollSkeleton (сейчас в рантайме не строится —
+# оставлено на случай, если ограничение Godot с масштабом скелета будет обойдено).
+const RAGDOLL_COLLISION_LAYER := 8    # bit4: маскирует слой пола (BOUNDARY_COLLISION_LAYER=4)
 
 
 # ═══════════════════════════════════════════

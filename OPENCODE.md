@@ -1,7 +1,7 @@
 # OpenFootball
 
 Футбольный симулятор (клон FIFA) на Godot 4.7.
-Аркада с реалистичными правилами, low-poly стиль, physics-based.
+Аркада с реалистичными правилами, полу-реалистичный стиль (модели Mixamo), physics-based.
 
 ---
 
@@ -29,23 +29,38 @@
 
 ## Игроки
 
-- **CharacterBody3D**, CapsuleMesh (радиус 0.3, высота 1.5)
-- Home (игрок): красный (`Color(0.9, 0.1, 0.1)`)
-- Away (AI): синий (`Color(0.1, 0.1, 0.9)`)
-- В будущем: Mixamo X-Bot/Y-Bot с анимациями
-- Скорость игрока: 8 m/s, AI: 5 m/s
-- **11v11 и составы — в будущем**
+- **Геймплей:** `CharacterBody3D` + `CollisionShape` (капсула 0.3×1.5) + AI/ввод-скрипт
+- **Презентация:** дочерний `PlayerVisual` (`scenes/player_visual.tscn`) — риггованная модель Mixamo (`assets/models/footballer.glb`) с `AnimationTree`: локомоция (idle/run/sprint) + одноразовые действия (удар/пас/пенальти/удары головой/вбрасывание) + цепочка подката-падения (`tackle`/`fallen_idle`/`roll_left`/`roll_right`/`standing_up`). Геймплей и презентация **разделены**; скорость в визуал передаёт `PlayerMotor` через `set_locomotion(velocity)` каждый физический кадр
+- Команда игрока (home + напарник, team_1): **синий** (`Color(0.1, 0.1, 0.9)`)
+- Соперник (AI, team_2): **красный** (`Color(0.9, 0.1, 0.1)`)
+- Цвет = тинт всего тела через `apply_appearance` (пилот; настоящие киты — в будущем)
+- Скорость: человек — константы `LOCO_TOP_SPEED` (8.0) / `LOCO_SPRINT_SPEED` (12.0, только у человека) в `FootballConstants` (через `PlayerMotor`); ИИ-соперник — отдельный `@export var speed` в `simple_ai.gd` (8.0, без спринта)
+- **11v11, составы, вариативность (кожа/волосы/причёски) — в будущем**
 
 ## Мяч
 
 - **RigidBody3D**, радиус 0.11m, масса 0.43kg
 - Процедурная текстура (белый + чёрные шестиугольники PNG)
 - Drag: `0.985` (горизонталь), `0.999` (вертикаль)
-- **Дриблинг:** spring-force через `_integrate_forces`
-  - Мяч притягивается на 0.5m перед игроком (по направлению движения)
-  - Жёсткость: 300, демпфирование: 15, макс. сила: 50
-  - Захват: дистанция < 1.0m, потеря: > 3.0m
+- **Дриблинг:** velocity-matching через `_integrate_forces` (НЕ spring-force)
+  - Скорость мяча = скорость дриблера + скорректированное смещение (`disp * 30`, кламп 12)
+  - `SPRING_*` константы в `football_constants.gd` — legacy, не используются
   - После удара/паса kicker не может подхватить мяч 1.5 секунды
+
+## Локомоция (PlayerMotor)
+
+- **Движение — velocity + inertia + `move_and_slide()`** через компонент `PlayerMotor` (`scripts/player/player_motor.gd`)
+- Каждый полевой игрок получает `PlayerMotor` как третьего ребёнка (после `PlayerVisual` и `CollisionShape3D`)
+- Код (ввод/AI) вызывает только `motor.set_move_intent(dir: Vector3, speed_scale: float)` раз в кадр — прямые манипуляции `global_position`/`rotation` запрещены
+- `PlayerMotor` внутри:
+  - Интегрирует velocity к целевой скорости (ускорение `LOCO_ACCEL`, замедление `LOCO_DECEL` — асимметрично, плавный выбег при отпускании)
+  - Плавно поворачивает корпус по рысканью (`LOCO_TURN_ROT`, отключено ниже `LOCO_TURN_MIN_SPEED`)
+  - Вычисляет сглаженный угол крена/банкинга от бокового ускорения → `PlayerVisual.set_lean()`
+  - Вызывает `move_and_slide()`, затем фиксирует `global_position.y` (поле плоское), кроме состояния `fallen`
+- **`set_control_locked(true)`** — блокирует управление (для удара/паса/подката); velocity мгновенно в ноль
+- **Sprint** (Shift) — человеческий игрок, повышенный `speed_scale`, без выносливости
+- **`PlayerMotor.find_on(node)`** (static) — канонический поиск мотор-компонента у игрока
+- Константы настройки: `FootballConstants.LOCO_*`
 
 ## Управление
 
@@ -55,8 +70,10 @@
 | S/↓ | Назад |
 | A/← | Влево |
 | D/→ | Вправо |
-| Space | Удар (сила 18) |
-| E | Пас (сила 12) |
+| Space | Удар: удержание = зарядка (1с до макс), отпускание = выстрел. Анимация `pass` (временно), импульс по `action_contact` |
+| E | Пас: мгновенный выстрел по `action_contact` (0.2с), анимация `pass` |
+| Q | Смена управляемого игрока |
+| Shift (удержание) | Спринт (только человек) |
 | Escape | Пауза |
 
 InputMap настраивается **программно** в `_setup_inputs()` — не через `project.godot`.
@@ -72,23 +89,35 @@ OpenFootball/
 │   ├── match.tscn         — корневая сцена матча
 │   ├── ball.tscn          — мяч (RigidBody3D)
 │   ├── player.tscn        — игрок (CharacterBody3D)
+│   ├── player_visual.tscn — риггованная модель + тинт (ребёнок каждого игрока)
 │   └── pitch.tscn         — поле (плоскость + разметка)
 ├── scripts/
 │   ├── data/
-│   │   └── football_constants.gd  — автозагрузка, все константы
+│   │   └── football_constants.gd  — автозагрузка, все константы (в т.ч. LOCO_*)
 │   ├── ui/
 │   │   └── main_menu.gd    — логика меню
 │   ├── match/
 │   │   └── match_manager.gd  — вся логика матча
 │   ├── player/
-│   │   └── player_controller.gd — управление игроком
+│   │   ├── player_controller.gd — управление игроком
+│   │   ├── player_motor.gd  — PlayerMotor: velocity+inertia locomotion (accel/decel/turn/lean/sprint)
+│   │   ├── player_visual.gd — PlayerVisual: AnimationTree локомоция + действия + подкат/падение + apply_appearance
+│   │   └── ragdoll_skeleton.gd — МЁРТВЫЙ КОД (физический ragdoll, заменён анимационным падением; тесты остались и проходят, но в игре не используется)
 │   ├── ai/
-│   │   └── simple_ai.gd    — AI противника (1 игрок)
+│   │   ├── simple_ai.gd    — AI противника (team_2, красный)
+│   │   └── teammate_ai.gd  — AI напарника (team_1, синий; также для PlayerHome когда не под управлением человека)
 │   ├── ball/
-│   │   └── ball_controller.gd  — физика мяча, дриблинг
+│   │   └── ball_controller.gd  — физика мяча, дриблинг (velocity-matching)
 │   └── camera/
 │       └── match_camera.gd — FIFA-style камера
-├── assets/      — модели, текстуры, аудио (пока пусто)
+├── assets/
+│   └── models/
+│       ├── footballer.glb  — модель Mixamo + локомоция/действия/подкат-падение (собрано Blender-скриптом)
+│       └── mixamo_src/     — сырые FBX (gitignored, не коммитятся)
+├── tools/
+│   └── merge_mixamo.py     — Blender headless: FBX → glb
+├── tests/                  — headless CHECK-скрипты (godot --headless -s)
+├── ASSET_CREDITS.md        — источники/лицензии ассетов
 └── resources/   — formations, players, teams (пока пусто)
 ```
 
@@ -100,10 +129,19 @@ OpenFootball/
 - [x] HUD со счётом
 - [x] FIFA-style камера (слежение за мячом сверху-сзади)
 - [x] Управление WASD + Space (удар) + E (пас)
-- [x] Дриблинг (spring-force, по направлению движения)
+- [x] Дриблинг (velocity-matching, мяч «приклеен» к ноге)
 - [x] AI: бежит к мячу, дриблит, бьёт по воротам
 - [x] Сброс мяча после гола
 - [x] Невидимые стенки по краям
+- [x] **Слайд-подкат со сбиванием с ног:** `TackleState`/`FallState` state machines в `match_manager.gd`. Два разных радиуса детекции — широкая `TackleArea` (1.5m) только дотягивается до мяча (чистый отбор), узкий `SLIDE_TACKLE_HIT_RADIUS` (0.9m, реальный контакт капсул) роняет игрока. Прицел с упреждением скорости цели. Падение — цепочка анимаций `fallen_idle` → `roll_left`/`roll_right` → `standing_up` (НЕ физический ragdoll — тот пробовали и выпилили, не подружился с масштабированным Mixamo-скелетом; `ragdoll_skeleton.gd` остался мёртвым кодом с живыми тестами). Пока не фол — свободный не назначается
+- [x] Риггованные модели игроков (Mixamo) + анимации idle/run/sprint/dribble + удар/пас/пенальти/удар головой/вбрасывание/подкат/падение/перекаты/вставание через `PlayerVisual`
+- [x] `PlayerMotor` — locomotion через velocity + inertia + `move_and_slide()` (accel/decel/turn/lean)
+- [x] Sprint (Shift, человек), переключение игрока (Q)
+- [x] Цвета команд тинтом (синий/красный)
+- [x] Collision layers: 3 отдельных слоя (default / player / boundary) — игроки не маскируют мяч
+- [x] **Удар с зарядкой:** Space — удержание для зарядки (1с, сила 12–25), отпускание → анимация `pass` → `action_contact` (t=0.35) → `ball.kick()`. PowerBar с градиентом зелёный→жёлтый→красный, авто-выстрел при макс. заряде
+- [x] **Пас:** E — мгновенный, анимация `pass` → `action_contact` (t=0.2) → `ball.kick(dir, 12.0)`
+- [x] **Commit-action система:** `_fire_kick()`/`_pass_ball()` выставляют `_action_player`, `_action_dir`, `_action_power`, флаг `_kick_action_active=true`, запускают анимацию. Реальный `ball.kick()` отложен до сигнала `action_contact` от `PlayerVisual`. Флаг `_kick_action_active` позволяет вводу пропустить motor-lock early-return во время удара/паса
 
 ## Что НЕ реализовано (ближайшие планы)
 
@@ -111,7 +149,9 @@ OpenFootball/
 - [ ] 11v11 (расстановки, позиции)
 - [ ] Офсайд, ауты, угловые, штрафные
 - [ ] Физическая сетка ворот
-- [ ] Анимации (бег, удар, пас, подкат)
+- [ ] Фол/жёлтая-красная карточка за сбивание игрока подкатом (сейчас всегда "чисто", свободный не назначается); kick-клип (сейчас `pass` для обоих); анимации: сейв, вратарские
+- [ ] Настоящие киты (шейдер-маска) + вариативность игроков (кожа/волосы/причёски)
+- [ ] CC0-реквизит (мяч, ворота, стадион) вместо процедурного
 - [ ] Звуки (удар по мячу, гол, свисток, трибуны)
 - [ ] Меню выбора команд
 - [ ] Карьера тренера (далёкое будущее)
@@ -129,8 +169,14 @@ OpenFootball/
 ## Архитектурные решения
 
 - `CharacterBody3D` для игроков, `RigidBody3D` для мяча — бесплатная физика
-- Дриблинг через spring-force в `_integrate_forces` — физический, фрейм-независимый
-- InputMap настраивается программно (проект может сломать формат сериализации InputMap)
-- Capsule-меши для прототипа; Mixamo — для замены в будущем
-- Автозагрузка `FootballConstants` — все числовые константы в одном месте
+- **Три компонента на игрока:** gameplay (`CharacterBody3D` + AI/input) / motor (`PlayerMotor`, locomotion) / visual (`PlayerVisual`, модель + анимация). Каждый — отдельный дочерний узел; общаются через публичный API (`set_move_intent`, `set_locomotion`, `set_lean`)
+- **Локомоция через `PlayerMotor`:** velocity + inertia + `move_and_slide()`. Никаких прямых `global_position`/`rotation`. Вызов `motor.set_move_intent(dir, speed_scale)` — единственный способ движения
+- **Collision layers — три отдельных слоя:** default (бит 1: поле + мяч, для Area3D-детекции), player (бит 2: `PLAYER_COLLISION_MASK`), boundary (бит 3: `BOUNDARY_COLLISION_LAYER`). Игроки не маскируют слой мяча — иначе `move_and_slide()` физически цепляет мяч (дёрганый дриблинг)
+- Дриблинг через velocity-matching в `_integrate_forces` — мяч копирует скорость дриблера + коррекция позиции (`disp * 30`, кламп 12)
+- InputMap настраивается программно в `_setup_inputs()` — `project.godot` не используется
+- **Разделение геймплей/презентация:** физика/AI на `CharacterBody3D` не знают про модель; визуал — отдельный `PlayerVisual`, получает скорость от `PlayerMotor.set_locomotion()`
+- Модели/анимации игроков — Mixamo, собираются в `.glb` через headless Blender (`tools/merge_mixamo.py`); в репо только `.glb`, сырые FBX gitignored (public/open-source)
+- Автозагрузка `FootballConstants` — все числовые константы в одном месте (включая `LOCO_*`)
+- **Commit-action с deferred impulse:** удар/пас не применяют `ball.kick()` сразу. Вместо этого `_fire_kick()`/`_pass_ball()` выставляют `_action_player`/`_action_dir`/`_action_power`, включают флаг `_kick_action_active=true`, запускают анимацию через `PlayerVisual.trigger(anim)`. Когда анимация доходит до кадра соприкосновения — `action_contact` сигнал → `_on_action_contact()` → `ball.kick()`. Флаг `kick_action_active` единственный пропускает motor-lock early-return в `_handle_player_input`. Это даёт синхронизацию анимации и физики мяча без motor-lock.
+- Анимации (`idle`/`run`/`sprint`/`pass`) в `footballer.glb`, тайминги контакта и конца в `PlayerVisual.ACTION_TIMING`. Pipelines: `tools/merge_mixamo.py` (Blender headless) + Godot `--headless --import`; FBX-исходники в `mixamo_src/` gitignored
 - `docs/football_reference.md` — полный референс FIFA-правил и гейм-дизайна (читай перед работой над полем/воротами/механиками)
