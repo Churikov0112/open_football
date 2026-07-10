@@ -665,6 +665,9 @@ func _handle_dribbling() -> void:
 		if dist > 3.0:
 			ball.release_dribble()
 		return
+	# Быстрый (летящий) мяч не подбираем — он «в полёте», ждём пока замедлится/отскочит.
+	if ball.linear_velocity.length() > FootballConstants.BALL_TRAP_MAX_SPEED:
+		return
 	# Пас летит на _receiver — расширенный радиус подбора именно для него, иначе быстрый
 	# мяч проносит мимо, пока receive-assist ещё довозит игрока на линию мяча.
 	if _receive_active and is_instance_valid(_receiver):
