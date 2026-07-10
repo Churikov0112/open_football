@@ -197,7 +197,6 @@ const PASS_ASSIST := 0.75             # 0..1 «лёгкость»: 1 → поч�
 
 # Receive-assist (доводка принимающего к мячу).
 const PASS_RECEIVE_PREDICT_WINDOW := 0.16  # на сколько сек вперёд предсказываем позицию мяча
-const PASS_RECEIVE_DOT_THRESHOLD := 0.4    # порог dot(стик, к_мячу) для защёлкивания
 const PASS_RECEIVE_MAX_TIME := 2.0         # страховочный таймаут фазы приёма, сек
 
 # Give-and-go («стенка»).
