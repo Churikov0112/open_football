@@ -51,6 +51,16 @@ static func launch_ground(from: Vector3, to: Vector3, power: float) -> Vector3:
 		return Vector3.ZERO
 	return dir.normalized() * power
 
+## Скорость низового паса: чтобы мяч ВСЕГДА проходил distance м, скорость выводится из
+## дистанции и времени полёта (не задаётся абсолютно). Заряд лерпит время полёта между
+## max_time (слабый заряд, медленный/мягкий пас) и min_time (полный заряд, быстрый/жёсткий
+## пас) — так пас одинаково доходит и на 5м, и на 40м, отличается лишь скорость подачи.
+static func ground_pass_speed(distance: float, charge_ratio: float,
+		min_time: float, max_time: float, min_speed: float, max_speed: float) -> float:
+	var travel_time := lerpf(max_time, min_time, clampf(charge_ratio, 0.0, 1.0))
+	var speed := distance / maxf(travel_time, 0.001)
+	return clampf(speed, min_speed, max_speed)
+
 ## Навес/верховой пас: баллистическая стартовая скорость, приземляющая мяч в to с пиком
 ## peak_height, под гравитацию gravity. Старт и приземление на одной высоте (плоское поле):
 ## v_y = sqrt(2*g*h); полное время полёта T = 2*v_y/g; горизонталь = flat/T.

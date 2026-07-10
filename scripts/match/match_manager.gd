@@ -816,12 +816,10 @@ func _pass_params(action: ChargeAction, charge_ratio: float) -> PassParams:
 	var mult := lerpf(FootballConstants.PASS_POWER_CHARGE_MIN, FootballConstants.PASS_POWER_CHARGE_MAX, charge_ratio)
 	match action:
 		ChargeAction.PASS_SHORT:
-			p.power = FootballConstants.PASS_SHORT_POWER * mult
+			pass  # скорость низового паса считается по дистанции в _fire_pass (ground_pass_speed)
 		ChargeAction.PASS_WALL:
-			p.power = FootballConstants.PASS_SHORT_POWER * mult
 			p.is_wall = true
 		ChargeAction.PASS_THROUGH:
-			p.power = FootballConstants.PASS_THROUGH_POWER * mult
 			p.extra_lead = FootballConstants.PASS_THROUGH_EXTRA_LEAD
 		ChargeAction.PASS_LOB:
 			p.peak_height = FootballConstants.PASS_LOB_PEAK_HEIGHT * mult
@@ -831,7 +829,7 @@ func _pass_params(action: ChargeAction, charge_ratio: float) -> PassParams:
 			p.extra_lead = FootballConstants.PASS_THROUGH_EXTRA_LEAD
 			p.is_air = true
 		_:
-			p.power = FootballConstants.PASS_SHORT_POWER * mult
+			pass
 	return p
 
 
@@ -903,7 +901,7 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	var from := ball.global_position
 	var aim_point: Vector3
 	var receiver: CharacterBody3D = null
-	var ball_speed := params.power if not params.is_air else FootballConstants.PASS_THROUGH_POWER
+	var ball_speed := FootballConstants.PASS_LEAD_SPEED_ESTIMATE
 	if idx >= 0:
 		receiver = mate_nodes[idx]
 		if params.extra_lead > 0.0:
@@ -926,7 +924,11 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		var g := _ball_gravity()
 		launch_vel = PassSystem.launch_lob(from, aim_point, params.peak_height, g)
 	else:
-		launch_vel = PassSystem.launch_ground(from, aim_point, params.power)
+		var ground_dist := (aim_point - from).length()
+		var ground_speed := PassSystem.ground_pass_speed(ground_dist, charge_ratio,
+			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
+		launch_vel = PassSystem.launch_ground(from, aim_point, ground_speed)
 	_maybe_flag_interceptor(from, aim_point, launch_vel)
 	# Commit-action: импульс по action_contact, без блокировки мотора (как kick).
 	_action_player = player

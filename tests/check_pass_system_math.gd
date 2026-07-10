@@ -79,5 +79,21 @@ func _initialize() -> void:
 	if not PassSystem.apply_scatter(Vector3(1, 0, 0), 0.0, rng_c).is_equal_approx(Vector3(1, 0, 0)):
 		print("CHECK FAIL: apply_scatter zero spread"); ok = false
 
+	# ground_pass_speed: выше заряд → выше скорость на той же дистанции.
+	var gs_weak := PassSystem.ground_pass_speed(10.0, 0.0, 0.5, 1.4, 4.0, 28.0)
+	var gs_full := PassSystem.ground_pass_speed(10.0, 1.0, 0.5, 1.4, 4.0, 28.0)
+	if not (gs_full > gs_weak):
+		print("CHECK FAIL: ground_pass_speed charge scaling → ", gs_weak, gs_full); ok = false
+	# та же charge_ratio, вдвое больше дистанция → вдвое выше скорость (одинаковое travel_time).
+	var gs_10 := PassSystem.ground_pass_speed(10.0, 0.5, 0.5, 1.4, 4.0, 28.0)
+	var gs_20 := PassSystem.ground_pass_speed(20.0, 0.5, 0.5, 1.4, 4.0, 28.0)
+	if not is_equal_approx(gs_20, gs_10 * 2.0):
+		print("CHECK FAIL: ground_pass_speed distance scaling → ", gs_10, gs_20); ok = false
+	# клампы: очень короткая дистанция → нижний предел; очень длинная → верхний предел.
+	if not is_equal_approx(PassSystem.ground_pass_speed(0.5, 0.0, 0.5, 1.4, 4.0, 28.0), 4.0):
+		print("CHECK FAIL: ground_pass_speed min clamp"); ok = false
+	if not is_equal_approx(PassSystem.ground_pass_speed(100.0, 1.0, 0.5, 1.4, 4.0, 28.0), 28.0):
+		print("CHECK FAIL: ground_pass_speed max clamp"); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
