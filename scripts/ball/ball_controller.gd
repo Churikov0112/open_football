@@ -19,6 +19,9 @@ var _pending_impulse: Vector3 = Vector3.ZERO
 
 func _ready() -> void:
 	_football_texture()
+	var phys_mat := PhysicsMaterial.new()
+	phys_mat.bounce = 0.4
+	physics_material_override = phys_mat
 
 
 func _football_texture() -> void:
@@ -87,6 +90,16 @@ func kick(direction: Vector3, power: float) -> void:
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	_pending_impulse = direction * power
+
+
+## Задать мячу готовую стартовую скорость (в отличие от kick(), где power — импульс, а dir
+## не нормализован). velocity — уже посчитанная баллистика (PassSystem.launch_ground/launch_lob).
+## Импульс = velocity*mass, т.к. _integrate_forces применяет vel += _pending_impulse/mass.
+func launch(velocity: Vector3) -> void:
+	last_kicker = dribbler
+	_last_kick_time = Time.get_ticks_msec()
+	release_dribble()
+	_pending_impulse = velocity * mass
 
 
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
