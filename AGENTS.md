@@ -1,7 +1,9 @@
 # OpenFootball — Agent Guide
 
 ## Dev commands
-- **Validate (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit`
+- **Validate, menu-load only (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit`
+- **Validate match scene (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit-after 2 res://scenes/match.tscn`
+  Run **both** — plain `--quit` boots `main_menu.tscn` and never loads `match.tscn`, so it never parses `match_manager.gd`/`teammate_ai.gd`/`simple_ai.gd` at all; the scene command is the one that actually exercises those files. The scene command has a known pre-existing error baseline (33× `!is_inside_tree()`, 6× transition-duplicate, 3× `states.has`, 1× `WorldEnvironment3D` — harmless, see `CLAUDE.md`'s *Commands* section) — diff against that, don't expect zero.
 - **Run editor:** same exe without flags
 
 ## Architecture
@@ -17,15 +19,16 @@
 - **InputMap** is set up **programmatically** in `match_manager.gd:_setup_inputs()` — `project.godot` input bindings are unused/overridden. Always edit there, not in `project.godot`.
 - **Player movement** is **velocity + `move_and_slide()`** via `PlayerMotor` (accel/decel, smoothed turn, smoothed lean/banking, sprint) — NOT direct position manipulation anymore. The slide tackle is still the one exception, moving the tackler via manual `move_and_collide()` while that player's motor is control-locked.
 - **Slide tackle & fall system** (`match_manager.gd`, `TackleState`/`FallState` enums): `_tackle_state`/`_tackle_player` are single match-wide fields, not per-player — always check `controlled_player == _tackle_player` before treating "a tackle is happening" as "my tackle." Two separate hit radii: wide `TackleArea` (1.5m) only reaches the ball now; a much tighter `SLIDE_TACKLE_HIT_RADIUS` (0.9m, polled in `_tackle_slide()`) is what actually knocks a player down, so falls track real capsule contact instead of triggering from a visible gap. Tackle aim uses simple lead-prediction off the target's velocity (target usually = ball, which velocity-matches its dribbler). Knockdowns are not yet fouls (no free kick). Victim fall is **animation-driven** (`fallen_idle` → roll → `standing_up`), not physics ragdoll — `ragdoll_skeleton.gd` and its tests still exist but are dead code, nothing live calls them. Full writeup in `CLAUDE.md`'s *Slide tackle & fall system* section.
-- **Sprint:** hold Shift — human only, no stamina, just a higher `speed_scale` into `set_move_intent`.
+- **Sprint:** hold Shift (or right trigger, analog) — human only, no stamina, just a higher `speed_scale` into `set_move_intent`.
+- **Passing** (`match_manager.gd` + `scripts/match/pass_system.gd`, `scripts/match/pass_params.gd`): five pass types share the shot's charge bar via `enum ChargeAction { NONE, SHOT, PASS_SHORT, PASS_THROUGH, PASS_LOB, PASS_WALL, PASS_THROUGH_AIR }`. Controls: `D`/gamepad-X = shot, `X`/`A` = short pass, `W`/`Y` = through ball, `A`/`B` = lob, `Q`/`LB` held with short/through = wall-pass/through-air. `Q`/`LB` alone swaps player, but **only when our team doesn't have the ball** — with the ball it's the pass-combo modifier instead. `PassSystem` (`class_name PassSystem extends Object`) is 7 pure `static` functions (`select_target`, `lead_point`, `launch_ground`, `launch_lob`, `interception_time`, `scatter_degrees`, `apply_scatter`) — never reads `FootballConstants`, tested by `tests/check_pass_system_math.gd`. `ball.launch(velocity)` is the impulse path for passes (vs. `ball.kick(dir, power)` for shots); `_action_power < 0.0` is the sentinel distinguishing them in `_on_action_contact`. Receive-assist steers a human receiver's stick toward an inbound ball; give-and-go (`PASS_WALL`) is the one place AI sprints (`giving_run` group, `teammate_ai.gd`'s `begin_give_and_go`); honest interception (`simple_ai.gd`'s `begin_intercept`) uses real corridor geometry + a reaction delay + a miss chance, not omniscience. `teammate_ai.gd`'s `Role.RECEIVING` is live but currently unreachable (only 2 outfield players on our side; control always hands off to the receiver). Full reference: `CLAUDE.md`'s *Passing* section.
 - **Collision layers are split three ways** — default layer (pitch + ball, for goal/tackle-`Area3D` detection), player layer (`PLAYER_COLLISION_MASK`, bit 2), boundary-wall layer (`BOUNDARY_COLLISION_LAYER`, bit 3). Players mask in player+boundary but NOT the ball's layer — if a player's mask ever includes the ball's layer, `move_and_slide()` physically snags on the ball (juddery dribbling, spawn-point shove).
 - **Dribbling** = velocity matching in `_integrate_forces` (ball matches player velocity + position correction `*30`, clamped to 12)
-- **Kick/pass** = commit-action deferred impulse system. `_fire_kick()`/`_pass_ball()` set `_action_player`/`_action_power`/`_kick_action_active=true`, trigger animation (currently `pass` clip for both), defer `ball.kick()` to `PlayerVisual.action_contact` signal. No `set_control_locked()` during kick/pass — `_kick_action_active` flag skips the motor-lock early-return in `_handle_player_input`.
-- **Kick charge:** hold Space (max 1s), release fires. PowerBar (green→red gradient) visible during charge. Auto-fire at max charge. Power: 12–25 lerp.
-- **Animation timing:** `PlayerVisual.ACTION_TIMING` dict — `kick`: `{contact: 0.35, lock: 0.5, speed: 1.0}`, `pass`: `{contact: 0.2, lock: 0.4, speed: 1.0}`. `action_contact` emitted at contact time, `action_finished` at lock time.
+- **Kick/pass** = commit-action deferred impulse system. `_fire_charge()` (shot) / `_fire_pass()` (all 5 pass types) set `_action_player`/`_action_power`/`_kick_action_active=true`, trigger animation (currently `pass` clip for both), defer `ball.kick()`/`ball.launch()` to `PlayerVisual.action_contact` signal. No `set_control_locked()` during kick/pass — `_kick_action_active` flag skips the motor-lock early-return in `_handle_player_input`. See *Passing* bullet above for the pass-specific details.
+- **Shot charge:** hold `D`/gamepad-X (max 1s), release fires. PowerBar (green→red gradient) visible during charge. Auto-fire at max charge. Power: 12–25 lerp. Passes reuse the bar with a shorter 0.6s max.
+- **Animation timing:** `PlayerVisual.ACTION_TIMING` dict — `kick`: `{contact: 0.35, lock: 0.5, speed: 1.0}`, `pass`: `{contact: 0.2, lock: 0.4, speed: 1.5}`. `action_contact` emitted at contact time, `action_finished` at lock time.
 - **Camera:** sideline broadcast style — `camera_pivot` at X=-40, Y=20, follows ball Z, `look_at(Vector3(0,0,ballZ), UP)`
-- **WASD** is camera-relative (uses `camera_pivot.global_transform.basis`)
-- **Controlled player** switch: **Q** key (manual), auto-switch to whoever on our team has the ball
+- **Movement** is arrows/left-stick, camera-relative (uses `camera_pivot.global_transform.basis`) — WASD letters are freed for pass/shot actions, see *Passing* bullet above.
+- **Controlled player** switch: **Q**/`LB` (manual, only when our team doesn't have the ball — otherwise it's the pass-combo modifier), auto-switch to whoever on our team has the ball
 - **player_home** gets AI script (`teammate_ai.gd`) in `_ready()` — when not human-controlled, it's AI
 
 ## Colors
@@ -44,8 +47,10 @@
 scenes/match.tscn      — match scene (no direct load, only via main_menu)
 scenes/player_visual.tscn       — rigged model + team-tint wrapper (child of each field player)
 scripts/match/match_manager.gd  — all game logic
-scripts/ai/simple_ai.gd         — opponent AI (red, chases target/ball, shoots)
-scripts/ai/teammate_ai.gd       — teammate AI (blue, positions for pass / chases ball)
+scripts/match/pass_system.gd    — PassSystem: 7 pure static pass-math functions (headless-tested)
+scripts/match/pass_params.gd    — PassParams: plain data holder for a pass's power/height/lead
+scripts/ai/simple_ai.gd         — opponent AI (red, chases target/ball, shoots, honest interception)
+scripts/ai/teammate_ai.gd       — teammate AI (blue, positions for pass / chases ball / receives / give-and-go run)
 scripts/player/player_visual.gd — PlayerVisual: idle/run/sprint AnimationTree + action/fall one-shots + apply_appearance tint + set_lean
 scripts/player/player_motor.gd  — PlayerMotor: velocity+inertia locomotion (accel/decel/turn/lean/sprint)
 scripts/player/ragdoll_skeleton.gd — DEAD CODE (physics ragdoll, replaced by animation-driven fall in match_manager.gd; still has passing tests, nothing live calls it)
