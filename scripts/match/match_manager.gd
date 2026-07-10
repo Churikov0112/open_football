@@ -111,28 +111,40 @@ func _setup_power_bar() -> void:
 
 
 func _setup_inputs() -> void:
-	# NOTE: project.godot has input actions defined but they may not have
-	# events bound correctly (serialization format issue). To guarantee
-	# input works, we always erase and recreate all actions here.
-	var input_actions := {
-		&"move_left": [KEY_A, KEY_LEFT],
-		&"move_right": [KEY_D, KEY_RIGHT],
-		&"move_forward": [KEY_W, KEY_UP],
-		&"move_back": [KEY_S, KEY_DOWN],
-		&"kick": [KEY_SPACE],
-		&"pass": [KEY_E],
-		&"pause": [KEY_ESCAPE],
-		&"swap_player": [KEY_Q],
-		&"sprint": [KEY_SHIFT],
+	# Строим ввод в коде (project.godot мёртв). Движение — стрелки + левый стик; буквы WASD
+	# освобождены под действия. Каждый action может иметь и клавиши, и джойпад-события.
+	# key_events: клавиши. joy_buttons: кнопки геймпада. joy_axes: [оси] как [axis, value].
+	var actions := {
+		&"move_left":       {"keys": [KEY_LEFT],  "buttons": [], "axes": [[JOY_AXIS_LEFT_X, -1.0]]},
+		&"move_right":      {"keys": [KEY_RIGHT], "buttons": [], "axes": [[JOY_AXIS_LEFT_X, 1.0]]},
+		&"move_forward":    {"keys": [KEY_UP],    "buttons": [], "axes": [[JOY_AXIS_LEFT_Y, -1.0]]},
+		&"move_back":       {"keys": [KEY_DOWN],  "buttons": [], "axes": [[JOY_AXIS_LEFT_Y, 1.0]]},
+		&"sprint":          {"keys": [KEY_SHIFT], "buttons": [], "axes": [[JOY_AXIS_TRIGGER_RIGHT, 1.0]]},
+		&"kick":            {"keys": [KEY_D],     "buttons": [JOY_BUTTON_X], "axes": []},
+		&"pass_short":      {"keys": [KEY_X],     "buttons": [JOY_BUTTON_A], "axes": []},
+		&"pass_through":    {"keys": [KEY_W],     "buttons": [JOY_BUTTON_Y], "axes": []},
+		&"pass_lob":        {"keys": [KEY_A],     "buttons": [JOY_BUTTON_B], "axes": []},
+		&"combo_modifier":  {"keys": [KEY_Q],     "buttons": [JOY_BUTTON_LEFT_SHOULDER], "axes": []},
+		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 	}
-	for action in input_actions:
+	for action in actions:
 		if InputMap.has_action(action):
 			InputMap.erase_action(action)
 		InputMap.add_action(action)
-		for keycode in input_actions[action]:
-			var e := InputEventKey.new()
-			e.keycode = keycode
-			InputMap.action_add_event(action, e)
+		InputMap.action_set_deadzone(action, 0.2)
+		for keycode in actions[action]["keys"]:
+			var ek := InputEventKey.new()
+			ek.keycode = keycode
+			InputMap.action_add_event(action, ek)
+		for btn in actions[action]["buttons"]:
+			var eb := InputEventJoypadButton.new()
+			eb.button_index = btn
+			InputMap.action_add_event(action, eb)
+		for ax in actions[action]["axes"]:
+			var em := InputEventJoypadMotion.new()
+			em.axis = ax[0]
+			em.axis_value = ax[1]
+			InputMap.action_add_event(action, em)
 	print("Inputs setup OK")
 
 
