@@ -665,6 +665,15 @@ func _handle_dribbling() -> void:
 		if dist > 3.0:
 			ball.release_dribble()
 		return
+	# Пас летит на _receiver — расширенный радиус подбора именно для него, иначе быстрый
+	# мяч проносит мимо, пока receive-assist ещё довозит игрока на линию мяча.
+	if _receive_active and is_instance_valid(_receiver):
+		var recv_dist: float = _receiver.global_position.distance_to(ball.global_position)
+		if recv_dist < FootballConstants.PASS_RECEIVE_CATCH_RADIUS:
+			ball.set_dribbler(_receiver)
+			if _receiver.has_method(&"end_receiving"):
+				_receiver.end_receiving()
+			return
 	for p in [player_home, player_teammate, player_away]:
 		if not p or not is_instance_valid(p):
 			continue
