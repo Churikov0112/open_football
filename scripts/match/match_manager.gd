@@ -519,7 +519,7 @@ func _process(delta: float) -> void:
 		var mate_pos: PackedVector3Array = mates["pos"]
 		var mate_vel: PackedVector3Array = mates["vel"]
 		var mate_nodes: Array = mates["nodes"]
-		var aim: Vector3 = ball.get_dribble_direction()
+		var aim: Vector3 = ball.peek_dribble_direction()
 		var idx := PassSystem.select_target(_charge_player.global_position, aim, mate_pos, mate_vel,
 			FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
 		if idx >= 0:
