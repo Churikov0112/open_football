@@ -125,13 +125,18 @@ const AI_ACQUIRE_RANGE := 1.8
 # чтобы вдогонку соперника хватало. RECOVERY_TIME подобран так, чтобы суммарный commit
 # (слайд + recovery) остался близко к длине клипа, как было тюнено раньше (~1.7-1.8с).
 const SLIDE_TACKLE_SPEED := 9.0
-const SLIDE_TACKLE_RANGE := 4.0
+# Было 4.0, затем 5.5 — увеличено для более дальнобойного подката. RECOVERY_TIME
+# уменьшен в ответ, чтобы суммарный commit (слайд + recovery = RANGE/SPEED +
+# RECOVERY_TIME) остался близко к длине клипа tackle (~1.8с), как и раньше — иначе
+# слайд физически доезжает уже после того, как анимация доиграла до конца, и тело
+# едет по инерции со "замёрзшими" ногами.
+const SLIDE_TACKLE_RANGE := 6.5
 # Диагностический флаг (подкат на месте, без move_and_collide) для изоляции анимации
 # tackle от скольжения — см. tools/merge_mixamo.py IN_PLACE_CLIPS. Причина зависания
 # найдена и исправлена там (заморозка вертикали Hips для tackle убрана), возвращаем
 # обычное поведение со скольжением.
 const SLIDE_TACKLE_INPLACE := false
-const SLIDE_TACKLE_RECOVERY_TIME := 1.3
+const SLIDE_TACKLE_RECOVERY_TIME := 1.02
 const SLIDE_TACKLE_AREA_RADIUS := 1.5
 # Порог сбивания игрока-соперника с ног (match_manager._check_tackle_player_hit) —
 # НАМНОГО теснее SLIDE_TACKLE_AREA_RADIUS выше. Тот радиус щедрый специально (дотянуться
