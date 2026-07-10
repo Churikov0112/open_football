@@ -10,6 +10,20 @@ out_path = argv[1]
 # Чистая пустая сцена
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
+# Шим совместимости: некоторые Mixamo-экспорты кладут в FBX объект света. Импортёр
+# io_scene_fbx этой сборки Blender 5.1 при импорте света всегда пишет
+# lamp.cycles.cast_shadow — атрибута, которого в этой версии Cycles-API больше нет,
+# и падает AttributeError, ломая импорт всего файла (а не только света; свет нам
+# всё равно не нужен — импортированные объекты анимационных клипов мы позже удаляем
+# целиком). Класс настроек Cycles-света не зарегистрирован в bpy.types по фиксированному
+# имени до создания реального светового datablock — создаём временный, чтобы получить
+# настоящий класс, патчим его, временный datablock удаляем.
+_tmp_light = bpy.data.lights.new("tmp_shim_light", type='POINT')
+_cycles_light_cls = type(_tmp_light.cycles)
+if not hasattr(_cycles_light_cls, "cast_shadow"):
+    _cycles_light_cls.cast_shadow = bpy.props.BoolProperty(default=True)
+bpy.data.lights.remove(_tmp_light)
+
 # 1) Импорт персонажа со скином (T-pose)
 bpy.ops.import_scene.fbx(filepath=os.path.join(src_dir, "character.fbx"),
                          automatic_bone_orientation=True)
