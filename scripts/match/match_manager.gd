@@ -1068,20 +1068,22 @@ func _tackle_slide(delta: float) -> void:
 		return
 
 	var step := FootballConstants.SLIDE_TACKLE_SPEED * delta
-	var motion := _tackle_dir * step
-	var collision := _tackle_player.move_and_collide(motion)
 
-	# Check what we hit
-	if collision:
-		var body := collision.get_collider()
-		if body is CharacterBody3D and not _same_team(_tackle_player, body):
-			_on_tackle_hit_player(body, collision.get_normal())
-			_tackle_enter_recovery(0.5)
-			return
-		else:
-			_tackle_dist_remaining = 0.0
-			_tackle_enter_recovery()
-			return
+	if not FootballConstants.SLIDE_TACKLE_INPLACE:
+		var motion := _tackle_dir * step
+		var collision := _tackle_player.move_and_collide(motion)
+
+		# Check what we hit
+		if collision:
+			var body := collision.get_collider()
+			if body is CharacterBody3D and not _same_team(_tackle_player, body):
+				_on_tackle_hit_player(body, collision.get_normal())
+				_tackle_enter_recovery(0.5)
+				return
+			else:
+				_tackle_dist_remaining = 0.0
+				_tackle_enter_recovery()
+				return
 
 	_tackle_dist_remaining -= step
 

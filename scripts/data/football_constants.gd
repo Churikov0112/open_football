@@ -116,6 +116,13 @@ const AI_ACQUIRE_RANGE := 1.8
 
 const SLIDE_TACKLE_SPEED := 18.0
 const SLIDE_TACKLE_RANGE := 4.0
+# Временный диагностический флаг: подкат на месте (без move_and_collide), чтобы отделить
+# анимацию tackle от вопроса "не баг ли в самом скольжении". Пока true, физического
+# столкновения с игроком-жертвой не будет (collision из move_and_collide всегда null при
+# нулевом motion) — окно такла живёт только по таймеру (тот же SLIDE_TACKLE_SPEED*delta,
+# просто не двигает тело), мяч по-прежнему выбивается через Area3D. Вернуть false, когда
+# разберёмся с анимацией.
+const SLIDE_TACKLE_INPLACE := true
 const SLIDE_TACKLE_RECOVERY_TIME := 1.5
 const SLIDE_TACKLE_AREA_RADIUS := 1.5
 const SLIDE_TACKLE_BALL_DIR_Y := 0.15
