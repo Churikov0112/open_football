@@ -610,7 +610,11 @@ func _handle_player_input(delta: float) -> void:
 		if fallen_motor != null:
 			fallen_motor.set_move_intent(Vector3.ZERO)
 		return
-	if _tackle_state != TackleState.NORMAL:
+	# _tackle_state общий на весь матч (не per-player) — блокировать ввод нужно, только
+	# когда подкатчик — сам управляемый игрок (его слайд/recovery), иначе человек замирает
+	# от ЛЮБОГО чужого подката на поле (например, ИИ-соперник промахнулся мимо, а
+	# человек всё равно не мог двигаться).
+	if _tackle_state != TackleState.NORMAL and controlled_player == _tackle_player:
 		var blocked_motor := _player_motor(controlled_player)
 		if blocked_motor != null:
 			blocked_motor.set_move_intent(Vector3.ZERO)
@@ -858,8 +862,26 @@ func _start_tackle(player: CharacterBody3D, target: Node3D = null) -> void:
 	_hit_processed = false
 	_tackle_fouled_player = null
 
-	var dir: Vector3 = target.global_position - player.global_position
+	# Прицел с упреждением: цель (обычно мяч, следующий за дриблером — см. ball_controller.gd
+	# velocity-matching) продолжает двигаться, пока слайд едет (~0.4с). Без упреждения
+	# направление считается один раз в момент старта и потом никогда не пересчитывается —
+	# движущаяся цель успевает сместиться на метр+ за время слайда, и подкат чисто проезжает
+	# мимо, даже если решение о подкате было принято вовремя. lead_time — грубая (без
+	# итерации схождения) оценка "сколько ехать до текущей дистанции цели".
+	var to_target: Vector3 = target.global_position - player.global_position
+	to_target.y = 0.0
+	var lead_time := to_target.length() / FootballConstants.SLIDE_TACKLE_SPEED
+	var target_velocity := Vector3.ZERO
+	if target is RigidBody3D:
+		target_velocity = (target as RigidBody3D).linear_velocity
+	elif target is CharacterBody3D:
+		target_velocity = (target as CharacterBody3D).velocity
+	target_velocity.y = 0.0
+	var predicted_pos: Vector3 = target.global_position + target_velocity * lead_time
+	var dir: Vector3 = predicted_pos - player.global_position
 	dir.y = 0.0
+	if dir.length() < 0.01:
+		dir = to_target
 	_tackle_dir = dir.normalized()
 	_tackle_dist_remaining = FootballConstants.SLIDE_TACKLE_RANGE
 
@@ -879,20 +901,10 @@ func _on_tackle_body_entered(body: Node) -> void:
 	if not _tackle_player or not is_instance_valid(_tackle_player):
 		return
 
-	# Player on opposite team → sweep them off their feet. Checked before the ball so a
-	# from-behind slide (body sits closer to the tackler than the ball, hence enters the
-	# Area3D first) reliably knocks the victim down instead of always resolving as a clean
-	# tackle-on-ball first. No foul/free-kick call yet (TODO: docs/football_reference.md §9 —
-	# needs a rule for "ball won first" vs "body hit first" before wiring _tackle_foul_position
-	# / _tackle_fouled_player back in).
-	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
-			and not _same_team(_tackle_player, body):
-		_hit_processed = true
-		_on_tackle_hit_player(body, _tackle_dir)
-		_tackle_enter_recovery(0.5)
-		return
-
-	# Ball → clean tackle
+	# Ball → clean tackle. Игрока-соперника TackleArea (радиус SLIDE_TACKLE_AREA_RADIUS=1.5,
+	# щедрый — нужен, чтобы дотягиваться до мяча) больше НЕ роняет напрямую — на таком
+	# расстоянии капсулы визуально не соприкасаются. Сбивание игрока — отдельная, тесная
+	# проверка _check_tackle_player_hit() в _tackle_slide(), на реальном контакте капсул.
 	if body == ball:
 		_hit_processed = true
 		_tackle_clean = true
@@ -905,7 +917,7 @@ func _on_tackle_body_entered(body: Node) -> void:
 		_tackle_enter_recovery()
 		return
 
-	# Same team player → ignore
+	# Same team player / игрок-соперник вне тесного радиуса → игнор
 
 
 func _on_tackle_hit_player(body: CharacterBody3D, normal: Vector3) -> void:
@@ -1101,8 +1113,32 @@ func _tackle_slide(delta: float) -> void:
 	area_pos.y = 0.3
 	_tackle_area.global_position = area_pos
 
+	if not _hit_processed and _check_tackle_player_hit():
+		return
+
 	if _tackle_dist_remaining <= 0.0:
 		_tackle_enter_recovery()
+
+
+## Тесная проверка сбивания игрока-соперника: в отличие от TackleArea (щедрый радиус
+## SLIDE_TACKLE_AREA_RADIUS — нужен только для дотягивания до мяча), здесь порог —
+## реальный контакт капсул (плюс небольшой запас), чтобы падение не выглядело
+## беспричинным на расстоянии. Кандидатов берём из уже пересекающихся с TackleArea тел
+## (та же физика, просто более строгий фильтр по дистанции).
+func _check_tackle_player_hit() -> bool:
+	for body in _tackle_area.get_overlapping_bodies():
+		if not (body is CharacterBody3D) or _same_team(_tackle_player, body):
+			continue
+		if body.is_in_group("fallen"):
+			continue
+		var to_body := body.global_position - _tackle_player.global_position
+		if to_body.length() > FootballConstants.SLIDE_TACKLE_HIT_RADIUS:
+			continue
+		_hit_processed = true
+		_on_tackle_hit_player(body, to_body.normalized())
+		_tackle_enter_recovery(0.5)
+		return true
+	return false
 
 
 func _tackle_enter_recovery(recovery_time: float = -1.0) -> void:

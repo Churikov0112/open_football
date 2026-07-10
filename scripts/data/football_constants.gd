@@ -133,9 +133,19 @@ const SLIDE_TACKLE_RANGE := 4.0
 const SLIDE_TACKLE_INPLACE := false
 const SLIDE_TACKLE_RECOVERY_TIME := 1.3
 const SLIDE_TACKLE_AREA_RADIUS := 1.5
+# Порог сбивания игрока-соперника с ног (match_manager._check_tackle_player_hit) —
+# НАМНОГО теснее SLIDE_TACKLE_AREA_RADIUS выше. Тот радиус щедрый специально (дотянуться
+# до мяча), но раньше от него же ронялся и игрок — с разницей центров тел до ~1.5м, когда
+# капсулы (radius=0.3 у каждой, см. _setup_away_player/_setup_teammate) визуально даже не
+# соприкасались.
+# 0.9 ≈ сумма радиусов капсул (0.6) + небольшой запас, чтобы не мазать по кадру.
+const SLIDE_TACKLE_HIT_RADIUS := 0.9
 const SLIDE_TACKLE_BALL_DIR_Y := 0.15
 const SLIDE_TACKLE_BALL_POWER := 7.0
-const AI_TACKLE_RANGE := 2.5
+# Было 2.5 — решение "подкатывать" принималось иногда слишком издалека, и с добавленным
+# упреждением цели (_start_tackle) чем дальше цель в момент решения, тем грубее оценка
+# lead_time (нет итерации схождения). Урезано, чтобы ИИ решался ближе — упреждение точнее.
+const AI_TACKLE_RANGE := 2.0
 const AI_TACKLE_COOLDOWN := 2.0
 
 
