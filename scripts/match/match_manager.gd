@@ -879,12 +879,28 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		_receive_active = true
 		_receiver = receiver
 		_receive_timer = FootballConstants.PASS_RECEIVE_MAX_TIME
+	if params.is_wall and is_instance_valid(player) and player.has_method(&"begin_give_and_go"):
+		if receiver != null:
+			player.begin_give_and_go(receiver.global_position)
+		if ball.has_method(&"clear_last_kicker"):
+			# Не await здесь напрямую: это приостановило бы весь _fire_pass (включая
+			# visual.trigger()/ball.launch() ниже) на 0.4с. Запускаем отдельной корутиной.
+			_clear_wall_pass_cooldown()
 	var visual := _player_visual(player)
 	if visual != null and visual.trigger("pass"):
 		return
 	ball.launch(launch_vel)
 	_action_player = null
 	_kick_action_active = false
+
+
+## Даём отдавшему «стенку» шанс принять быстрый возврат, сняв с мяча метку последнего
+## игрока чуть раньше истечения ball._kick_cooldown_msec. Отдельная корутина — намеренно
+## не await-ится из _fire_pass, чтобы не задерживать сам пас (см. вызов выше).
+func _clear_wall_pass_cooldown() -> void:
+	await get_tree().create_timer(0.4).timeout
+	if is_instance_valid(ball):
+		ball.clear_last_kicker()
 
 
 ## Начать commit-действие с мячом: развернуть игрока, проиграть анимацию, заблокировать
@@ -1212,6 +1228,8 @@ func _finish_fall() -> void:
 		_fall_visual.recover()
 	if is_instance_valid(_fall_player):
 		_fall_player.remove_from_group("fallen")
+		if _fall_player.is_in_group("giving_run"):
+			_fall_player.remove_from_group("giving_run")
 		var motor := _player_motor(_fall_player)
 		if motor != null:
 			motor.set_control_locked(false)
