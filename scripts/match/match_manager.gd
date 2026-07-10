@@ -706,18 +706,14 @@ func _handle_player_input(delta: float) -> void:
 	var dir := (cam_forward * -input_vec.y + cam_right * input_vec.x)
 	if dir.length() > 1.0:
 		dir = dir.normalized()
-	# Receive-assist: пока летит пас на нас, слегка подруливаем ввод к мячу —
-	# стик не тронут → бежим к мячу сами; стик примерно к мячу → защёлка точно на мяч;
-	# стик прочь → осознанный dummy-run, ввод не трогаем.
+	# Receive-assist: пока летит пас на нас, всегда бежим на мяч — не полагаемся на то, что
+	# стик уже переориентирован для нового игрока сразу после хендоффа (обычно он ещё держит
+	# направление ПРЕЖНЕГО игрока), поэтому больше не "уважаем" отклонённый стик как dummy-run.
 	if _receive_active and controlled_player == _receiver and is_instance_valid(ball):
 		var db := (ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW) - controlled_player.global_position
 		db.y = 0.0
-		var stick := dir
-		if stick.length() < 0.1:
+		if db.length() > 0.01:
 			dir = db.normalized()
-		elif db.normalized().dot(stick.normalized()) > FootballConstants.PASS_RECEIVE_DOT_THRESHOLD:
-			dir = db.normalized()
-		# иначе (стик прочь) — оставляем dir = stick (осознанный dummy-run)
 	# Аналоговый спринт: сила триггера (или 1.0 с клавиши Shift) лерпит speed_scale.
 	var sprint_strength := Input.get_action_strength(&"sprint")
 	var sprint_scale := lerpf(1.0, FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED, sprint_strength)
