@@ -61,3 +61,33 @@ static func launch_lob(from: Vector3, to: Vector3, peak_height: float, gravity: 
 	flat.y = 0.0
 	var horizontal := flat / maxf(flight, 0.001)
 	return Vector3(horizontal.x, vy, horizontal.z)
+
+## Успеет ли соперник перехватить пас в коридоре. Проецируем соперника на луч паса:
+## along — вдоль (0..длина), across — поперёк. Коридор расширяется с дистанцией
+## (half + along*spread). Соперник перехватывает, если внутри коридора И добегает до линии
+## не позже мяча. Возврат — время перехвата (сек) или INF.
+static func interception_time(pass_from: Vector3, pass_to: Vector3, ball_speed: float,
+		opp_pos: Vector3, opp_speed: float, corridor_half_width: float, corridor_spread: float) -> float:
+	var line := pass_to - pass_from
+	line.y = 0.0
+	var length := line.length()
+	if length < 0.001:
+		return INF
+	var dir := line / length
+	var rel := opp_pos - pass_from
+	rel.y = 0.0
+	var along := rel.dot(dir)
+	if along < 0.0 or along > length:
+		return INF
+	var closest := pass_from + dir * along
+	var across := (opp_pos - closest)
+	across.y = 0.0
+	var across_dist := across.length()
+	var half := corridor_half_width + along * corridor_spread
+	if across_dist > half:
+		return INF
+	var ball_time := along / maxf(ball_speed, 0.001)
+	var opp_time := across_dist / maxf(opp_speed, 0.001)
+	if opp_time <= ball_time:
+		return ball_time
+	return INF

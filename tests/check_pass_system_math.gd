@@ -50,5 +50,16 @@ func _initialize() -> void:
 	if absf(peak - 3.0) > 0.2:
 		print("CHECK FAIL: launch_lob peak → ", peak); ok = false
 
+	# interception_time: соперник на линии паса и близко → конечное время.
+	var t_hit := PassSystem.interception_time(Vector3.ZERO, Vector3(20, 0, 0), 15.0, Vector3(10, 0, 0.2), 6.0, 1.2, 0.06)
+	if is_inf(t_hit) or t_hit <= 0.0:
+		print("CHECK FAIL: interception on-line finite → ", t_hit); ok = false
+	# соперник далеко вбок → INF (вне коридора).
+	if not is_inf(PassSystem.interception_time(Vector3.ZERO, Vector3(20, 0, 0), 15.0, Vector3(10, 0, 8.0), 6.0, 1.2, 0.06)):
+		print("CHECK FAIL: interception off-corridor INF"); ok = false
+	# соперник позади точки паса → INF.
+	if not is_inf(PassSystem.interception_time(Vector3.ZERO, Vector3(20, 0, 0), 15.0, Vector3(-5, 0, 0), 6.0, 1.2, 0.06)):
+		print("CHECK FAIL: interception behind INF"); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
