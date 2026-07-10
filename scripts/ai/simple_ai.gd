@@ -1,7 +1,11 @@
 extends CharacterBody3D
 
 @export var ball: RigidBody3D
-@export var speed: float = 6.5
+# Было 6.5 — заметно медленнее человека (LOCO_TOP_SPEED=8.0), из-за чего человек почти
+# всегда мог убежать/догнать при подкате, а ИИ — почти никогда. Подняли до 8.0, вровень
+# с обычным бегом человека; спринт (LOCO_SPRINT_SPEED=12.0, только у человека) остаётся
+# реальным преимуществом для отрыва.
+@export var speed: float = 8.0
 @export var home_goal: Node3D
 @export var target_node: Node3D
 
