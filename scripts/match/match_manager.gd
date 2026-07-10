@@ -62,6 +62,11 @@ const KICK_POWER_MAX: float = 25.0
 var _pass_rng := RandomNumberGenerator.new()
 var _pending_launch: Vector3 = Vector3.ZERO
 
+# Receive-assist: пока летит пас, слегка подруливаем ввод человека-адресата к мячу.
+var _receive_active: bool = false
+var _receiver: CharacterBody3D
+var _receive_timer: float = 0.0
+
 func _is_charging() -> bool:
 	return _charge_action != ChargeAction.NONE
 
@@ -542,6 +547,14 @@ func _physics_process(delta: float) -> void:
 	# Автомат падения сбитого игрока (ragdoll → на живот → 2 переката → вставание).
 	_process_fall(delta)
 
+	# Receive-assist: тикаем таймаут и снимаем фазу по поимке/таймауту/смене игрока/невалидности.
+	if _receive_active:
+		_receive_timer -= delta
+		var caught: bool = ball.has_method(&"set_dribbler") and ball.dribbler == _receiver
+		if caught or _receive_timer <= 0.0 or _receiver != controlled_player or not is_instance_valid(_receiver):
+			_receive_active = false
+			_receiver = null
+
 
 func _setup_controlled_indicator() -> void:
 	var mesh := CylinderMesh.new()
@@ -655,6 +668,18 @@ func _handle_player_input(delta: float) -> void:
 	var dir := (cam_forward * -input_vec.y + cam_right * input_vec.x)
 	if dir.length() > 1.0:
 		dir = dir.normalized()
+	# Receive-assist: пока летит пас на нас, слегка подруливаем ввод к мячу —
+	# стик не тронут → бежим к мячу сами; стик примерно к мячу → защёлка точно на мяч;
+	# стик прочь → осознанный dummy-run, ввод не трогаем.
+	if _receive_active and controlled_player == _receiver and is_instance_valid(ball):
+		var db := (ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW) - controlled_player.global_position
+		db.y = 0.0
+		var stick := dir
+		if stick.length() < 0.1:
+			dir = db.normalized()
+		elif db.normalized().dot(stick.normalized()) > FootballConstants.PASS_RECEIVE_DOT_THRESHOLD:
+			dir = db.normalized()
+		# иначе (стик прочь) — оставляем dir = stick (осознанный dummy-run)
 	# Аналоговый спринт: сила триггера (или 1.0 с клавиши Shift) лерпит speed_scale.
 	var sprint_strength := Input.get_action_strength(&"sprint")
 	var sprint_scale := lerpf(1.0, FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED, sprint_strength)
@@ -850,6 +875,10 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		_manual_swap_cooldown = 30
 	if receiver != null and receiver != controlled_player and receiver.has_method(&"begin_receiving"):
 		receiver.begin_receiving(launch_vel, params.extra_lead)
+	if receiver != null and receiver == controlled_player:
+		_receive_active = true
+		_receiver = receiver
+		_receive_timer = FootballConstants.PASS_RECEIVE_MAX_TIME
 	var visual := _player_visual(player)
 	if visual != null and visual.trigger("pass"):
 		return
