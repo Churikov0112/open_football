@@ -98,5 +98,5 @@ There are **no tests, no lint, and no CI** — the only automated check is that 
 
 ## Status notes
 
-- The slide-tackle code in `match_manager.gd` still has `print("[TACKLE_DEBUG] ...")` statements and foul detection is **commented out** in `_on_tackle_body_entered`. Clean up before considering tackle work done.
+- Hitting an opposing player's body in `_on_tackle_body_entered` (`match_manager.gd`) knocks them down (`_begin_fall()`), checked *before* the ball so from-behind slides (body closer to the tackler than the ball) reliably fall instead of always resolving as clean-on-ball. It is **not yet a foul** — `_tackle_clean` stays `true`, no free kick is awarded. `_tackle_foul_position`/`_tackle_fouled_player` and the free-kick branch in `_tackle_recover()` are wired up but currently unreachable — needs a rule for "ball won first" vs "body hit first" (see `docs/football_reference.md` §9) before re-enabling.
 - **Kick charge and deferred-impulse pass** implemented. Kick and pass both temporarily use the `pass` animation clip (the dedicated `kick.fbx` is imported but not yet assigned). `PlayerVisual.ACTION_CLIPS["kick"]` is set to `"pass"` — when a proper kick animation is ready, change this to `"kick"` and verify `ACTION_TIMING.kick.contact` matches the clip.

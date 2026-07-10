@@ -557,6 +557,12 @@ func _setup_tackle_area() -> void:
 	shape.radius = FootballConstants.SLIDE_TACKLE_AREA_RADIUS
 	col.shape = shape
 	_tackle_area.add_child(col)
+	# Мяч сидит на слое 1 (дефолтный collision_mask Area3D), но полевые игроки — на
+	# PLAYER_COLLISION_MASK (bit2, см. _setup_boundaries). Без явного добавления этого бита
+	# body_entered никогда не срабатывает на игрока — только на мяч. Из-за этого раньше
+	# ветка попадания в игрока была "мертва" даже после включения в коде: сигнал физически
+	# не приходил.
+	_tackle_area.collision_mask = 1 | FootballConstants.PLAYER_COLLISION_MASK
 	_tackle_area.monitoring = false
 	_tackle_area.monitorable = false
 	_tackle_area.body_entered.connect(_on_tackle_body_entered)
@@ -873,6 +879,19 @@ func _on_tackle_body_entered(body: Node) -> void:
 	if not _tackle_player or not is_instance_valid(_tackle_player):
 		return
 
+	# Player on opposite team → sweep them off their feet. Checked before the ball so a
+	# from-behind slide (body sits closer to the tackler than the ball, hence enters the
+	# Area3D first) reliably knocks the victim down instead of always resolving as a clean
+	# tackle-on-ball first. No foul/free-kick call yet (TODO: docs/football_reference.md §9 —
+	# needs a rule for "ball won first" vs "body hit first" before wiring _tackle_foul_position
+	# / _tackle_fouled_player back in).
+	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
+			and not _same_team(_tackle_player, body):
+		_hit_processed = true
+		_on_tackle_hit_player(body, _tackle_dir)
+		_tackle_enter_recovery(0.5)
+		return
+
 	# Ball → clean tackle
 	if body == ball:
 		_hit_processed = true
@@ -885,16 +904,6 @@ func _on_tackle_body_entered(body: Node) -> void:
 			ball.kick(kick_dir, FootballConstants.SLIDE_TACKLE_BALL_POWER)
 		_tackle_enter_recovery()
 		return
-
-	# Player on opposite team → foul (disabled for testing)
-	# if (body.is_in_group("team_1") or body.is_in_group("team_2")) \
-	# 	and not _same_team(_tackle_player, body):
-	# 	_hit_processed = true
-	# 	_tackle_clean = false
-	# 	_tackle_foul_position = body.global_position
-	# 	_tackle_fouled_player = body
-	# 	_tackle_enter_recovery()
-	# 	return
 
 	# Same team player → ignore
 
