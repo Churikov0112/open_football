@@ -660,9 +660,17 @@ func _setup_floor() -> void:
 func _handle_dribbling() -> void:
 	if not ball.has_method(&"release_dribble"):
 		return
+	# Пока владелец заряжает/выполняет пас-удар — подавляем дриблинг-толчок, чтобы касание
+	# было ровно одно (сам пас), а не «толкнул на дриблинге + пас» (двойное касание/удар «в
+	# воздух»). Полноценную очередь «в одно касание» достроит Фаза 2 поверх этого шва.
+	if ball.has_method(&"set_dribble_suppressed"):
+		ball.set_dribble_suppressed(_is_charging() or _kick_action_active)
 	if ball.dribbler:
 		var dist: float = ball.dribbler.global_position.distance_to(ball.global_position)
-		if dist > 3.0:
+		# Владение НЕ теряется от собственного толчка/резкого поворота — только по внешнему
+		# фактору (подкат/перехват, они зовут release_dribble отдельно). Дистанционный сброс —
+		# лишь страховка для реально улетевшего мяча (порог выше макс. ролл-дистанции толчка).
+		if dist > FootballConstants.DRIBBLE_KEEP_DIST:
 			ball.release_dribble()
 		return
 	# Быстрый (летящий) мяч не подбираем — он «в полёте», ждём пока замедлится/отскочит.
@@ -726,6 +734,45 @@ func _handle_player_input(delta: float) -> void:
 		db.y = 0.0
 		if db.length() > 0.01:
 			dir = db.normalized()
+	# Дриблинг: стик задаёт направление ТОЛЧКА мяча, а бег авто-направляется К МЯЧУ —
+	# игрок толкает мяч в сторону стика и сам бежит его догонять (аркадная петля). Толчок
+	# по intent'у делает ball_controller в момент «догнал».
+	if is_instance_valid(ball) and ball.has_method(&"set_dribble_intent") and ball.player() == controlled_player:
+		var stick := dir
+		var chasing: bool = ball.has_method(&"should_chase") and ball.should_chase()
+		# Стик задаёт ТОЛЬКО направление следующего толчка (intent) + доп. силу спринта — бегом
+		# во время догона он не рулит.
+		if stick.length() > 0.2:
+			var sprint_now := Input.get_action_strength(&"sprint")
+			ball.set_dribble_intent(stick, FootballConstants.DRIBBLE_SPRINT_PUSH_EXTRA * sprint_now)
+		if chasing:
+			# ДОГОН (мяч ушёл): бежим СТРОГО к мячу, стик не отклоняет — куда бы ни направлял и
+			# даже если отпущен. Так игрок не теряет фокус на мяче в фазе догона.
+			var to_ball := ball.global_position - controlled_player.global_position
+			to_ball.y = 0.0
+			if to_ball.length() > 0.01:
+				dir = to_ball.normalized()
+		elif stick.length() > 0.2:
+			# Мяч у ног: ведём в направлении СТИКА (толкаем сквозь). Нет стика → стоп.
+			dir = stick.normalized()
+
+	# Притягивание к НИЧЕЙНОМУ мячу (вне владения): если игрок движется примерно к
+	# подбираемому (медленному, бесхозному) мячу поблизости — подруливаем к нему, чтобы не
+	# целиться точно и проще подбирать. Сам подбор (трап на <1 м) — как есть, ниже по кадру.
+	elif is_instance_valid(ball) and ball.has_method(&"set_dribble_intent") and ball.player() == null \
+			and not _receive_active and ball.linear_velocity.length() <= FootballConstants.BALL_TRAP_MAX_SPEED \
+			and dir.length() > 0.2:
+		var to_ball := ball.global_position - controlled_player.global_position
+		to_ball.y = 0.0
+		var d := to_ball.length()
+		if d > 0.01 and d < FootballConstants.PICKUP_ASSIST_RADIUS:
+			var stick_dir := dir.normalized()
+			var ball_dir := to_ball.normalized()
+			if stick_dir.dot(ball_dir) > 0.0:  # движемся примерно к мячу (в пределах ~90°)
+				var strength := clampf(1.0 - d / FootballConstants.PICKUP_ASSIST_RADIUS, 0.0, 1.0) \
+					* FootballConstants.PICKUP_ASSIST_STRENGTH
+				dir = stick_dir.slerp(ball_dir, strength) * dir.length()
+
 	# Аналоговый спринт: сила триггера (или 1.0 с клавиши Shift) лерпит speed_scale.
 	var sprint_strength := Input.get_action_strength(&"sprint")
 	var sprint_scale := lerpf(1.0, FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED, sprint_strength)
@@ -1009,6 +1056,19 @@ func _start_ball_action(player_node: CharacterBody3D, dir: Vector3, power: float
 func _on_action_contact(_action: String, player: Node) -> void:
 	if player != _action_player:
 		return
+	# Удар/пас отложены до сигнала анимации; с подвижным дриблингом игрок за это время может
+	# повернуть и пробежать МИМО мяча (мяч сзади). Если в момент контакта мяч за спиной —
+	# не бьём (промах вхолостую), иначе мяч «сам улетает» из позиции за спиной. Полноценный
+	# fire-on-reach (удар в момент, когда игрок дотянулся до мяча) даст Фаза 2 (очередь).
+	if player is Node3D:
+		var p3 := player as Node3D
+		var to_ball: Vector3 = ball.global_position - p3.global_position
+		to_ball.y = 0.0
+		var facing: Vector3 = -p3.global_transform.basis.z
+		facing.y = 0.0
+		if to_ball.length() > 0.05 and facing.length() > 0.01 \
+				and facing.normalized().dot(to_ball.normalized()) < -0.2:
+			return  # мяч за спиной — удар/пас не производим
 	if _action_power < 0.0 and ball.has_method(&"launch"):
 		ball.launch(_pending_launch)
 	elif ball.has_method(&"kick"):

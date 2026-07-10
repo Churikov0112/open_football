@@ -19,6 +19,12 @@ var _pending_impulse: Vector3 = Vector3.ZERO
 enum BallState { OPEN, TRAPPED, FLIGHT, CAUGHT }
 var state: BallState = BallState.OPEN
 var _curl: Vector3 = Vector3.ZERO
+var _dribble_dir: Vector3 = Vector3.FORWARD  # закоммиченное направление дриблинга (меняется на «догнал»)
+var _dribble_intent: Vector3 = Vector3.ZERO  # желаемое направление толчка от владельца (стик); ZERO → facing
+var _dribble_push_extra: float = 0.0         # доп. сила толчка (спринт) от владельца, м/с
+var _was_far: bool = true                    # мяч был вне зоны догона → следующий контакт = толчок
+var _dribble_chasing: bool = false           # true → мяч ушёл, владелец должен БЕЖАТЬ к мячу (гистерезис)
+var _dribble_suppressed: bool = false        # true → НЕ толкать мяч (идёт зарядка/commit паса-удара) → одно касание
 
 
 func _ready() -> void:
@@ -70,6 +76,37 @@ func set_dribbler(node: Node3D) -> void:
 	dribbler = node
 	_dribbler_prev_pos = node.global_position if node else Vector3.ZERO
 	state = BallState.TRAPPED if node else BallState.OPEN
+	if node:
+		var f := -node.global_transform.basis.z
+		f.y = 0.0
+		_dribble_dir = f.normalized() if f.length_squared() > 0.0001 else Vector3.FORWARD
+		_dribble_intent = Vector3.ZERO  # сбрасываем стик прежнего владельца (иначе утечёт к новому/ИИ)
+		_dribble_push_extra = 0.0
+		_was_far = true
+		_dribble_chasing = false  # старт с мячом у ног → ведём стиком, не догоняем (иначе орбита на месте)
+		_dribble_suppressed = false
+
+
+## Желаемое направление ТОЛЧКА мяча от владельца (стик человека) + доп. сила (спринт).
+## ZERO-направление → на «догнал» возьмём facing владельца (путь ИИ, который intent не задаёт).
+func set_dribble_intent(dir: Vector3, push_extra: float = 0.0) -> void:
+	_dribble_push_extra = push_extra
+	var d := dir
+	d.y = 0.0
+	if d.length() > 0.001:
+		_dribble_intent = d.normalized()
+
+
+## Нужно ли владельцу БЕЖАТЬ к мячу (мяч ушёл далеко) vs вести стиком (мяч у ног).
+## Считается с гистерезисом в _integrate_forces (CHASE_DIST/CATCH_DIST), чтобы не дёргалось.
+func should_chase() -> bool:
+	return _dribble_chasing
+
+
+## Подавить дриблинг-толчок (пока владелец заряжает/выполняет пас-удар) → мяч ждёт у ног,
+## чтобы касание было ровно одно (сам пас/удар), а не «дриблинг-толчок + пас» (двойное касание).
+func set_dribble_suppressed(on: bool) -> void:
+	_dribble_suppressed = on
 
 
 func release_dribble() -> void:
@@ -136,37 +173,56 @@ func launch(velocity: Vector3) -> void:
 	_pending_impulse = velocity * mass
 
 
-func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
-	var vel := state.linear_velocity
+func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
+	var vel := state_body.linear_velocity
 
-	if dribbler and is_instance_valid(dribbler):
+	if state == BallState.TRAPPED and dribbler and is_instance_valid(dribbler):
 		var player_pos := dribbler.global_position
-		var dt := state.step
+		var dt := state_body.step
 
 		var pos_delta := player_pos - _dribbler_prev_pos
 		_dribbler_prev_pos = player_pos
 		pos_delta.y = 0.0
 
-		var move_dir := _direction_from_delta(pos_delta)
-		var target := player_pos \
-			+ move_dir * dribble_forward_distance \
-			+ Vector3.UP * dribble_height
+		var player_speed := 0.0
+		if dt > 0.0:
+			player_speed = pos_delta.length() / dt
 
-		if pos_delta.length_squared() > 0.001 and dt > 0:
-			var player_vel := pos_delta / dt
-			player_vel = player_vel.limit_length(15.0)
-			var disp := target - state.transform.origin
-			var correction := disp * 30.0
-			correction = correction.limit_length(12.0)
-			vel.x = player_vel.x + correction.x
-			vel.z = player_vel.z + correction.z
+		# Свободное качение с трением — мяч живёт своей инерцией между толчками (не пиннится).
+		vel.x *= FootballConstants.DRIBBLE_ROLL_DRAG
+		vel.z *= FootballConstants.DRIBBLE_ROLL_DRAG
+
+		var gap := state_body.transform.origin - player_pos
+		gap.y = 0.0
+		var gd := gap.length()
+
+		# Флаг «бежать к мячу» с гистерезисом: ушёл дальше CHASE_DIST → chasing; догнал ближе
+		# CATCH_DIST → ведём стиком; между — держим текущее (нет флип-флопа/«танца»).
+		if gd > FootballConstants.DRIBBLE_CHASE_DIST:
+			_dribble_chasing = true
+		elif gd < FootballConstants.DRIBBLE_CATCH_DIST:
+			_dribble_chasing = false
+
+		if gd < FootballConstants.DRIBBLE_CATCH_DIST:
+			# Игрок ДОГНАЛ мяч: только сейчас можно сменить направление и толкнуть. Толчок —
+			# на «фронте» (был далеко → догнал), а не каждый кадр, чтобы не приклеивать мяч.
+			# Подавление: пока идёт зарядка/commit паса-удара — НЕ толкаем (одно касание = пас).
+			if _was_far and player_speed > 0.3 and not _dribble_suppressed:
+				# Направление толчка: стик владельца (intent), иначе — facing (путь ИИ).
+				var pdir := _dribble_intent
+				if pdir.length_squared() < 0.0001:
+					var f := -dribbler.global_transform.basis.z
+					f.y = 0.0
+					pdir = f.normalized() if f.length_squared() > 0.0001 else _dribble_dir
+				_dribble_dir = pdir
+				var push := _dribble_dir * (player_speed + FootballConstants.DRIBBLE_PUSH_BONUS + _dribble_push_extra)
+				vel.x = push.x
+				vel.z = push.z
+				# «Взвод» снимаем ТОЛЬКО после реального толчка: иначе, подойдя к мячу медленно
+				# (<0.3) на старте, _was_far гасился без толчка и игрок «залипал» на мяче (деадлок).
+				_was_far = false
 		else:
-			var disp := target - state.transform.origin
-			var correction := disp * 10.0
-			correction = correction.limit_length(dribble_max_speed)
-			vel.x = correction.x
-			vel.z = correction.z
-
+			_was_far = true
 		vel.y *= air_resistance
 	else:
 		vel.x *= drag_factor
@@ -177,7 +233,7 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		vel += _pending_impulse / mass
 		_pending_impulse = Vector3.ZERO
 
-	state.linear_velocity = vel
+	state_body.linear_velocity = vel
 
 
 func _direction_from_delta(pos_delta: Vector3) -> Vector3:
