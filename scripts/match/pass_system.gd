@@ -42,3 +42,22 @@ static func lead_point(target_pos: Vector3, target_vel: Vector3, passer_pos: Vec
 		point += vflat.normalized() * extra_lead
 	point.y = target_pos.y
 	return point
+
+## Низовой пас: плоская скорость к цели, величиной power (м/с).
+static func launch_ground(from: Vector3, to: Vector3, power: float) -> Vector3:
+	var dir := to - from
+	dir.y = 0.0
+	if dir.length() < 0.001:
+		return Vector3.ZERO
+	return dir.normalized() * power
+
+## Навес/верховой пас: баллистическая стартовая скорость, приземляющая мяч в to с пиком
+## peak_height, под гравитацию gravity. Старт и приземление на одной высоте (плоское поле):
+## v_y = sqrt(2*g*h); полное время полёта T = 2*v_y/g; горизонталь = flat/T.
+static func launch_lob(from: Vector3, to: Vector3, peak_height: float, gravity: float) -> Vector3:
+	var vy := sqrt(2.0 * gravity * maxf(peak_height, 0.001))
+	var flight := 2.0 * vy / gravity
+	var flat := to - from
+	flat.y = 0.0
+	var horizontal := flat / maxf(flight, 0.001)
+	return Vector3(horizontal.x, vy, horizontal.z)
