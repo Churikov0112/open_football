@@ -61,5 +61,23 @@ func _initialize() -> void:
 	if not is_inf(PassSystem.interception_time(Vector3.ZERO, Vector3(20, 0, 0), 15.0, Vector3(-5, 0, 0), 6.0, 1.2, 0.06)):
 		print("CHECK FAIL: interception behind INF"); ok = false
 
+	# scatter_degrees: дальше → больше разброс; assist=1 → ноль.
+	if PassSystem.scatter_degrees(12.0, 0.0, 30.0, 25.0) <= PassSystem.scatter_degrees(12.0, 0.0, 5.0, 25.0):
+		print("CHECK FAIL: scatter grows with distance"); ok = false
+	if not is_zero_approx(PassSystem.scatter_degrees(12.0, 1.0, 30.0, 25.0)):
+		print("CHECK FAIL: scatter zero at assist=1"); ok = false
+
+	# apply_scatter: детерминизм по seed.
+	var rng_a := RandomNumberGenerator.new(); rng_a.seed = 42
+	var rng_b := RandomNumberGenerator.new(); rng_b.seed = 42
+	var sa := PassSystem.apply_scatter(Vector3(1, 0, 0), 10.0, rng_a)
+	var sb := PassSystem.apply_scatter(Vector3(1, 0, 0), 10.0, rng_b)
+	if not sa.is_equal_approx(sb):
+		print("CHECK FAIL: apply_scatter deterministic → ", sa, sb); ok = false
+	# нулевой разброс → вектор не меняется.
+	var rng_c := RandomNumberGenerator.new(); rng_c.seed = 1
+	if not PassSystem.apply_scatter(Vector3(1, 0, 0), 0.0, rng_c).is_equal_approx(Vector3(1, 0, 0)):
+		print("CHECK FAIL: apply_scatter zero spread"); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)

@@ -91,3 +91,16 @@ static func interception_time(pass_from: Vector3, pass_to: Vector3, ball_speed: 
 	if opp_time <= ball_time:
 		return ball_time
 	return INF
+
+## Максимальный угол разброса (градусы): растёт с дистанцией, гасится «лёгкостью» assist.
+static func scatter_degrees(spread_base: float, assist: float, distance: float, distance_ref: float) -> float:
+	var dist_factor := clampf(distance / maxf(distance_ref, 0.001), 0.2, 1.5)
+	return spread_base * (1.0 - clampf(assist, 0.0, 1.0)) * dist_factor
+
+## Повернуть плоское направление вокруг оси Y на случайный угол в пределах ±spread_deg.
+## RNG передаётся снаружи → детерминизм в тестах (seed).
+static func apply_scatter(flat_dir: Vector3, spread_deg: float, rng: RandomNumberGenerator) -> Vector3:
+	if spread_deg <= 0.0:
+		return flat_dir
+	var angle := deg_to_rad(rng.randf_range(-spread_deg, spread_deg))
+	return flat_dir.rotated(Vector3.UP, angle)
