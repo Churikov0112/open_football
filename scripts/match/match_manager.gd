@@ -514,8 +514,8 @@ func _physics_process(delta: float) -> void:
 				controlled_player = db
 				_sync_ai_controllers()
 
-	# Swap player (Q) — manual switch between player_home and player_teammate
-	if Input.is_action_just_pressed(&"swap_player"):
+	# Смена игрока — только в защите (мяч не у нас). В атаке combo_modifier = модификатор паса.
+	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess():
 		controlled_player = player_teammate if controlled_player == player_home else player_home
 		_sync_ai_controllers()
 		_manual_swap_cooldown = 10
@@ -635,10 +635,7 @@ func _handle_player_input(delta: float) -> void:
 		return
 	if _action_player == controlled_player and not _kick_action_active:
 		return
-	var input_dir := Vector2(
-		Input.get_axis(&"move_left", &"move_right"),
-		Input.get_axis(&"move_forward", &"move_back")
-	)
+	var input_vec := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
 	var cam_basis := camera_pivot.global_transform.basis
 	var cam_forward := -cam_basis.z
 	cam_forward.y = 0
@@ -646,10 +643,12 @@ func _handle_player_input(delta: float) -> void:
 	var cam_right := cam_basis.x
 	cam_right.y = 0
 	cam_right = cam_right.normalized()
-	var dir := (cam_forward * -input_dir.y + cam_right * input_dir.x).normalized()
-	var sprint_scale := 1.0
-	if Input.is_action_pressed(&"sprint"):
-		sprint_scale = FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED
+	var dir := (cam_forward * -input_vec.y + cam_right * input_vec.x)
+	if dir.length() > 1.0:
+		dir = dir.normalized()
+	# Аналоговый спринт: сила триггера (или 1.0 с клавиши Shift) лерпит speed_scale.
+	var sprint_strength := Input.get_action_strength(&"sprint")
+	var sprint_scale := lerpf(1.0, FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED, sprint_strength)
 	var motor := _player_motor(controlled_player)
 	if motor != null:
 		motor.set_move_intent(dir, sprint_scale)
@@ -679,6 +678,12 @@ func _is_our_dribbler(player_node: Node3D) -> bool:
 	if not ball.has_method(&"set_dribbler"):
 		return false
 	return ball.dribbler == player_node
+
+## Владеет ли наша команда мячом сейчас (для контекст-зависимого combo_modifier).
+func _we_possess() -> bool:
+	if not (ball.has_method(&"set_dribbler") and ball.dribbler):
+		return false
+	return ball.dribbler == player_home or ball.dribbler == player_teammate
 
 func _start_kick_charge(player_node: CharacterBody3D) -> void:
 	_kick_charging = true
