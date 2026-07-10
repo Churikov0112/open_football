@@ -189,7 +189,7 @@ const PASS_POWER_CHARGE_MAX := 1.6    # доля силы при полном з
 
 # Авто-наводка.
 const PASS_LEAD_GAIN := 0.25          # упреждение цели по её скорости (сек)
-const PASS_THROUGH_EXTRA_LEAD := 2.0  # доп. вынос точки «на ход» вперёд по скорости цели, м
+const PASS_THROUGH_EXTRA_LEAD := 4.0  # доп. вынос точки «на ход» вперёд по скорости цели, м
 const PASS_DOT_BIAS := 0.15           # штраф за дистанцию в score выбора цели (0 → чистый dot)
 const PASS_MAX_RANGE := 45.0          # дальше цель не рассматривается, м
 
@@ -203,7 +203,7 @@ const PASS_SPREAD_DIST_REF := 25.0    # дистанция, на которой 
 const PASS_ASSIST := 0.75             # 0..1 «лёгкость»: 1 → почти без разброса
 
 # Receive-assist (доводка принимающего к мячу).
-const PASS_RECEIVE_PREDICT_WINDOW := 0.16  # на сколько сек вперёд предсказываем позицию мяча
+const PASS_RECEIVE_PREDICT_WINDOW := 0.08  # на сколько сек вперёд предсказываем позицию мяча
 const PASS_RECEIVE_MAX_TIME := 2.0         # страховочный таймаут фазы приёма, сек
 
 # Give-and-go («стенка»).
