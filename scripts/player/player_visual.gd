@@ -122,6 +122,7 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 		sm.add_transition(clip, LOCOMOTION, _make_transition(true))
 		_states[clip] = true
 
+	var oneshot_added: Array[String] = []
 	for clip in ONESHOT_CLIPS:
 		var cs: String = String(clip)
 		if not ap.has_animation(cs) or _states.has(cs):
@@ -133,6 +134,17 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 		sm.add_transition(LOCOMOTION, cs, _make_transition(false))
 		sm.add_transition(cs, LOCOMOTION, _make_transition(false))
 		_states[cs] = true
+		oneshot_added.append(cs)
+
+	# Прямые переходы между one-shot стейтами (падение → перекат → вставание — цепочку
+	# ведёт match_manager через play_oneshot). Без этого travel() между двумя one-shot
+	# стейтами (нет прямого ребра) строит путь через LOCOMOTION-хаб — тот на кроссфейде
+	# видимо мелькает idle между, скажем, перекатом и вставанием.
+	for i in range(oneshot_added.size()):
+		for j in range(oneshot_added.size()):
+			if i == j:
+				continue
+			sm.add_transition(oneshot_added[i], oneshot_added[j], _make_transition(false))
 
 	# Оборачиваем StateMachine в BlendTree с TimeScale — единый рычаг скорости проигрывания
 	# действий (сжать замах, сохранив синхрон «нога↔мяч»). Локомоция идёт при scale=1.0.
