@@ -30,11 +30,11 @@
 ## Игроки
 
 - **Геймплей:** `CharacterBody3D` + `CollisionShape` (капсула 0.3×1.5) + AI/ввод-скрипт
-- **Презентация:** дочерний `PlayerVisual` (`scenes/player_visual.tscn`) — риггованная модель Mixamo (`assets/models/footballer.glb`) с `AnimationTree` idle↔run. Геймплей и презентация **разделены**; скорость в визуал передаёт `PlayerMotor` через `set_locomotion(velocity)` каждый физический кадр
+- **Презентация:** дочерний `PlayerVisual` (`scenes/player_visual.tscn`) — риггованная модель Mixamo (`assets/models/footballer.glb`) с `AnimationTree`: локомоция (idle/run/sprint) + одноразовые действия (удар/пас/пенальти/удары головой/вбрасывание) + цепочка подката-падения (`tackle`/`fallen_idle`/`roll_left`/`roll_right`/`standing_up`). Геймплей и презентация **разделены**; скорость в визуал передаёт `PlayerMotor` через `set_locomotion(velocity)` каждый физический кадр
 - Команда игрока (home + напарник, team_1): **синий** (`Color(0.1, 0.1, 0.9)`)
 - Соперник (AI, team_2): **красный** (`Color(0.9, 0.1, 0.1)`)
 - Цвет = тинт всего тела через `apply_appearance` (пилот; настоящие киты — в будущем)
-- Скорость: константы `LOCO_TOP_SPEED` / `LOCO_SPRINT_SPEED` в `FootballConstants` (применяются через `PlayerMotor`)
+- Скорость: человек — константы `LOCO_TOP_SPEED` (8.0) / `LOCO_SPRINT_SPEED` (12.0, только у человека) в `FootballConstants` (через `PlayerMotor`); ИИ-соперник — отдельный `@export var speed` в `simple_ai.gd` (8.0, без спринта)
 - **11v11, составы, вариативность (кожа/волосы/причёски) — в будущем**
 
 ## Мяч
@@ -101,7 +101,8 @@ OpenFootball/
 │   ├── player/
 │   │   ├── player_controller.gd — управление игроком
 │   │   ├── player_motor.gd  — PlayerMotor: velocity+inertia locomotion (accel/decel/turn/lean/sprint)
-│   │   └── player_visual.gd — PlayerVisual: AnimationTree idle/run/sprint + apply_appearance
+│   │   ├── player_visual.gd — PlayerVisual: AnimationTree локомоция + действия + подкат/падение + apply_appearance
+│   │   └── ragdoll_skeleton.gd — МЁРТВЫЙ КОД (физический ragdoll, заменён анимационным падением; тесты остались и проходят, но в игре не используется)
 │   ├── ai/
 │   │   ├── simple_ai.gd    — AI противника (team_2, красный)
 │   │   └── teammate_ai.gd  — AI напарника (team_1, синий; также для PlayerHome когда не под управлением человека)
@@ -111,7 +112,7 @@ OpenFootball/
 │       └── match_camera.gd — FIFA-style камера
 ├── assets/
 │   └── models/
-│       ├── footballer.glb  — модель Mixamo + idle/run/sprint (собрано Blender-скриптом)
+│       ├── footballer.glb  — модель Mixamo + локомоция/действия/подкат-падение (собрано Blender-скриптом)
 │       └── mixamo_src/     — сырые FBX (gitignored, не коммитятся)
 ├── tools/
 │   └── merge_mixamo.py     — Blender headless: FBX → glb
@@ -132,8 +133,8 @@ OpenFootball/
 - [x] AI: бежит к мячу, дриблит, бьёт по воротам
 - [x] Сброс мяча после гола
 - [x] Невидимые стенки по краям
-- [x] Слайд-подкат (Area3D-детекция, state machine)
-- [x] Риггованные модели игроков (Mixamo) + анимации idle/run/sprint через `PlayerVisual`
+- [x] **Слайд-подкат со сбиванием с ног:** `TackleState`/`FallState` state machines в `match_manager.gd`. Два разных радиуса детекции — широкая `TackleArea` (1.5m) только дотягивается до мяча (чистый отбор), узкий `SLIDE_TACKLE_HIT_RADIUS` (0.9m, реальный контакт капсул) роняет игрока. Прицел с упреждением скорости цели. Падение — цепочка анимаций `fallen_idle` → `roll_left`/`roll_right` → `standing_up` (НЕ физический ragdoll — тот пробовали и выпилили, не подружился с масштабированным Mixamo-скелетом; `ragdoll_skeleton.gd` остался мёртвым кодом с живыми тестами). Пока не фол — свободный не назначается
+- [x] Риггованные модели игроков (Mixamo) + анимации idle/run/sprint/dribble + удар/пас/пенальти/удар головой/вбрасывание/подкат/падение/перекаты/вставание через `PlayerVisual`
 - [x] `PlayerMotor` — locomotion через velocity + inertia + `move_and_slide()` (accel/decel/turn/lean)
 - [x] Sprint (Shift, человек), переключение игрока (Q)
 - [x] Цвета команд тинтом (синий/красный)
@@ -148,7 +149,7 @@ OpenFootball/
 - [ ] 11v11 (расстановки, позиции)
 - [ ] Офсайд, ауты, угловые, штрафные
 - [ ] Физическая сетка ворот
-- [ ] Анимации: подкат, сейв; kick-клип (сейчас `pass` для обоих), вратарские анимации
+- [ ] Фол/жёлтая-красная карточка за сбивание игрока подкатом (сейчас всегда "чисто", свободный не назначается); kick-клип (сейчас `pass` для обоих); анимации: сейв, вратарские
 - [ ] Настоящие киты (шейдер-маска) + вариативность игроков (кожа/волосы/причёски)
 - [ ] CC0-реквизит (мяч, ворота, стадион) вместо процедурного
 - [ ] Звуки (удар по мячу, гол, свисток, трибуны)
