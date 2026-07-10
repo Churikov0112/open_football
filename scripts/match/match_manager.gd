@@ -620,6 +620,8 @@ func _handle_dribbling() -> void:
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
 			ball.set_dribbler(p)
+			if p.has_method(&"end_receiving"):
+				p.end_receiving()
 			return
 
 
@@ -846,6 +848,8 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		controlled_player = receiver
 		_sync_ai_controllers()
 		_manual_swap_cooldown = 30
+	if receiver != null and receiver != controlled_player and receiver.has_method(&"begin_receiving"):
+		receiver.begin_receiving(launch_vel, params.extra_lead)
 	var visual := _player_visual(player)
 	if visual != null and visual.trigger("pass"):
 		return

@@ -9,6 +9,21 @@ var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var _wander_timer: float = 0.0
 
+enum Role { SUPPORT, RECEIVING, CHASING }
+var _role: Role = Role.SUPPORT
+var _pass_dir: Vector3 = Vector3.ZERO
+var _pass_lead: float = 0.0
+
+## Менеджер зовёт это на партнёре, которому летит пас: перейти в режим выхода на приём.
+func begin_receiving(pass_dir: Vector3, lead: float) -> void:
+	_role = Role.RECEIVING
+	_pass_dir = pass_dir
+	_pass_lead = lead
+
+func end_receiving() -> void:
+	if _role == Role.RECEIVING:
+		_role = Role.SUPPORT
+
 
 func _motor() -> PlayerMotor:
 	return PlayerMotor.find_on(self)
@@ -30,13 +45,15 @@ func _physics_process(delta: float) -> void:
 
 	var has_dribbler: bool = ball.has_method(&"set_dribbler") and ball.dribbler
 
-	# Our team has the ball → position to receive a pass
-	if has_dribbler and ball.dribbler == controlled_player:
-		_position_for_pass(delta)
-		return
-
-	# Otherwise → chase the ball (pick up loose balls, receive passes, fight for it)
-	_chase_ball(delta)
+	match _role:
+		Role.RECEIVING:
+			_move_to_receive(delta)
+			return
+		_:
+			if has_dribbler and ball.dribbler == controlled_player:
+				_position_for_pass(delta)
+			else:
+				_chase_ball(delta)
 
 
 func _position_for_pass(delta: float) -> void:
@@ -44,7 +61,7 @@ func _position_for_pass(delta: float) -> void:
 	# Position ahead of the carrier at a good passing distance (~10m)
 	# and slightly to the side, alternating based on field position
 	var side_sign := 1.0 if carrier_pos.x < 0 else -1.0
-	var target := carrier_pos + Vector3(0, 0, 10.0) + Vector3(side_sign * 6.0, 0, 0)
+	var target := carrier_pos + Vector3(0, 0, -10.0) + Vector3(side_sign * 6.0, 0, 0)
 
 	target.x = clamp(target.x, -field_width + 4, field_width - 4)
 	target.z = clamp(target.z, -field_length + 4, field_length - 4)
@@ -53,6 +70,21 @@ func _position_for_pass(delta: float) -> void:
 	var dir := (target - global_position).normalized()
 	dir.y = 0.0
 	_move_or_wander(dir, delta)
+
+
+## Выход на приём: в ноги — к предсказанной точке мяча; на ход — вперёд по вектору паса.
+func _move_to_receive(delta: float) -> void:
+	var target: Vector3
+	if _pass_lead > 0.0:
+		target = global_position + _pass_dir.normalized() * _pass_lead
+	else:
+		var predicted := ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW
+		target = predicted
+	target.y = global_position.y
+	var dir := (target - global_position)
+	dir.y = 0.0
+	# Приём завершён, когда мяч у нас — вернёт менеджер через end_receiving(); тут просто бежим.
+	_move_or_wander(dir.normalized(), delta)
 
 
 func _chase_ball(delta: float) -> void:
