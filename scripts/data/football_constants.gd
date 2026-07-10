@@ -114,14 +114,20 @@ const AI_ACQUIRE_RANGE := 1.8
 #  SLIDE TACKLE
 # ═══════════════════════════════════════════
 
-const SLIDE_TACKLE_SPEED := 18.0
+# Скорость/дистанция скольжения подобраны так, чтобы физический слайд (move_and_collide)
+# занимал заметную часть длины клипа tackle (~1.8с), а не долетал до конца дистанции за
+# долю секунды, пока клип ещё продолжает играть — раньше (SPEED=18.0) слайд укладывался
+# в ~0.22с, и игрок визуально телепортировался в точку, а затем ещё ~1.6с доигрывал
+# подкат стоя на месте. RECOVERY_TIME урезан на ту же дельту, чтобы суммарный commit
+# (слайд + recovery) остался близко к длине клипа, как было тюнено раньше (~1.7-1.8с).
+const SLIDE_TACKLE_SPEED := 5.0
 const SLIDE_TACKLE_RANGE := 4.0
 # Диагностический флаг (подкат на месте, без move_and_collide) для изоляции анимации
 # tackle от скольжения — см. tools/merge_mixamo.py IN_PLACE_CLIPS. Причина зависания
 # найдена и исправлена там (заморозка вертикали Hips для tackle убрана), возвращаем
 # обычное поведение со скольжением.
 const SLIDE_TACKLE_INPLACE := false
-const SLIDE_TACKLE_RECOVERY_TIME := 1.5
+const SLIDE_TACKLE_RECOVERY_TIME := 0.9
 const SLIDE_TACKLE_AREA_RADIUS := 1.5
 const SLIDE_TACKLE_BALL_DIR_Y := 0.15
 const SLIDE_TACKLE_BALL_POWER := 7.0
