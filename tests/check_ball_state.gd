@@ -1,0 +1,50 @@
+extends SceneTree
+
+# Headless-проверка стейт-машины мяча: переходы OPEN/TRAPPED/FLIGHT и launch_curl().
+# Не проверяет физику/ощущение — только наблюдаемое состояние API. Всё синхронно в
+# _initialize: методы стейт-машины не зависят от _ready/физических кадров.
+
+func _initialize() -> void:
+	var ok := true
+	var ball := RigidBody3D.new()
+	ball.set_script(load("res://scripts/ball/ball_controller.gd"))
+	root.add_child(ball)
+
+	var stub := Node3D.new()
+	root.add_child(stub)
+
+	# Нейтрализуем стартовый release-cooldown: в headless Time.get_ticks_msec() при запуске
+	# может быть < _release_cooldown_msec, и первый set_dribbler иначе рано выйдет, «съев» трап.
+	ball._last_release_time = -100000
+
+	# Старт — OPEN.
+	ok = _expect(ball.state == ball.BallState.OPEN, "начальное состояние OPEN") and ok
+
+	# set_dribbler → TRAPPED, player == stub.
+	ball.set_dribbler(stub)
+	ok = _expect(ball.state == ball.BallState.TRAPPED, "set_dribbler → TRAPPED") and ok
+	ok = _expect(ball.player() == stub, "player() == владелец") and ok
+	ok = _expect(ball.dribbler == stub, "dribbler-обёртка == владелец") and ok
+
+	# release_dribble → OPEN, player == null.
+	ball.release_dribble()
+	ok = _expect(ball.state == ball.BallState.OPEN, "release_dribble → OPEN") and ok
+	ok = _expect(ball.player() == null, "player() == null после release") and ok
+
+	# kick → FLIGHT.
+	ball._last_release_time = -100000
+	ball.set_dribbler(stub)
+	ball.kick(Vector3.FORWARD, 15.0)
+	ok = _expect(ball.state == ball.BallState.FLIGHT, "kick → FLIGHT") and ok
+
+	if ok:
+		print("CHECK PASS")
+		quit(0)
+	else:
+		print("CHECK FAIL")
+		quit(1)
+
+func _expect(cond: bool, label: String) -> bool:
+	if not cond:
+		print("  FAIL: ", label)
+	return cond

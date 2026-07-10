@@ -16,6 +16,10 @@ var _kick_cooldown_msec: int = 1500
 var _dribbler_prev_pos: Vector3 = Vector3.ZERO
 var _pending_impulse: Vector3 = Vector3.ZERO
 
+enum BallState { OPEN, TRAPPED, FLIGHT, CAUGHT }
+var state: BallState = BallState.OPEN
+var _curl: Vector3 = Vector3.ZERO
+
 
 func _ready() -> void:
 	_football_texture()
@@ -65,6 +69,7 @@ func set_dribbler(node: Node3D) -> void:
 		return
 	dribbler = node
 	_dribbler_prev_pos = node.global_position if node else Vector3.ZERO
+	state = BallState.TRAPPED if node else BallState.OPEN
 
 
 func release_dribble() -> void:
@@ -72,6 +77,12 @@ func release_dribble() -> void:
 		dribbler = null
 		_last_release_time = Time.get_ticks_msec()
 	_dribbler_prev_pos = Vector3.ZERO
+	state = BallState.OPEN
+
+
+## Текущий владелец мяча (нейтральное имя поверх legacy-поля dribbler).
+func player() -> Node3D:
+	return dribbler
 
 
 func clear_last_kicker() -> void:
@@ -110,6 +121,7 @@ func kick(direction: Vector3, power: float) -> void:
 	last_kicker = dribbler
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
+	state = BallState.FLIGHT
 	_pending_impulse = direction * power
 
 
@@ -120,6 +132,7 @@ func launch(velocity: Vector3) -> void:
 	last_kicker = dribbler
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
+	state = BallState.FLIGHT
 	_pending_impulse = velocity * mass
 
 
