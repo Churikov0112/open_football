@@ -14,6 +14,7 @@ var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var controlled_player_indicator: MeshInstance3D
+var _target_indicator: MeshInstance3D
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -98,6 +99,7 @@ func _ready() -> void:
 	_setup_boundaries()
 	_give_ai_to_player_home()
 	_setup_controlled_indicator()
+	_setup_target_indicator()
 	_setup_tackle_area()
 	_setup_power_bar()
 
@@ -511,6 +513,24 @@ func _process(delta: float) -> void:
 		_cancel_charge()
 	power_bar.visible = _is_charging() and _charge_player == controlled_player
 
+	var show_target := _is_charging() and _charge_action != ChargeAction.SHOT and _charge_player == controlled_player
+	if show_target:
+		var mates := _team_arrays(&"team_1", _charge_player)
+		var mate_pos: PackedVector3Array = mates["pos"]
+		var mate_vel: PackedVector3Array = mates["vel"]
+		var mate_nodes: Array = mates["nodes"]
+		var aim: Vector3 = ball.get_dribble_direction()
+		var idx := PassSystem.select_target(_charge_player.global_position, aim, mate_pos, mate_vel,
+			FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
+		if idx >= 0:
+			var tgt: Node3D = mate_nodes[idx]
+			_target_indicator.global_position = tgt.global_position + Vector3(0, 2.6, 0)
+			_target_indicator.visible = true
+		else:
+			_target_indicator.visible = false
+	else:
+		_target_indicator.visible = false
+
 
 func _physics_process(delta: float) -> void:
 	_handle_dribbling()
@@ -572,6 +592,24 @@ func _setup_controlled_indicator() -> void:
 	mi.position = Vector3(0, 2.2, 0)
 	add_child(mi)
 	controlled_player_indicator = mi
+
+
+func _setup_target_indicator() -> void:
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.0
+	mesh.bottom_radius = 0.2
+	mesh.height = 0.4
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.9, 0.2)  # жёлтый — цель паса
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	mi.visible = false
+	add_child(mi)
+	_target_indicator = mi
 
 
 func _sync_ai_controllers() -> void:
