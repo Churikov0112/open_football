@@ -19,7 +19,7 @@
 - Constants live in `scripts/data/football_constants.gd` (autoload `FootballConstants`) with a `PASS_*` prefix. Pure `PassSystem` static functions receive tuning as parameters — they NEVER read `FootballConstants` (keeps `check_pass_system_math.gd` autoload-free).
 - Team membership is by groups `team_1` (ours, blue) / `team_2` (opponent, red). Use group checks, not node identity.
 - Field: Z = length (±52.5), X = width (±34). Our team attacks toward **−Z**. Goals only on Z.
-- Player movement is `PlayerMotor.set_move_intent(dir, speed_scale)` — never touch `global_position`/`rotation` for locomotion. AI does not sprint (give-and-go is the one deliberate exception, Task 17).
+- Player movement is `PlayerMotor.set_move_intent(dir, speed_scale)` — never touch `global_position`/`rotation` for locomotion. AI does not sprint (give-and-go is the one deliberate exception, Task 16).
 - Commit git after every task. Branch: `feat/pass`.
 - Spec: [`docs/superpowers/specs/2026-07-10-pass-system-design.md`](../specs/2026-07-10-pass-system-design.md).
 
@@ -1407,6 +1407,10 @@ Add the method:
 ```gdscript
 ## Геометрия решает «можно ли перехватить»; шанс решает, среагирует ли соперник (не читерски-
 ## идеально). Если да — соперник бежит к точке пересечения (визуальный, честный перехват).
+## NOTE: FootballConstants.AI_SPEED (5.0) is legacy/unused elsewhere (see CLAUDE.md's own
+## caveat on it) — the opponent's REAL speed is the `speed` export on simple_ai.gd (8.0 by
+## default). Read it off the node via get(), not the stale constant, or every interception
+## feasibility check will be computed against a speed the opponent doesn't actually have.
 func _maybe_flag_interceptor(from: Vector3, to: Vector3, launch_vel: Vector3) -> void:
 	var ball_speed := Vector3(launch_vel.x, 0.0, launch_vel.z).length()
 	var opps := _team_arrays(&"team_2", null)
@@ -1415,8 +1419,10 @@ func _maybe_flag_interceptor(from: Vector3, to: Vector3, launch_vel: Vector3) ->
 	var best_time := INF
 	var best_i := -1
 	for i in range(opp_pos.size()):
+		var speed_variant: Variant = opp_nodes[i].get(&"speed")
+		var opp_speed: float = speed_variant if speed_variant != null else FootballConstants.AI_SPEED
 		var t := PassSystem.interception_time(from, to, ball_speed, opp_pos[i],
-			FootballConstants.AI_SPEED, FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD)
+			opp_speed, FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD)
 		if t < best_time:
 			best_time = t
 			best_i = i
