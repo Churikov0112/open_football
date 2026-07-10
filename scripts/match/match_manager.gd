@@ -14,6 +14,7 @@ var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var controlled_player_indicator: MeshInstance3D
+var _target_indicator: MeshInstance3D
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -50,17 +51,29 @@ var _manual_swap_cooldown: int = 0
 # movement is NOT locked (unlike pass which uses _action_player + motor lock)
 var _kick_action_active: bool = false
 
-# Kick charge system (hold Space to charge, release to fire)
-var _kick_charging: bool = false
-var _kick_charge: float = 0.0
-var _kick_charge_player: CharacterBody3D
-const KICK_CHARGE_MIN_TIME: float = 0.3
+# Обобщённый заряд: одно действие заряжается за раз (удар ИЛИ один из пасов).
+enum ChargeAction { NONE, SHOT, PASS_SHORT, PASS_THROUGH, PASS_LOB, PASS_WALL, PASS_THROUGH_AIR }
+var _charge_action: ChargeAction = ChargeAction.NONE
+var _charge_time: float = 0.0
+var _charge_player: CharacterBody3D
 const KICK_CHARGE_MAX_TIME: float = 0.5
 const KICK_POWER_MIN: float = 12.0
 const KICK_POWER_MAX: float = 25.0
 
+var _pass_rng := RandomNumberGenerator.new()
+var _pending_launch: Vector3 = Vector3.ZERO
+
+# Receive-assist: пока летит пас, слегка подруливаем ввод человека-адресата к мячу.
+var _receive_active: bool = false
+var _receiver: CharacterBody3D
+var _receive_timer: float = 0.0
+
+func _is_charging() -> bool:
+	return _charge_action != ChargeAction.NONE
+
 
 func _ready() -> void:
+	_pass_rng.randomize()
 	_setup_inputs()
 	_setup_floor()
 	_setup_grass()
@@ -86,6 +99,7 @@ func _ready() -> void:
 	_setup_boundaries()
 	_give_ai_to_player_home()
 	_setup_controlled_indicator()
+	_setup_target_indicator()
 	_setup_tackle_area()
 	_setup_power_bar()
 
@@ -111,28 +125,40 @@ func _setup_power_bar() -> void:
 
 
 func _setup_inputs() -> void:
-	# NOTE: project.godot has input actions defined but they may not have
-	# events bound correctly (serialization format issue). To guarantee
-	# input works, we always erase and recreate all actions here.
-	var input_actions := {
-		&"move_left": [KEY_A, KEY_LEFT],
-		&"move_right": [KEY_D, KEY_RIGHT],
-		&"move_forward": [KEY_W, KEY_UP],
-		&"move_back": [KEY_S, KEY_DOWN],
-		&"kick": [KEY_SPACE],
-		&"pass": [KEY_E],
-		&"pause": [KEY_ESCAPE],
-		&"swap_player": [KEY_Q],
-		&"sprint": [KEY_SHIFT],
+	# Строим ввод в коде (project.godot мёртв). Движение — стрелки + левый стик; буквы WASD
+	# освобождены под действия. Каждый action может иметь и клавиши, и джойпад-события.
+	# key_events: клавиши. joy_buttons: кнопки геймпада. joy_axes: [оси] как [axis, value].
+	var actions := {
+		&"move_left":       {"keys": [KEY_LEFT],  "buttons": [], "axes": [[JOY_AXIS_LEFT_X, -1.0]]},
+		&"move_right":      {"keys": [KEY_RIGHT], "buttons": [], "axes": [[JOY_AXIS_LEFT_X, 1.0]]},
+		&"move_forward":    {"keys": [KEY_UP],    "buttons": [], "axes": [[JOY_AXIS_LEFT_Y, -1.0]]},
+		&"move_back":       {"keys": [KEY_DOWN],  "buttons": [], "axes": [[JOY_AXIS_LEFT_Y, 1.0]]},
+		&"sprint":          {"keys": [KEY_SHIFT], "buttons": [], "axes": [[JOY_AXIS_TRIGGER_RIGHT, 1.0]]},
+		&"kick":            {"keys": [KEY_D],     "buttons": [JOY_BUTTON_X], "axes": []},
+		&"pass_short":      {"keys": [KEY_X],     "buttons": [JOY_BUTTON_A], "axes": []},
+		&"pass_through":    {"keys": [KEY_W],     "buttons": [JOY_BUTTON_Y], "axes": []},
+		&"pass_lob":        {"keys": [KEY_A],     "buttons": [JOY_BUTTON_B], "axes": []},
+		&"combo_modifier":  {"keys": [KEY_Q],     "buttons": [JOY_BUTTON_LEFT_SHOULDER], "axes": []},
+		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 	}
-	for action in input_actions:
+	for action in actions:
 		if InputMap.has_action(action):
 			InputMap.erase_action(action)
 		InputMap.add_action(action)
-		for keycode in input_actions[action]:
-			var e := InputEventKey.new()
-			e.keycode = keycode
-			InputMap.action_add_event(action, e)
+		InputMap.action_set_deadzone(action, 0.2)
+		for keycode in actions[action]["keys"]:
+			var ek := InputEventKey.new()
+			ek.keycode = keycode
+			InputMap.action_add_event(action, ek)
+		for btn in actions[action]["buttons"]:
+			var eb := InputEventJoypadButton.new()
+			eb.button_index = btn
+			InputMap.action_add_event(action, eb)
+		for ax in actions[action]["axes"]:
+			var em := InputEventJoypadMotion.new()
+			em.axis = ax[0]
+			em.axis_value = ax[1]
+			InputMap.action_add_event(action, em)
 	print("Inputs setup OK")
 
 
@@ -470,22 +496,40 @@ func _process(delta: float) -> void:
 	if controlled_player_indicator and controlled_player:
 		controlled_player_indicator.global_position = controlled_player.global_position + Vector3(0, 2.2, 0)
 
-	# Kick charge: accumulate while holding Space
-	if _kick_charging and _kick_charge_player == controlled_player:
-		_kick_charge += delta
-		if _kick_charge >= KICK_CHARGE_MAX_TIME:
-			_kick_charge = KICK_CHARGE_MAX_TIME
-			_fire_kick()
-		var ratio := clampf(_kick_charge / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
-		power_bar.value = ratio
-		var fill := power_bar.get_theme_stylebox("fill")
-		if fill:
-			var c := Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-			fill.bg_color = c
-	elif _kick_charging:
-		# Player switched or lost ball — cancel charge
-		_cancel_kick_charge()
-	power_bar.visible = _kick_charging and _kick_charge_player == controlled_player
+	# Заряд: копим, пока держим кнопку заряжаемого действия.
+	if _is_charging() and _charge_player == controlled_player:
+		var max_time := KICK_CHARGE_MAX_TIME if _charge_action == ChargeAction.SHOT else FootballConstants.PASS_CHARGE_MAX_TIME
+		_charge_time += get_process_delta_time()
+		if _charge_time >= max_time:
+			_charge_time = max_time
+			_fire_charge()
+		if _is_charging():
+			var ratio := clampf(_charge_time / max_time, 0.0, 1.0)
+			power_bar.value = ratio
+			var fill := power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+	elif _is_charging():
+		_cancel_charge()
+	power_bar.visible = _is_charging() and _charge_player == controlled_player
+
+	var show_target := _is_charging() and _charge_action != ChargeAction.SHOT and _charge_player == controlled_player
+	if show_target:
+		var mates := _team_arrays(&"team_1", _charge_player)
+		var mate_pos: PackedVector3Array = mates["pos"]
+		var mate_vel: PackedVector3Array = mates["vel"]
+		var mate_nodes: Array = mates["nodes"]
+		var aim: Vector3 = ball.peek_dribble_direction()
+		var idx := PassSystem.select_target(_charge_player.global_position, aim, mate_pos, mate_vel,
+			FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
+		if idx >= 0:
+			var tgt: Node3D = mate_nodes[idx]
+			_target_indicator.global_position = tgt.global_position + Vector3(0, 2.6, 0)
+			_target_indicator.visible = true
+		else:
+			_target_indicator.visible = false
+	else:
+		_target_indicator.visible = false
 
 
 func _physics_process(delta: float) -> void:
@@ -502,8 +546,8 @@ func _physics_process(delta: float) -> void:
 				controlled_player = db
 				_sync_ai_controllers()
 
-	# Swap player (Q) — manual switch between player_home and player_teammate
-	if Input.is_action_just_pressed(&"swap_player"):
+	# Смена игрока — только в защите (мяч не у нас). В атаке combo_modifier = модификатор паса.
+	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess():
 		controlled_player = player_teammate if controlled_player == player_home else player_home
 		_sync_ai_controllers()
 		_manual_swap_cooldown = 10
@@ -523,6 +567,14 @@ func _physics_process(delta: float) -> void:
 	# Автомат падения сбитого игрока (ragdoll → на живот → 2 переката → вставание).
 	_process_fall(delta)
 
+	# Receive-assist: тикаем таймаут и снимаем фазу по поимке/таймауту/смене игрока/невалидности.
+	if _receive_active:
+		_receive_timer -= delta
+		var caught: bool = ball.has_method(&"set_dribbler") and ball.dribbler == _receiver
+		if caught or _receive_timer <= 0.0 or _receiver != controlled_player or not is_instance_valid(_receiver):
+			_receive_active = false
+			_receiver = null
+
 
 func _setup_controlled_indicator() -> void:
 	var mesh := CylinderMesh.new()
@@ -540,6 +592,24 @@ func _setup_controlled_indicator() -> void:
 	mi.position = Vector3(0, 2.2, 0)
 	add_child(mi)
 	controlled_player_indicator = mi
+
+
+func _setup_target_indicator() -> void:
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.0
+	mesh.bottom_radius = 0.2
+	mesh.height = 0.4
+
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.9, 0.2)  # жёлтый — цель паса
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	mi.visible = false
+	add_child(mi)
+	_target_indicator = mi
 
 
 func _sync_ai_controllers() -> void:
@@ -601,6 +671,8 @@ func _handle_dribbling() -> void:
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
 			ball.set_dribbler(p)
+			if p.has_method(&"end_receiving"):
+				p.end_receiving()
 			return
 
 
@@ -623,10 +695,7 @@ func _handle_player_input(delta: float) -> void:
 		return
 	if _action_player == controlled_player and not _kick_action_active:
 		return
-	var input_dir := Vector2(
-		Input.get_axis(&"move_left", &"move_right"),
-		Input.get_axis(&"move_forward", &"move_back")
-	)
+	var input_vec := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
 	var cam_basis := camera_pivot.global_transform.basis
 	var cam_forward := -cam_basis.z
 	cam_forward.y = 0
@@ -634,28 +703,49 @@ func _handle_player_input(delta: float) -> void:
 	var cam_right := cam_basis.x
 	cam_right.y = 0
 	cam_right = cam_right.normalized()
-	var dir := (cam_forward * -input_dir.y + cam_right * input_dir.x).normalized()
-	var sprint_scale := 1.0
-	if Input.is_action_pressed(&"sprint"):
-		sprint_scale = FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED
+	var dir := (cam_forward * -input_vec.y + cam_right * input_vec.x)
+	if dir.length() > 1.0:
+		dir = dir.normalized()
+	# Receive-assist: пока летит пас на нас, всегда бежим на мяч — не полагаемся на то, что
+	# стик уже переориентирован для нового игрока сразу после хендоффа (обычно он ещё держит
+	# направление ПРЕЖНЕГО игрока), поэтому больше не "уважаем" отклонённый стик как dummy-run.
+	if _receive_active and controlled_player == _receiver and is_instance_valid(ball):
+		var db := (ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW) - controlled_player.global_position
+		db.y = 0.0
+		if db.length() > 0.01:
+			dir = db.normalized()
+	# Аналоговый спринт: сила триггера (или 1.0 с клавиши Shift) лерпит speed_scale.
+	var sprint_strength := Input.get_action_strength(&"sprint")
+	var sprint_scale := lerpf(1.0, FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED, sprint_strength)
 	var motor := _player_motor(controlled_player)
 	if motor != null:
 		motor.set_move_intent(dir, sprint_scale)
 
 	# Kick charge system (OpenSoccer-style)
 	if Input.is_action_just_pressed(&"kick"):
-		if _kick_charging:
+		if _is_charging():
 			pass  # already charging, ignore
 		elif _is_near_ball(controlled_player) and _is_our_dribbler(controlled_player):
-			_start_kick_charge(controlled_player)
+			_start_charge(ChargeAction.SHOT, controlled_player)
 		else:
 			_try_tackle(controlled_player)
 
-	if Input.is_action_just_released(&"kick") and _kick_charging and _kick_charge_player == controlled_player:
-		_fire_kick()
+	if Input.is_action_just_released(&"kick") and _charge_action == ChargeAction.SHOT and _charge_player == controlled_player:
+		_fire_charge()
 
-	if Input.is_action_just_pressed(&"pass"):
-		_pass_ball(controlled_player)
+	# Пасы: одна кнопка на семейство; combo_modifier в атаке выбирает «спец»-вариант.
+	var combo := Input.is_action_pressed(&"combo_modifier")
+	if _is_near_ball(controlled_player) and _is_our_dribbler(controlled_player):
+		if Input.is_action_just_pressed(&"pass_short"):
+			_start_charge(ChargeAction.PASS_WALL if combo else ChargeAction.PASS_SHORT, controlled_player)
+		elif Input.is_action_just_pressed(&"pass_through"):
+			_start_charge(ChargeAction.PASS_THROUGH_AIR if combo else ChargeAction.PASS_THROUGH, controlled_player)
+		elif Input.is_action_just_pressed(&"pass_lob"):
+			_start_charge(ChargeAction.PASS_LOB, controlled_player)
+	for act in [&"pass_short", &"pass_through", &"pass_lob"]:
+		if Input.is_action_just_released(act) and _is_charging() and _charge_action != ChargeAction.SHOT and _charge_player == controlled_player:
+			_fire_charge()
+			break
 
 
 func _is_near_ball(player_node: Node3D) -> bool:
@@ -668,71 +758,217 @@ func _is_our_dribbler(player_node: Node3D) -> bool:
 		return false
 	return ball.dribbler == player_node
 
-func _start_kick_charge(player_node: CharacterBody3D) -> void:
-	_kick_charging = true
-	_kick_charge = 0.0
-	_kick_charge_player = player_node
+## Владеет ли наша команда мячом сейчас (для контекст-зависимого combo_modifier).
+func _we_possess() -> bool:
+	if not (ball.has_method(&"set_dribbler") and ball.dribbler):
+		return false
+	return ball.dribbler == player_home or ball.dribbler == player_teammate
+
+func _start_charge(action: ChargeAction, player_node: CharacterBody3D) -> void:
+	_charge_action = action
+	_charge_time = 0.0
+	_charge_player = player_node
 	var dir: Vector3 = ball.get_dribble_direction()
 	var flat := Vector3(dir.x, 0.0, dir.z)
 	if flat.length() > 0.01:
 		player_node.rotation.y = atan2(-flat.x, -flat.z)
 
-func _fire_kick() -> void:
-	if not _kick_charging or not _kick_charge_player:
-		_cancel_kick_charge()
+func _fire_charge() -> void:
+	if not _is_charging() or not _charge_player or not is_instance_valid(_charge_player):
+		_cancel_charge()
 		return
-	if not is_instance_valid(_kick_charge_player) or not ball.has_method(&"kick"):
-		_cancel_kick_charge()
-		return
-	var ratio := clampf(_kick_charge / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
-	var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
-	var dir: Vector3 = ball.get_dribble_direction()
-	dir.y = lerpf(0.05, 0.5, ratio)  # слабый удар — низом, сильный — с подъёмом
-	var player := _kick_charge_player
-	_cancel_kick_charge()
+	var action := _charge_action
+	var player := _charge_player
+	if action == ChargeAction.SHOT:
+		var ratio := clampf(_charge_time / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
+		var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
+		var dir: Vector3 = ball.get_dribble_direction()
+		dir.y = lerpf(0.05, 0.5, ratio)  # слабый удар — низом, сильный — с подъёмом
+		_cancel_charge()
 
-	# Подключаемся к commit-action системе, но БЕЗ блокировки мотора.
-	# ball.kick() будет вызван из _on_action_contact по сигналу анимации.
-	_action_player = player
-	_action_dir = dir
-	_action_power = power
-	_kick_action_active = true
-	var visual := _player_visual(player)
-	if visual != null and visual.trigger("kick"):
-		return  # ждём action_contact
-	# Фолбэк без анимации: бьём сразу
-	ball.kick(dir, power)
-	_action_player = null
-	_kick_action_active = false
+		# Подключаемся к commit-action системе, но БЕЗ блокировки мотора.
+		# ball.kick() будет вызван из _on_action_contact по сигналу анимации.
+		_action_player = player
+		_action_dir = dir
+		_action_power = power
+		_kick_action_active = true
+		var visual := _player_visual(player)
+		if visual != null and visual.trigger("kick"):
+			return  # ждём action_contact
+		# Фолбэк без анимации: бьём сразу
+		ball.kick(dir, power)
+		_action_player = null
+		_kick_action_active = false
+	else:
+		var charge_ratio := clampf(_charge_time / FootballConstants.PASS_CHARGE_MAX_TIME, 0.0, 1.0)
+		_cancel_charge()
+		_fire_pass(action, player, charge_ratio)
 
-func _cancel_kick_charge() -> void:
-	_kick_charging = false
-	_kick_charge = 0.0
-	_kick_charge_player = null
+func _cancel_charge() -> void:
+	_charge_action = ChargeAction.NONE
+	_charge_time = 0.0
+	_charge_player = null
 	power_bar.visible = false
 
+## Собрать параметры паса по заряжаемому действию. Заряд множит базовую силу.
+func _pass_params(action: ChargeAction, charge_ratio: float) -> PassParams:
+	var p := PassParams.new()
+	var mult := lerpf(FootballConstants.PASS_POWER_CHARGE_MIN, FootballConstants.PASS_POWER_CHARGE_MAX, charge_ratio)
+	match action:
+		ChargeAction.PASS_SHORT:
+			pass  # скорость низового паса считается по дистанции в _fire_pass (ground_pass_speed)
+		ChargeAction.PASS_WALL:
+			p.is_wall = true
+		ChargeAction.PASS_THROUGH:
+			p.extra_lead = FootballConstants.PASS_THROUGH_EXTRA_LEAD
+		ChargeAction.PASS_LOB:
+			p.peak_height = FootballConstants.PASS_LOB_PEAK_HEIGHT * mult
+			p.is_air = true
+		ChargeAction.PASS_THROUGH_AIR:
+			p.peak_height = FootballConstants.PASS_THROUGH_AIR_PEAK_HEIGHT * mult
+			p.extra_lead = FootballConstants.PASS_THROUGH_EXTRA_LEAD
+			p.is_air = true
+		_:
+			pass
+	return p
 
-func _pass_ball(player_node: CharacterBody3D) -> void:
-	if not ball.has_method(&"kick"):
+
+## Позиции/скорости/узлы группы в параллельных массивах (индекс общий). Исключает except_node.
+func _team_arrays(group: StringName, except_node: Node) -> Dictionary:
+	var positions := PackedVector3Array()
+	var velocities := PackedVector3Array()
+	var nodes: Array[Node3D] = []
+	for n in get_tree().get_nodes_in_group(group):
+		if n == except_node or not (n is CharacterBody3D) or not is_instance_valid(n):
+			continue
+		positions.append(n.global_position)
+		velocities.append(n.velocity)
+		nodes.append(n)
+	return {"pos": positions, "vel": velocities, "nodes": nodes}
+
+
+## Геометрия решает «можно ли перехватить»; шанс решает, среагирует ли соперник (не читерски-
+## идеально). Если да — соперник бежит к точке пересечения (визуальный, честный перехват).
+## NOTE: FootballConstants.AI_SPEED (5.0) is legacy/unused elsewhere (see CLAUDE.md's own
+## caveat on it) — the opponent's REAL speed is the `speed` export on simple_ai.gd (8.0 by
+## default). Read it off the node via get(), not the stale constant, or every interception
+## feasibility check will be computed against a speed the opponent doesn't actually have.
+func _maybe_flag_interceptor(from: Vector3, to: Vector3, launch_vel: Vector3) -> void:
+	var ball_speed := Vector3(launch_vel.x, 0.0, launch_vel.z).length()
+	var opps := _team_arrays(&"team_2", null)
+	var opp_pos: PackedVector3Array = opps["pos"]
+	var opp_nodes: Array = opps["nodes"]
+	var best_time := INF
+	var best_i := -1
+	for i in range(opp_pos.size()):
+		var speed_variant: Variant = opp_nodes[i].get(&"speed")
+		var opp_speed: float = speed_variant if speed_variant != null else FootballConstants.AI_SPEED
+		var t := PassSystem.interception_time(from, to, ball_speed, opp_pos[i],
+			opp_speed, FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD)
+		if t < best_time:
+			best_time = t
+			best_i = i
+	if best_i < 0:
 		return
-	var dist := player_node.global_position.distance_to(ball.global_position)
-	if dist > 2.0:
+	if _pass_rng.randf() > FootballConstants.AI_INTERCEPT_CHANCE:
+		return  # соперник «зевнул»
+	var opp: Node3D = opp_nodes[best_i]
+	if opp.has_method(&"begin_intercept"):
+		var point := from + Vector3(launch_vel.x, 0.0, launch_vel.z).normalized() * (best_time * ball_speed)
+		opp.begin_intercept(point)
+
+
+## Реальная гравитация мяча (RigidBody под движковую гравитацию, НЕ FootballConstants.GRAVITY).
+func _ball_gravity() -> float:
+	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+	return g * ball.gravity_scale
+
+
+## Выполнить пас: выбрать цель по прицелу, посчитать траекторию, применить импульс через
+## commit-action (как удар), передать управление принимающему сразу.
+func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: float) -> void:
+	if not ball.has_method(&"launch"):
 		return
-	# Не даём пасу прервать текущее действие kick (pass же идёт на E, не конфликтует)
-	if _action_player != null:
-		return
-	var dir: Vector3 = ball.get_dribble_direction()
-	dir.y = 0.1
-	_action_player = player_node
-	_action_dir = dir
-	_action_power = 12.0
-	_kick_action_active = true  # pass тоже без блокировки мотора, флаг один на оба
-	var visual := _player_visual(player_node)
+	var params := _pass_params(action, charge_ratio)
+	var mates := _team_arrays(&"team_1", player)
+	var mate_pos: PackedVector3Array = mates["pos"]
+	var mate_vel: PackedVector3Array = mates["vel"]
+	var mate_nodes: Array = mates["nodes"]
+	var aim: Vector3 = ball.get_dribble_direction()
+	var idx := PassSystem.select_target(player.global_position, aim, mate_pos, mate_vel,
+		FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
+	# Точка прицела: в ноги (короткий/навес) или на ход (through). Нет цели → по направлению прицела.
+	var from := ball.global_position
+	var aim_point: Vector3
+	var receiver: CharacterBody3D = null
+	var ball_speed := FootballConstants.PASS_LEAD_SPEED_ESTIMATE
+	if idx >= 0:
+		receiver = mate_nodes[idx]
+		if params.extra_lead > 0.0:
+			aim_point = PassSystem.lead_point(mate_pos[idx], mate_vel[idx], from, ball_speed, params.extra_lead)
+		else:
+			aim_point = mate_pos[idx]
+	else:
+		var flat := Vector3(aim.x, 0.0, aim.z).normalized()
+		aim_point = from + flat * 12.0
+	# Разброс точности.
+	var flat_dir := (aim_point - from)
+	flat_dir.y = 0.0
+	var spread := PassSystem.scatter_degrees(FootballConstants.PASS_SPREAD_BASE, FootballConstants.PASS_ASSIST,
+		flat_dir.length(), FootballConstants.PASS_SPREAD_DIST_REF)
+	flat_dir = PassSystem.apply_scatter(flat_dir, spread, _pass_rng)
+	aim_point = from + flat_dir + Vector3(0.0, aim_point.y - from.y, 0.0)
+	# Баллистика.
+	var launch_vel: Vector3
+	if params.is_air:
+		var g := _ball_gravity()
+		launch_vel = PassSystem.launch_lob(from, aim_point, params.peak_height, g)
+	else:
+		var ground_dist := (aim_point - from).length()
+		var ground_speed := PassSystem.ground_pass_speed(ground_dist, charge_ratio,
+			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
+		launch_vel = PassSystem.launch_ground(from, aim_point, ground_speed)
+	_maybe_flag_interceptor(from, aim_point, launch_vel)
+	# Commit-action: импульс по action_contact, без блокировки мотора (как kick).
+	_action_player = player
+	_action_dir = launch_vel  # для пасов _action_dir несёт готовую скорость (см. _on_action_contact)
+	_action_power = -1.0       # маркер «это launch, а не kick»
+	_kick_action_active = true
+	_pending_launch = launch_vel
+	# Передать управление принимающему сразу.
+	if receiver != null:
+		controlled_player = receiver
+		_sync_ai_controllers()
+		_manual_swap_cooldown = 30
+	if receiver != null and receiver != controlled_player and receiver.has_method(&"begin_receiving"):
+		receiver.begin_receiving(launch_vel, params.extra_lead)
+	if receiver != null and receiver == controlled_player:
+		_receive_active = true
+		_receiver = receiver
+		_receive_timer = FootballConstants.PASS_RECEIVE_MAX_TIME
+	if params.is_wall and is_instance_valid(player) and player.has_method(&"begin_give_and_go"):
+		if receiver != null:
+			player.begin_give_and_go(receiver.global_position)
+		if ball.has_method(&"clear_last_kicker"):
+			# Не await здесь напрямую: это приостановило бы весь _fire_pass (включая
+			# visual.trigger()/ball.launch() ниже) на 0.4с. Запускаем отдельной корутиной.
+			_clear_wall_pass_cooldown()
+	var visual := _player_visual(player)
 	if visual != null and visual.trigger("pass"):
 		return
-	ball.kick(dir, 12.0)
+	ball.launch(launch_vel)
 	_action_player = null
 	_kick_action_active = false
+
+
+## Даём отдавшему «стенку» шанс принять быстрый возврат, сняв с мяча метку последнего
+## игрока чуть раньше истечения ball._kick_cooldown_msec. Отдельная корутина — намеренно
+## не await-ится из _fire_pass, чтобы не задерживать сам пас (см. вызов выше).
+func _clear_wall_pass_cooldown() -> void:
+	await get_tree().create_timer(0.4).timeout
+	if is_instance_valid(ball):
+		ball.clear_last_kicker()
 
 
 ## Начать commit-действие с мячом: развернуть игрока, проиграть анимацию, заблокировать
@@ -759,7 +995,11 @@ func _start_ball_action(player_node: CharacterBody3D, dir: Vector3, power: float
 
 ## Момент касания ногой: придать импульс мячу.
 func _on_action_contact(_action: String, player: Node) -> void:
-	if player == _action_player and ball.has_method(&"kick"):
+	if player != _action_player:
+		return
+	if _action_power < 0.0 and ball.has_method(&"launch"):
+		ball.launch(_pending_launch)
+	elif ball.has_method(&"kick"):
 		ball.kick(_action_dir, _action_power)
 
 
@@ -1056,6 +1296,8 @@ func _finish_fall() -> void:
 		_fall_visual.recover()
 	if is_instance_valid(_fall_player):
 		_fall_player.remove_from_group("fallen")
+		if _fall_player.is_in_group("giving_run"):
+			_fall_player.remove_from_group("giving_run")
 		var motor := _player_motor(_fall_player)
 		if motor != null:
 			motor.set_control_locked(false)

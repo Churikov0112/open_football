@@ -15,6 +15,10 @@ var _wander_timer: float = 0.0
 var wants_to_tackle: bool = false
 var tackle_cooldown: float = 0.0
 
+var _intercepting: bool = false
+var _intercept_point: Vector3 = Vector3.ZERO
+var _intercept_react_left: float = 0.0
+
 
 func _motor() -> PlayerMotor:
 	return PlayerMotor.find_on(self)
@@ -22,6 +26,13 @@ func _motor() -> PlayerMotor:
 ## Скорость этого ИИ относительно общей максимальной — сохраняет прежний относительный темп.
 func _base_scale() -> float:
 	return speed / FootballConstants.LOCO_TOP_SPEED
+
+## Менеджер зовёт это, если геометрия коридора дала перехват (с учётом шанса «зевка»).
+## Соперник реагирует не мгновенно (задержка), затем бежит к точке пересечения.
+func begin_intercept(point: Vector3) -> void:
+	_intercepting = true
+	_intercept_point = point
+	_intercept_react_left = FootballConstants.AI_INTERCEPT_REACT
 
 
 func _physics_process(delta: float) -> void:
@@ -33,6 +44,22 @@ func _physics_process(delta: float) -> void:
 
 	if wants_to_tackle:
 		return
+
+	if _intercepting:
+		_intercept_react_left -= delta
+		if _intercept_react_left > 0.0:
+			return  # задержка реакции — фора игроку
+		var caught: bool = ball.has_method(&"set_dribbler") and ball.dribbler == self
+		var arrived := global_position.distance_to(_intercept_point) < 1.0
+		if caught or arrived:
+			_intercepting = false
+		else:
+			var dir := (_intercept_point - global_position)
+			dir.y = 0.0
+			var m := _motor()
+			if m != null:
+				m.set_move_intent(dir.normalized(), _base_scale())
+			return
 
 	if _is_dribbling():
 		_dribble_toward_goal(delta)

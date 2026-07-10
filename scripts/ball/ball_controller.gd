@@ -19,6 +19,9 @@ var _pending_impulse: Vector3 = Vector3.ZERO
 
 func _ready() -> void:
 	_football_texture()
+	var phys_mat := PhysicsMaterial.new()
+	phys_mat.bounce = 0.4
+	physics_material_override = phys_mat
 
 
 func _football_texture() -> void:
@@ -82,11 +85,42 @@ func get_dribble_direction() -> Vector3:
 	return _get_movement_direction()
 
 
+## Read-only версия get_dribble_direction() — НЕ трогает _dribbler_prev_pos.
+## _integrate_forces() каждый физический тик читает И пишет _dribbler_prev_pos, чтобы
+## посчитать скорость дриблера (pos_delta = player_pos - _dribbler_prev_pos; player_vel =
+## pos_delta/dt). match_manager._process() вызывает get_dribble_direction() КАЖДЫЙ
+## РЕНДЕР-КАДР во время зарядки паса (для маркера прицеливания) — если вызвать
+## мутирующий геттер, он обнулит дельту раньше, чем до неё доберётся _integrate_forces(),
+## и measured pos_delta занизится → мяч отстаёт/дёргается от дриблера при любой зарядке
+## паса. Поэтому здесь используем только текущую ориентацию тела (facing), как в
+## fallback-ветке _direction_from_delta()/_get_movement_direction(), но без трекинга
+## дельты позиции и без побочных эффектов. НЕ "упрощай" обратно в get_dribble_direction() —
+## это вернёт гонку.
+func peek_dribble_direction() -> Vector3:
+	if not dribbler or not is_instance_valid(dribbler):
+		return Vector3.FORWARD
+	var facing := -dribbler.global_transform.basis.z
+	facing.y = 0.0
+	if facing.length_squared() > 0.0001:
+		return facing.normalized()
+	return Vector3.FORWARD
+
+
 func kick(direction: Vector3, power: float) -> void:
 	last_kicker = dribbler
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	_pending_impulse = direction * power
+
+
+## Задать мячу готовую стартовую скорость (в отличие от kick(), где power — импульс, а dir
+## не нормализован). velocity — уже посчитанная баллистика (PassSystem.launch_ground/launch_lob).
+## Импульс = velocity*mass, т.к. _integrate_forces применяет vel += _pending_impulse/mass.
+func launch(velocity: Vector3) -> void:
+	last_kicker = dribbler
+	_last_kick_time = Time.get_ticks_msec()
+	release_dribble()
+	_pending_impulse = velocity * mass
 
 
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
