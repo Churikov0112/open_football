@@ -44,13 +44,29 @@ for fname in sorted(os.listdir(src_dir)):
         continue
     anim_files[os.path.splitext(fname)[0].lower()] = fname
 
-# Клипы, приехавшие с root motion → морозим ВСЮ трансляцию корневой кости (делаем
-# in-place, включая вертикаль — см. freeze_root_translation). Все клипы здесь либо
-# УЖЕ лежат (роллы: вертикаль ничтожна), либо вертикаль — артефакт (tackle: Hips
-# паразитно уезжал вверх). Клип падения (fallen_idle) сюда НЕ входит: у него дрейф
-# <1см и так, а морозить вертикаль клипа-падения нельзя — опускание таза к земле это
-# и есть само падение. standing_up тоже не трогаем (его forward-дрейф естественен).
-IN_PLACE_CLIPS = {"tackle", "roll_left", "roll_right"}
+# Клипы, приехавшие с root motion → морозим трансляцию корневой кости (in-place).
+# Значение — какие оси индексов pose.bones["Hips"].location (В BLENDER, до экспорта)
+# морозить. ВАЖНО: это ЛОКАЛЬНЫЕ оси кости в её собственном (повёрнутом
+# automatic_bone_orientation) базисе — они НЕ совпадают ни с мировыми Blender X/Y/Z,
+# ни напрямую с осями экспортированного glTF Position3D-трека (Blender-экспортёр
+# переставляет оси при экспорте bone-local кривых). Проверено эмпирически на
+# tackle.fbx двумя независимыми способами: (1) в Blender — world_z_delta (мировая
+# высота Hips через matrix_world) / local_index1_delta = ровно 0.01 (масштаб
+# армейчера) на всех сэмплированных кадрах; (2) в готовом glb — с заморозкой (0,2)
+# (индекс 1 живой) итоговый Position3D-трек Hips даёт дугу амплитудой ~0.71м
+# (совпадает с (1): 0.998м стоя -> 0.286м низшая точка подката -> 0.949м подъём, без
+# дрейфа — реальное движение, не баг), а при заморозке (0,1) (индекс 1 замороженный,
+# как было по ошибке в первом фиксе) эта дуга исчезает и остаётся плоским нулём —
+# именно так воспроизводится баг "зависания в воздухе". Индексы 0 и 2 — горизонталь
+# (мелкий джиттер ~±0.1-0.2м на новом in-place источнике, безопасно морозить).
+# roll_left/roll_right: вертикаль и так ничтожна (~5-6см) — глушим все три оси.
+# Клип падения (fallen_idle) в IN_PLACE_CLIPS не входит — там опускание таза к земле
+# это и есть само падение. standing_up тоже не трогаем (его forward-дрейф естественен).
+IN_PLACE_CLIPS = {
+    "tackle": (0, 2),
+    "roll_left": (0, 1, 2),
+    "roll_right": (0, 1, 2),
+}
 
 def _action_fcurves(act):
     # Blender 4.4+ "layered actions": legacy Action.fcurves may not exist on
@@ -67,7 +83,7 @@ def _action_fcurves(act):
                     fcurves.extend(cb.fcurves)
     return fcurves
 
-def freeze_root_translation(imp_arm, act):
+def freeze_root_translation(imp_arm, act, axes):
     # Корневая кость Mixamo (без родителя), обычно "mixamorig:Hips".
     root_bone = None
     for b in imp_arm.data.bones:
@@ -78,14 +94,8 @@ def freeze_root_translation(imp_arm, act):
         print("IN_PLACE: не найдена корневая кость, пропуск")
         return
     path = 'pose.bones["%s"].location' % root_bone
-    # Морозим ВСЕ три оси (0,1,2) — горизонталь (индексы 0,1 → Godot X,Z) и вертикаль
-    # (индекс 2 → Godot Y). Изначально вертикаль оставляли живой ("естественный боб"),
-    # но у tackle.fbx она оказалась не бобом, а НЕОГРАНИЧЕННЫМ ДРЕЙФОМ (Hips монотонно
-    # уезжает вверх ~4.4м за клип при исходном масштабе 0.01 — на экране это подкатчик,
-    # зависающий в воздухе). У roll_left/roll_right вертикальная амплитуда и так мала
-    # (~5-6см), так что полная заморозка ничего не портит визуально.
     for fc in _action_fcurves(act):
-        if fc.data_path == path and fc.array_index in (0, 1, 2):
+        if fc.data_path == path and fc.array_index in axes:
             if not fc.keyframe_points:
                 continue
             first = fc.keyframe_points[0].co[1]
@@ -94,7 +104,7 @@ def freeze_root_translation(imp_arm, act):
                 kp.handle_left[1] = first
                 kp.handle_right[1] = first
             fc.update()
-    print("IN_PLACE: заморожена трансляция Hips (все оси) для action %s" % act.name)
+    print("IN_PLACE: заморожена трансляция Hips (оси %s) для action %s" % (axes, act.name))
 
 if not anim_files:
     raise RuntimeError("В %s не найдено ни одного FBX-клипа (кроме character.fbx)" % src_dir)
@@ -110,7 +120,7 @@ for anim_name, fname in anim_files.items():
     act = imp_arm.animation_data.action
     act.name = anim_name
     if anim_name in IN_PLACE_CLIPS:
-        freeze_root_translation(imp_arm, act)
+        freeze_root_translation(imp_arm, act, IN_PLACE_CLIPS[anim_name])
     start = int(act.frame_range[0])
     track = main_arm.animation_data.nla_tracks.new()
     track.name = anim_name
