@@ -50,14 +50,17 @@ var _manual_swap_cooldown: int = 0
 # movement is NOT locked (unlike pass which uses _action_player + motor lock)
 var _kick_action_active: bool = false
 
-# Kick charge system (hold Space to charge, release to fire)
-var _kick_charging: bool = false
-var _kick_charge: float = 0.0
-var _kick_charge_player: CharacterBody3D
-const KICK_CHARGE_MIN_TIME: float = 0.3
+# Обобщённый заряд: одно действие заряжается за раз (удар ИЛИ один из пасов).
+enum ChargeAction { NONE, SHOT, PASS_SHORT, PASS_THROUGH, PASS_LOB, PASS_WALL, PASS_THROUGH_AIR }
+var _charge_action: ChargeAction = ChargeAction.NONE
+var _charge_time: float = 0.0
+var _charge_player: CharacterBody3D
 const KICK_CHARGE_MAX_TIME: float = 0.5
 const KICK_POWER_MIN: float = 12.0
 const KICK_POWER_MAX: float = 25.0
+
+func _is_charging() -> bool:
+	return _charge_action != ChargeAction.NONE
 
 
 func _ready() -> void:
@@ -482,22 +485,22 @@ func _process(delta: float) -> void:
 	if controlled_player_indicator and controlled_player:
 		controlled_player_indicator.global_position = controlled_player.global_position + Vector3(0, 2.2, 0)
 
-	# Kick charge: accumulate while holding Space
-	if _kick_charging and _kick_charge_player == controlled_player:
-		_kick_charge += delta
-		if _kick_charge >= KICK_CHARGE_MAX_TIME:
-			_kick_charge = KICK_CHARGE_MAX_TIME
-			_fire_kick()
-		var ratio := clampf(_kick_charge / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
-		power_bar.value = ratio
-		var fill := power_bar.get_theme_stylebox("fill")
-		if fill:
-			var c := Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-			fill.bg_color = c
-	elif _kick_charging:
-		# Player switched or lost ball — cancel charge
-		_cancel_kick_charge()
-	power_bar.visible = _kick_charging and _kick_charge_player == controlled_player
+	# Заряд: копим, пока держим кнопку заряжаемого действия.
+	if _is_charging() and _charge_player == controlled_player:
+		var max_time := KICK_CHARGE_MAX_TIME if _charge_action == ChargeAction.SHOT else FootballConstants.PASS_CHARGE_MAX_TIME
+		_charge_time += get_process_delta_time()
+		if _charge_time >= max_time:
+			_charge_time = max_time
+			_fire_charge()
+		if _is_charging():
+			var ratio := clampf(_charge_time / max_time, 0.0, 1.0)
+			power_bar.value = ratio
+			var fill := power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+	elif _is_charging():
+		_cancel_charge()
+	power_bar.visible = _is_charging() and _charge_player == controlled_player
 
 
 func _physics_process(delta: float) -> void:
@@ -655,18 +658,15 @@ func _handle_player_input(delta: float) -> void:
 
 	# Kick charge system (OpenSoccer-style)
 	if Input.is_action_just_pressed(&"kick"):
-		if _kick_charging:
+		if _is_charging():
 			pass  # already charging, ignore
 		elif _is_near_ball(controlled_player) and _is_our_dribbler(controlled_player):
-			_start_kick_charge(controlled_player)
+			_start_charge(ChargeAction.SHOT, controlled_player)
 		else:
 			_try_tackle(controlled_player)
 
-	if Input.is_action_just_released(&"kick") and _kick_charging and _kick_charge_player == controlled_player:
-		_fire_kick()
-
-	if Input.is_action_just_pressed(&"pass"):
-		_pass_ball(controlled_player)
+	if Input.is_action_just_released(&"kick") and _charge_action == ChargeAction.SHOT and _charge_player == controlled_player:
+		_fire_charge()
 
 
 func _is_near_ball(player_node: Node3D) -> bool:
@@ -685,48 +685,54 @@ func _we_possess() -> bool:
 		return false
 	return ball.dribbler == player_home or ball.dribbler == player_teammate
 
-func _start_kick_charge(player_node: CharacterBody3D) -> void:
-	_kick_charging = true
-	_kick_charge = 0.0
-	_kick_charge_player = player_node
+func _start_charge(action: ChargeAction, player_node: CharacterBody3D) -> void:
+	_charge_action = action
+	_charge_time = 0.0
+	_charge_player = player_node
 	var dir: Vector3 = ball.get_dribble_direction()
 	var flat := Vector3(dir.x, 0.0, dir.z)
 	if flat.length() > 0.01:
 		player_node.rotation.y = atan2(-flat.x, -flat.z)
 
-func _fire_kick() -> void:
-	if not _kick_charging or not _kick_charge_player:
-		_cancel_kick_charge()
+func _fire_charge() -> void:
+	if not _is_charging() or not _charge_player or not is_instance_valid(_charge_player):
+		_cancel_charge()
 		return
-	if not is_instance_valid(_kick_charge_player) or not ball.has_method(&"kick"):
-		_cancel_kick_charge()
-		return
-	var ratio := clampf(_kick_charge / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
-	var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
-	var dir: Vector3 = ball.get_dribble_direction()
-	dir.y = lerpf(0.05, 0.5, ratio)  # слабый удар — низом, сильный — с подъёмом
-	var player := _kick_charge_player
-	_cancel_kick_charge()
+	var action := _charge_action
+	var player := _charge_player
+	if action == ChargeAction.SHOT:
+		var ratio := clampf(_charge_time / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
+		var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
+		var dir: Vector3 = ball.get_dribble_direction()
+		dir.y = lerpf(0.05, 0.5, ratio)  # слабый удар — низом, сильный — с подъёмом
+		_cancel_charge()
 
-	# Подключаемся к commit-action системе, но БЕЗ блокировки мотора.
-	# ball.kick() будет вызван из _on_action_contact по сигналу анимации.
-	_action_player = player
-	_action_dir = dir
-	_action_power = power
-	_kick_action_active = true
-	var visual := _player_visual(player)
-	if visual != null and visual.trigger("kick"):
-		return  # ждём action_contact
-	# Фолбэк без анимации: бьём сразу
-	ball.kick(dir, power)
-	_action_player = null
-	_kick_action_active = false
+		# Подключаемся к commit-action системе, но БЕЗ блокировки мотора.
+		# ball.kick() будет вызван из _on_action_contact по сигналу анимации.
+		_action_player = player
+		_action_dir = dir
+		_action_power = power
+		_kick_action_active = true
+		var visual := _player_visual(player)
+		if visual != null and visual.trigger("kick"):
+			return  # ждём action_contact
+		# Фолбэк без анимации: бьём сразу
+		ball.kick(dir, power)
+		_action_player = null
+		_kick_action_active = false
+	else:
+		var charge_ratio := clampf(_charge_time / FootballConstants.PASS_CHARGE_MAX_TIME, 0.0, 1.0)
+		_cancel_charge()
+		_fire_pass(action, player, charge_ratio)
 
-func _cancel_kick_charge() -> void:
-	_kick_charging = false
-	_kick_charge = 0.0
-	_kick_charge_player = null
+func _cancel_charge() -> void:
+	_charge_action = ChargeAction.NONE
+	_charge_time = 0.0
+	_charge_player = null
 	power_bar.visible = false
+
+func _fire_pass(_action: ChargeAction, _player: CharacterBody3D, _charge_ratio: float) -> void:
+	pass  # реализуется в Task 12
 
 
 func _pass_ball(player_node: CharacterBody3D) -> void:
