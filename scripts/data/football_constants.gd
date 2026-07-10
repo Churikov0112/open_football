@@ -166,6 +166,51 @@ const RAGDOLL_COLLISION_LAYER := 8    # bit4: маскирует слой пол
 
 
 # ═══════════════════════════════════════════
+#  PASSING (тюнинг-старт)
+# ═══════════════════════════════════════════
+
+# Базовая скорость мяча (м/с) по типам паса. launch_ground/launch_lob получают её параметром.
+const PASS_SHORT_POWER := 10.0        # короткий пас низом, в ноги
+const PASS_THROUGH_POWER := 13.0      # пас на ход низом
+const PASS_LOB_PEAK_HEIGHT := 3.0     # высота дуги навеса, м
+const PASS_THROUGH_AIR_PEAK_HEIGHT := 2.5  # высота дуги верхового паса на ход
+
+# Заряд множит базовую силу/высоту в диапазоне [MIN..MAX] по доле заряда.
+const PASS_CHARGE_MAX_TIME := 0.6
+const PASS_POWER_CHARGE_MIN := 0.7    # доля силы при мгновенном отпускании
+const PASS_POWER_CHARGE_MAX := 1.6    # доля силы при полном заряде
+
+# Авто-наводка.
+const PASS_LEAD_GAIN := 0.25          # упреждение цели по её скорости (сек)
+const PASS_THROUGH_EXTRA_LEAD := 2.0  # доп. вынос точки «на ход» вперёд по скорости цели, м
+const PASS_DOT_BIAS := 0.15           # штраф за дистанцию в score выбора цели (0 → чистый dot)
+const PASS_MAX_RANGE := 45.0          # дальше цель не рассматривается, м
+
+# Коридор перехвата.
+const PASS_CORRIDOR_HALF_WIDTH := 1.2 # полуширина коридора у точки паса, м
+const PASS_CORRIDOR_SPREAD := 0.06    # прирост полуширины на метр вдоль паса
+
+# Разброс точности.
+const PASS_SPREAD_BASE := 12.0        # макс. разброс угла, градусы (при assist=0, дальней дистанции)
+const PASS_SPREAD_DIST_REF := 25.0    # дистанция, на которой разброс достигает базового
+const PASS_ASSIST := 0.75             # 0..1 «лёгкость»: 1 → почти без разброса
+
+# Receive-assist (доводка принимающего к мячу).
+const PASS_RECEIVE_PREDICT_WINDOW := 0.16  # на сколько сек вперёд предсказываем позицию мяча
+const PASS_RECEIVE_DOT_THRESHOLD := 0.4    # порог dot(стик, к_мячу) для защёлкивания
+const PASS_RECEIVE_MAX_TIME := 2.0         # страховочный таймаут фазы приёма, сек
+
+# Give-and-go («стенка»).
+const PASS_WALL_WINDOW := 3.0         # окно возврата, сек
+const PASS_WALL_RUN_FORWARD := 10.0   # вынос рывка отдавшего вперёд по атаке, м
+const PASS_WALL_RUN_LATERAL := 6.0    # вынос рывка в сторону, м
+
+# Активный перехват ИИ-соперника (честный, не читерский).
+const AI_INTERCEPT_REACT := 0.3       # задержка реакции соперника на пас, сек
+const AI_INTERCEPT_CHANCE := 0.8      # шанс среагировать (иначе «зевает»)
+
+
+# ═══════════════════════════════════════════
 #  CAMERA
 # ═══════════════════════════════════════════
 
