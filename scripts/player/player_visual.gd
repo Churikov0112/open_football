@@ -28,9 +28,10 @@ const ACTION_CLIPS := {
 ## Клипы, которые нужно зациклить; остальные one-shot доигрывают и авто-возвращаются.
 const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
 
-## Дополнительные one-shot клипы (подкат/перекаты/вставание): travel-only, без авто-возврата —
-## цепочку падения ведёт match_manager по длине клипов.
-const ONESHOT_CLIPS := [&"tackle", &"roll_left", &"roll_right", &"standing_up"]
+## Дополнительные one-shot стейты (подкат/падение/перекаты/вставание): travel-only, без
+## авто-возврата — цепочку падения ведёт match_manager. fallen_idle зациклен (LOOP_CLIPS)
+## и служит удерживаемой позой «лежит» в фазе knockdown.
+const ONESHOT_CLIPS := [&"tackle", &"fallen_idle", &"roll_left", &"roll_right", &"standing_up"]
 
 ## Тайминг действия (реальные секунды): contact — до касания; lock — общая длительность
 ## до action_finished; speed — множитель скорости проигрывания (сжать замах, сохранив синхрон).
@@ -56,8 +57,6 @@ var _action_elapsed: float = 0.0  # прошло реальных секунд �
 var _action_contact_at: float = 0.0
 var _action_lock_at: float = 0.0
 var _action_contact_done: bool = false
-var _skeleton: Skeleton3D
-var _ragdoll: RagdollSkeleton
 var _fall_lock: bool = false   # пока true — _process не выбирает стейт локомоции (ведёт fall-цепочка)
 
 ## Чистое отображение скорости (м/с) в позицию бленда [0..1].
@@ -89,15 +88,6 @@ func _ready() -> void:
 		return
 	_build_anim_tree(ap)
 	_last_pos = global_position
-	_skeleton = _find_skeleton(_model)
-	if _skeleton != null:
-		_ragdoll = RagdollSkeleton.new()
-		var n := _ragdoll.build(_skeleton, FootballConstants.RAGDOLL_COLLISION_LAYER)
-		if n == 0:
-			_ragdoll = null
-			push_warning("PlayerVisual: физскелет не построен (0 костей)")
-	else:
-		push_warning("PlayerVisual: нет Skeleton3D — ragdoll недоступен")
 
 func _build_anim_tree(ap: AnimationPlayer) -> void:
 	# glTF-анимации приходят незациклёнными (loop_mode=NONE). Локомоцию/лежание зацикливаем;
@@ -270,30 +260,7 @@ func cancel_action() -> void:
 	if _playback != null:
 		_playback.travel(LOCOMOTION)
 
-## Запустить физ-ragdoll: физика перехватывает скелет, импульс в таз. Блокирует выбор
-## стейта локомоции (его вернёт end_ragdoll).
-func start_ragdoll(impulse: Vector3) -> void:
-	if _ragdoll == null:
-		return
-	_fall_lock = true
-	_active_action = ""
-	_ragdoll.start(impulse)
-
-func ragdoll_active() -> bool:
-	return _ragdoll != null and _ragdoll.active()
-
-## Мировая позиция таза (для ведения тела за ragdoll / снапа при вставании).
-func ragdoll_hip_position() -> Vector3:
-	if _ragdoll != null:
-		return _ragdoll.hip_position()
-	return global_position
-
-## Остановить физику (анимация снова владеет скелетом). _fall_lock снимет recover().
-func stop_ragdoll() -> void:
-	if _ragdoll != null:
-		_ragdoll.stop()
-
-## Проиграть one-shot клип (подкат/перекат/вставание). Возвращает длину клипа (сек);
+## Проиграть one-shot клип (подкат/падение/перекат/вставание). Возвращает длину клипа (сек);
 ## 0.0, если клипа/стейта нет. Цепочку и тайминг ведёт вызывающий (match_manager).
 func play_oneshot(clip: StringName) -> float:
 	if _playback == null or not _states.has(String(clip)):
@@ -376,15 +343,6 @@ func _find_anim_player(n: Node) -> AnimationPlayer:
 		return n
 	for c in n.get_children():
 		var r := _find_anim_player(c)
-		if r != null:
-			return r
-	return null
-
-func _find_skeleton(n: Node) -> Skeleton3D:
-	if n is Skeleton3D:
-		return n
-	for c in n.get_children():
-		var r := _find_skeleton(c)
 		if r != null:
 			return r
 	return null

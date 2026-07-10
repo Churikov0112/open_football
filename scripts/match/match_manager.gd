@@ -16,7 +16,7 @@ var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var controlled_player_indicator: MeshInstance3D
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
-enum FallState { NONE, RAGDOLL, PRONE_BLEND, ROLL_1, ROLL_2, GETUP }
+enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
 
 var _tackle_state: TackleState = TackleState.NORMAL
 var _tackle_player: CharacterBody3D
@@ -35,7 +35,6 @@ var _fall_visual: PlayerVisual
 var _fall_timer: float = 0.0
 var _fall_away_dir: Vector3 = Vector3.ZERO   # горизонталь: от подкатчика к жертве
 var _fall_roll_clip: StringName = &"roll_left"
-var _fall_hip_prev: Vector3 = Vector3.ZERO
 var _roll_len: float = 0.5
 var _getup_len: float = 1.0
 
@@ -918,7 +917,9 @@ func _on_tackle_hit_player(body: CharacterBody3D, normal: Vector3) -> void:
 	_begin_fall(body, normal)
 
 
-## Запустить физ-ragdoll падение жертвы + завести автомат вставания.
+## Завести анимационное падение жертвы (Path B: без физ-ragdoll — он несовместим с
+## масштабированным Mixamo-скелетом в Godot). Роняем в позу «лежит» (fallen_idle),
+## отброс тела даём кодом, дальше 2 переката от подкатчика → вставание.
 func _begin_fall(body: CharacterBody3D, normal: Vector3) -> void:
 	# Re-entrancy: другое падение ещё идёт (tackle-recovery 0.5с короче цепочки падения ~3с) —
 	# корректно завершаем прошлую жертву, иначе она осиротеет с вечным _fall_lock/motor-lock/fallen.
@@ -928,13 +929,13 @@ func _begin_fall(body: CharacterBody3D, normal: Vector3) -> void:
 		else:
 			_abort_fall()
 	var visual := _player_visual(body)
-	if visual == null or not visual.has_method(&"start_ragdoll"):
-		# Фолбэк: нет визуала/ragdoll — просто помечаем fallen на короткое время.
+	if visual == null or not visual.has_method(&"play_oneshot"):
+		# Фолбэк: нет визуала — просто помечаем fallen на короткое время.
 		body.add_to_group("fallen")
 		_fall_player = body
 		_fall_visual = null
 		_fall_state = FallState.GETUP
-		_fall_timer = 0.8
+		_fall_timer = 0.0
 		return
 	body.add_to_group("fallen")
 	_cancel_ball_action(body)
@@ -952,19 +953,17 @@ func _begin_fall(body: CharacterBody3D, normal: Vector3) -> void:
 	var side := _fall_away_dir.cross(Vector3.UP)
 	var facing := -body.global_transform.basis.z
 	_fall_roll_clip = &"roll_left" if side.dot(facing) >= 0.0 else &"roll_right"
+	# Yaw тела: лицом по направлению падения (перекаты/вставание идут отсюда).
+	body.rotation.y = atan2(-_fall_away_dir.x, -_fall_away_dir.z)
 
-	# Импульс сбивания: вдоль подката + вверх.
-	var impulse := _tackle_dir * FootballConstants.RAGDOLL_TACKLE_IMPULSE \
-		+ Vector3.UP * FootballConstants.RAGDOLL_UP_IMPULSE
 	_fall_player = body
 	_fall_visual = visual
-	_fall_hip_prev = visual.ragdoll_hip_position()
-	visual.start_ragdoll(impulse)
-	_fall_state = FallState.RAGDOLL
+	visual.play_oneshot(&"fallen_idle")   # роняем в позу «лежит»
+	_fall_state = FallState.KNOCKDOWN
 	_fall_timer = 0.0
 
 
-## Автомат падения: ragdoll → на живот → 2 переката (от подкатчика) → вставание.
+## Автомат падения: knockdown (лежит + отброс) → 2 переката (от подкатчика) → вставание.
 ## Инвариант: любой выход из этой функции, который завершает/прерывает падение,
 ## обязан пройти через _finish_fall()/_abort_fall(), иначе _fall_visual останется
 ## залочен навсегда (_fall_lock у PlayerVisual снимает только recover()).
@@ -977,26 +976,13 @@ func _process_fall(delta: float) -> void:
 	_fall_timer += delta
 
 	match _fall_state:
-		FallState.RAGDOLL:
-			# Тело XZ ведём за тазом ragdoll.
-			var hip := _fall_visual.ragdoll_hip_position()
-			_fall_player.global_position.x = hip.x
-			_fall_player.global_position.z = hip.z
-			var hip_speed := (hip - _fall_hip_prev).length() / maxf(delta, 0.0001)
-			_fall_hip_prev = hip
-			var settled := hip_speed < FootballConstants.RAGDOLL_SETTLE_SPEED \
-				and _fall_timer >= FootballConstants.RAGDOLL_MIN_DOWN_TIME
-			if settled or _fall_timer >= FootballConstants.RAGDOLL_MAX_DOWN_TIME:
-				# Нормализация: снап тела в XZ таза, yaw «лицом вниз по направлению падения»,
-				# стоп физики и кроссфейд в первый кадр цепочки.
-				_fall_player.global_position.x = hip.x
-				_fall_player.global_position.z = hip.z
-				_fall_player.rotation.y = atan2(-_fall_away_dir.x, -_fall_away_dir.z)
-				_fall_visual.stop_ragdoll()
-				_fall_state = FallState.PRONE_BLEND
-				_fall_timer = 0.0
-		FallState.PRONE_BLEND:
-			if _fall_timer >= FootballConstants.PRONE_BLEND_TIME:
+		FallState.KNOCKDOWN:
+			# Отброс тела в сторону от подкатчика за время KNOCKDOWN_TIME (клип fallen_idle
+			# держит позу «лежит»), затем — первый перекат.
+			var move := _fall_away_dir * (FootballConstants.KNOCKBACK_DISTANCE \
+				/ maxf(FootballConstants.KNOCKDOWN_TIME, 0.0001)) * delta
+			_fall_player.global_position += move
+			if _fall_timer >= FootballConstants.KNOCKDOWN_TIME:
 				_start_roll(FallState.ROLL_1)
 		FallState.ROLL_1:
 			_advance_roll(delta, FallState.ROLL_2)

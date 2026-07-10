@@ -31,8 +31,11 @@ for fname in sorted(os.listdir(src_dir)):
     anim_files[os.path.splitext(fname)[0].lower()] = fname
 
 # Клипы, приехавшие с root motion → морозим ВСЮ трансляцию корневой кости (делаем
-# in-place, включая вертикаль — см. freeze_root_translation). Для уже-in-place клипов
-# это no-op. standing_up НЕ трогаем.
+# in-place, включая вертикаль — см. freeze_root_translation). Все клипы здесь либо
+# УЖЕ лежат (роллы: вертикаль ничтожна), либо вертикаль — артефакт (tackle: Hips
+# паразитно уезжал вверх). Клип падения (fallen_idle) сюда НЕ входит: у него дрейф
+# <1см и так, а морозить вертикаль клипа-падения нельзя — опускание таза к земле это
+# и есть само падение. standing_up тоже не трогаем (его forward-дрейф естественен).
 IN_PLACE_CLIPS = {"tackle", "roll_left", "roll_right"}
 
 def _action_fcurves(act):

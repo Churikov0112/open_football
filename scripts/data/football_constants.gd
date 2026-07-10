@@ -125,18 +125,19 @@ const AI_TACKLE_COOLDOWN := 2.0
 
 
 # ═══════════════════════════════════════════
-#  RAGDOLL TACKLE / GRAVITY (тюнинг-старт)
+#  TACKLE FALL / GRAVITY (тюнинг-старт)
 # ═══════════════════════════════════════════
 
 const GRAVITY := 20.0                 # аркадная гравитация, м/с²
-const RAGDOLL_COLLISION_LAYER := 8    # bit4: физкости ragdoll; маскируют слой пола (BOUNDARY_COLLISION_LAYER=4) — приземляются на пол, не трогая мяч (слой1)/игроков
-const RAGDOLL_TACKLE_IMPULSE := 6.0   # сила сбивающего импульса вдоль подката
-const RAGDOLL_UP_IMPULSE := 2.0       # вертикальная добавка импульса
-const RAGDOLL_SETTLE_SPEED := 0.6     # ниже этой скорости таза (м/с) → ragdoll осел
-const RAGDOLL_MIN_DOWN_TIME := 0.4    # минимум фазы физики, с
-const RAGDOLL_MAX_DOWN_TIME := 1.5    # хард-кап фазы физики, с
-const PRONE_BLEND_TIME := 0.2         # кроссфейд ragdoll→анимация, с
+# Анимационное падение жертвы подката (Path B: физ-ragdoll несовместим с масштабированным
+# Mixamo-скелетом в Godot). Фаза knockdown держит позу «лежит» (fallen_idle) и отбрасывает
+# тело кодом, затем 2 переката и вставание.
+const KNOCKDOWN_TIME := 0.5           # длительность фазы «сбит/лежит» до первого переката, с
+const KNOCKBACK_DISTANCE := 1.0       # отброс тела в сторону от подкатчика за knockdown, м
 const ROLL_DISTANCE := 1.2            # смещение тела за один перекат, м
+# Слой физкостей для дремлющей библиотеки RagdollSkeleton (сейчас в рантайме не строится —
+# оставлено на случай, если ограничение Godot с масштабом скелета будет обойдено).
+const RAGDOLL_COLLISION_LAYER := 8    # bit4: маскирует слой пола (BOUNDARY_COLLISION_LAYER=4)
 
 
 # ═══════════════════════════════════════════
