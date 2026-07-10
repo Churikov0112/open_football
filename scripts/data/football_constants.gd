@@ -189,7 +189,7 @@ const PASS_POWER_CHARGE_MAX := 1.6    # доля силы при полном з
 
 # Авто-наводка.
 const PASS_LEAD_GAIN := 0.25          # упреждение цели по её скорости (сек)
-const PASS_THROUGH_EXTRA_LEAD := 6.0  # доп. вынос точки «на ход» вперёд по скорости цели, м
+const PASS_THROUGH_EXTRA_LEAD := 4.0  # доп. вынос точки «на ход» вперёд по скорости цели, м
 const PASS_DOT_BIAS := 0.15           # штраф за дистанцию в score выбора цели (0 → чистый dot)
 const PASS_MAX_RANGE := 45.0          # дальше цель не рассматривается, м
 
