@@ -815,6 +815,37 @@ func _team_arrays(group: StringName, except_node: Node) -> Dictionary:
 	return {"pos": positions, "vel": velocities, "nodes": nodes}
 
 
+## Геометрия решает «можно ли перехватить»; шанс решает, среагирует ли соперник (не читерски-
+## идеально). Если да — соперник бежит к точке пересечения (визуальный, честный перехват).
+## NOTE: FootballConstants.AI_SPEED (5.0) is legacy/unused elsewhere (see CLAUDE.md's own
+## caveat on it) — the opponent's REAL speed is the `speed` export on simple_ai.gd (8.0 by
+## default). Read it off the node via get(), not the stale constant, or every interception
+## feasibility check will be computed against a speed the opponent doesn't actually have.
+func _maybe_flag_interceptor(from: Vector3, to: Vector3, launch_vel: Vector3) -> void:
+	var ball_speed := Vector3(launch_vel.x, 0.0, launch_vel.z).length()
+	var opps := _team_arrays(&"team_2", null)
+	var opp_pos: PackedVector3Array = opps["pos"]
+	var opp_nodes: Array = opps["nodes"]
+	var best_time := INF
+	var best_i := -1
+	for i in range(opp_pos.size()):
+		var speed_variant: Variant = opp_nodes[i].get(&"speed")
+		var opp_speed: float = speed_variant if speed_variant != null else FootballConstants.AI_SPEED
+		var t := PassSystem.interception_time(from, to, ball_speed, opp_pos[i],
+			opp_speed, FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD)
+		if t < best_time:
+			best_time = t
+			best_i = i
+	if best_i < 0:
+		return
+	if _pass_rng.randf() > FootballConstants.AI_INTERCEPT_CHANCE:
+		return  # соперник «зевнул»
+	var opp: Node3D = opp_nodes[best_i]
+	if opp.has_method(&"begin_intercept"):
+		var point := from + Vector3(launch_vel.x, 0.0, launch_vel.z).normalized() * (best_time * ball_speed)
+		opp.begin_intercept(point)
+
+
 ## Реальная гравитация мяча (RigidBody под движковую гравитацию, НЕ FootballConstants.GRAVITY).
 func _ball_gravity() -> float:
 	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
@@ -862,6 +893,7 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		launch_vel = PassSystem.launch_lob(from, aim_point, params.peak_height, g)
 	else:
 		launch_vel = PassSystem.launch_ground(from, aim_point, params.power)
+	_maybe_flag_interceptor(from, aim_point, launch_vel)
 	# Commit-action: импульс по action_contact, без блокировки мотора (как kick).
 	_action_player = player
 	_action_dir = launch_vel  # для пасов _action_dir несёт готовую скорость (см. _on_action_contact)
