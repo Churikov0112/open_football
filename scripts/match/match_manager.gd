@@ -59,11 +59,15 @@ const KICK_CHARGE_MAX_TIME: float = 0.5
 const KICK_POWER_MIN: float = 12.0
 const KICK_POWER_MAX: float = 25.0
 
+var _pass_rng := RandomNumberGenerator.new()
+var _pending_launch: Vector3 = Vector3.ZERO
+
 func _is_charging() -> bool:
 	return _charge_action != ChargeAction.NONE
 
 
 func _ready() -> void:
+	_pass_rng.randomize()
 	_setup_inputs()
 	_setup_floor()
 	_setup_grass()
@@ -668,6 +672,20 @@ func _handle_player_input(delta: float) -> void:
 	if Input.is_action_just_released(&"kick") and _charge_action == ChargeAction.SHOT and _charge_player == controlled_player:
 		_fire_charge()
 
+	# Пасы: одна кнопка на семейство; combo_modifier в атаке выбирает «спец»-вариант.
+	var combo := Input.is_action_pressed(&"combo_modifier")
+	if _is_near_ball(controlled_player) and _is_our_dribbler(controlled_player):
+		if Input.is_action_just_pressed(&"pass_short"):
+			_start_charge(ChargeAction.PASS_WALL if combo else ChargeAction.PASS_SHORT, controlled_player)
+		elif Input.is_action_just_pressed(&"pass_through"):
+			_start_charge(ChargeAction.PASS_THROUGH_AIR if combo else ChargeAction.PASS_THROUGH, controlled_player)
+		elif Input.is_action_just_pressed(&"pass_lob"):
+			_start_charge(ChargeAction.PASS_LOB, controlled_player)
+	for act in [&"pass_short", &"pass_through", &"pass_lob"]:
+		if Input.is_action_just_released(act) and _is_charging() and _charge_action != ChargeAction.SHOT and _charge_player == controlled_player:
+			_fire_charge()
+			break
+
 
 func _is_near_ball(player_node: Node3D) -> bool:
 	if not ball.has_method(&"kick"):
@@ -731,29 +749,107 @@ func _cancel_charge() -> void:
 	_charge_player = null
 	power_bar.visible = false
 
-func _fire_pass(_action: ChargeAction, _player: CharacterBody3D, _charge_ratio: float) -> void:
-	pass  # реализуется в Task 12
+## Собрать параметры паса по заряжаемому действию. Заряд множит базовую силу.
+func _pass_params(action: ChargeAction, charge_ratio: float) -> PassParams:
+	var p := PassParams.new()
+	var mult := lerpf(FootballConstants.PASS_POWER_CHARGE_MIN, FootballConstants.PASS_POWER_CHARGE_MAX, charge_ratio)
+	match action:
+		ChargeAction.PASS_SHORT:
+			p.power = FootballConstants.PASS_SHORT_POWER * mult
+		ChargeAction.PASS_WALL:
+			p.power = FootballConstants.PASS_SHORT_POWER * mult
+			p.is_wall = true
+		ChargeAction.PASS_THROUGH:
+			p.power = FootballConstants.PASS_THROUGH_POWER * mult
+			p.extra_lead = FootballConstants.PASS_THROUGH_EXTRA_LEAD
+		ChargeAction.PASS_LOB:
+			p.peak_height = FootballConstants.PASS_LOB_PEAK_HEIGHT * mult
+			p.is_air = true
+		ChargeAction.PASS_THROUGH_AIR:
+			p.peak_height = FootballConstants.PASS_THROUGH_AIR_PEAK_HEIGHT * mult
+			p.extra_lead = FootballConstants.PASS_THROUGH_EXTRA_LEAD
+			p.is_air = true
+		_:
+			p.power = FootballConstants.PASS_SHORT_POWER * mult
+	return p
 
 
-func _pass_ball(player_node: CharacterBody3D) -> void:
-	if not ball.has_method(&"kick"):
+## Позиции/скорости/узлы группы в параллельных массивах (индекс общий). Исключает except_node.
+func _team_arrays(group: StringName, except_node: Node) -> Dictionary:
+	var positions := PackedVector3Array()
+	var velocities := PackedVector3Array()
+	var nodes: Array[Node3D] = []
+	for n in get_tree().get_nodes_in_group(group):
+		if n == except_node or not (n is CharacterBody3D) or not is_instance_valid(n):
+			continue
+		positions.append(n.global_position)
+		velocities.append(n.velocity)
+		nodes.append(n)
+	return {"pos": positions, "vel": velocities, "nodes": nodes}
+
+
+## Реальная гравитация мяча (RigidBody под движковую гравитацию, НЕ FootballConstants.GRAVITY).
+func _ball_gravity() -> float:
+	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+	return g * ball.gravity_scale
+
+
+## Выполнить пас: выбрать цель по прицелу, посчитать траекторию, применить импульс через
+## commit-action (как удар), передать управление принимающему сразу.
+func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: float) -> void:
+	if not ball.has_method(&"launch"):
 		return
-	var dist := player_node.global_position.distance_to(ball.global_position)
-	if dist > 2.0:
-		return
-	# Не даём пасу прервать текущее действие kick (pass же идёт на E, не конфликтует)
-	if _action_player != null:
-		return
-	var dir: Vector3 = ball.get_dribble_direction()
-	dir.y = 0.1
-	_action_player = player_node
-	_action_dir = dir
-	_action_power = 12.0
-	_kick_action_active = true  # pass тоже без блокировки мотора, флаг один на оба
-	var visual := _player_visual(player_node)
+	var params := _pass_params(action, charge_ratio)
+	var mates := _team_arrays(&"team_1", player)
+	var mate_pos: PackedVector3Array = mates["pos"]
+	var mate_vel: PackedVector3Array = mates["vel"]
+	var mate_nodes: Array = mates["nodes"]
+	var aim: Vector3 = ball.get_dribble_direction()
+	var idx := PassSystem.select_target(player.global_position, aim, mate_pos, mate_vel,
+		FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
+	# Точка прицела: в ноги (короткий/навес) или на ход (through). Нет цели → по направлению прицела.
+	var from := ball.global_position
+	var aim_point: Vector3
+	var receiver: CharacterBody3D = null
+	var ball_speed := params.power if not params.is_air else FootballConstants.PASS_THROUGH_POWER
+	if idx >= 0:
+		receiver = mate_nodes[idx]
+		if params.extra_lead > 0.0:
+			aim_point = PassSystem.lead_point(mate_pos[idx], mate_vel[idx], from, ball_speed, params.extra_lead)
+		else:
+			aim_point = mate_pos[idx]
+	else:
+		var flat := Vector3(aim.x, 0.0, aim.z).normalized()
+		aim_point = from + flat * 12.0
+	# Разброс точности.
+	var flat_dir := (aim_point - from)
+	flat_dir.y = 0.0
+	var spread := PassSystem.scatter_degrees(FootballConstants.PASS_SPREAD_BASE, FootballConstants.PASS_ASSIST,
+		flat_dir.length(), FootballConstants.PASS_SPREAD_DIST_REF)
+	flat_dir = PassSystem.apply_scatter(flat_dir, spread, _pass_rng)
+	aim_point = from + flat_dir + Vector3(0.0, aim_point.y - from.y, 0.0)
+	# Баллистика.
+	var launch_vel: Vector3
+	if params.is_air:
+		var g := _ball_gravity()
+		launch_vel = PassSystem.launch_lob(from, aim_point, params.peak_height, g)
+	else:
+		launch_vel = PassSystem.launch_ground(from, aim_point, params.power)
+	# Commit-action: импульс по action_contact, без блокировки мотора (как kick).
+	_action_player = player
+	_action_dir = launch_vel  # для пасов _action_dir несёт готовую скорость (см. _on_action_contact)
+	_action_power = -1.0       # маркер «это launch, а не kick»
+	_kick_action_active = true
+	_pending_launch = launch_vel
+	# Передать управление принимающему сразу.
+	if receiver != null:
+		controlled_player = receiver
+		_sync_ai_controllers()
+		_manual_swap_cooldown = 30
+	var visual := _player_visual(player)
 	if visual != null and visual.trigger("pass"):
 		return
-	ball.kick(dir, 12.0)
+	ball.launch(launch_vel)
 	_action_player = null
 	_kick_action_active = false
 
@@ -782,7 +878,11 @@ func _start_ball_action(player_node: CharacterBody3D, dir: Vector3, power: float
 
 ## Момент касания ногой: придать импульс мячу.
 func _on_action_contact(_action: String, player: Node) -> void:
-	if player == _action_player and ball.has_method(&"kick"):
+	if player != _action_player:
+		return
+	if _action_power < 0.0 and ball.has_method(&"launch"):
+		ball.launch(_pending_launch)
+	elif ball.has_method(&"kick"):
 		ball.kick(_action_dir, _action_power)
 
 
