@@ -102,5 +102,17 @@ func _initialize() -> void:
 	if not is_equal_approx(PassSystem.ground_pass_speed(100.0, 1.0, 0.5, 1.4, 4.0, 28.0), 28.0):
 		print("CHECK FAIL: ground_pass_speed max clamp"); ok = false
 
+	# receive_point: мяч летит почти прямо в принимающего → цель == позиция мяча (встречаем на линии).
+	var rp_online := PassSystem.receive_point(Vector3(0, 0, 0), Vector3(0, 0, 10), Vector3(0, 0, -5), 0.2, 0.9)
+	if not rp_online.is_equal_approx(Vector3(0, 0, 10)):
+		print("CHECK FAIL: receive_point on-line → ", rp_online); ok = false
+	# мяч идёт вбок мимо → ведём вперёд по скорости на lead_time.
+	var rp_side := PassSystem.receive_point(Vector3(0, 0, 0), Vector3(0, 0, 10), Vector3(5, 0, 0), 0.2, 0.9)
+	if not rp_side.is_equal_approx(Vector3(1.0, 0, 10)):
+		print("CHECK FAIL: receive_point side lead → ", rp_side); ok = false
+	# нулевая скорость мяча → позиция мяча.
+	if not PassSystem.receive_point(Vector3(0, 0, 0), Vector3(3, 0, 7), Vector3.ZERO, 0.2, 0.9).is_equal_approx(Vector3(3, 0, 7)):
+		print("CHECK FAIL: receive_point zero vel → ball pos"); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)

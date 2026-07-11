@@ -43,6 +43,20 @@ static func lead_point(target_pos: Vector3, target_vel: Vector3, passer_pos: Vec
 	point.y = target_pos.y
 	return point
 
+## Куда бежать принимающему: точка перехвата ПО ХОДУ мяча (ball_pos + ball_vel*lead_time), а НЕ
+## текущая позиция мяча — иначе на медленном мяче принимающий бежит назад к отдавшему («из ноги в
+## ногу»). Спецкейс: если мяч летит почти прямо В или ОТ принимающего (|dot| > on_line_dot),
+## упреждать вбок незачем — встречаем на линии (возвращаем ball_pos). Пустая скорость → ball_pos.
+static func receive_point(receiver_pos: Vector3, ball_pos: Vector3, ball_vel: Vector3,
+		lead_time: float, on_line_dot: float) -> Vector3:
+	var bv := Vector3(ball_vel.x, 0.0, ball_vel.z)
+	if bv.length() < 0.001:
+		return ball_pos
+	var to_ball := Vector3(ball_pos.x - receiver_pos.x, 0.0, ball_pos.z - receiver_pos.z)
+	if to_ball.length() > 0.001 and absf(to_ball.normalized().dot(bv.normalized())) > on_line_dot:
+		return ball_pos
+	return ball_pos + bv * lead_time
+
 ## Низовой пас: плоская скорость к цели, величиной power (м/с).
 static func launch_ground(from: Vector3, to: Vector3, power: float, up: float = 0.0) -> Vector3:
 	var dir := to - from
