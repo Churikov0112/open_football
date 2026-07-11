@@ -12,7 +12,7 @@
 
 - Godot 4.7 / GDScript. Windows-only.
 - **InputMap правится только в `match_manager.gd:_setup_inputs()`** (словарь действий), никогда в `project.godot`.
-- **Наша команда (team_1) атакует −Z** — целевые (чужие) ворота: центр `Vector3(0, 0, -field_length)`, полуширина `FootballConstants.GOAL_WIDTH/2 = 3.66`, высота `FootballConstants.GOAL_HEIGHT = 2.44` (`field_length` = поле match_manager = 52.5).
+- **Целевые (чужие) ворота берутся через гибкий хелпер `_target_goal_center()`, НЕ хардкодом.** Наша команда (team_1) сейчас атакует −Z, но во втором тайме команды меняются воротами — направление атаки должно флипаться в ОДНОМ месте. Хелпер возвращает `Vector3(0, 0, _attack_dir_z * field_length)`, где `_attack_dir_z: float = -1.0` (флипается будущим half-time-свапом). Полуширина `FootballConstants.GOAL_WIDTH/2 = 3.66`, высота `FootballConstants.GOAL_HEIGHT = 2.44` (`field_length` = 52.5). **NOTE:** `teammate_ai.gd`/`simple_ai.gd` тоже хардкодят направление атаки (`Vector3(0,0,-1)`) — их централизация/флип на то же поле — отдельная будущая задача «смена ворот во втором тайме», вне охвата Фазы 1; здесь мы лишь делаем сторону удара готовой к ней.
 - **Удар идёт через commit-action** (как пас): вычисляем ВЕКТОР скорости, кладём в `_pending_launch` (+ `_pending_curl` для кручёного), ставим `_action_power = -1.0` (сентинел launch), импульс — по сигналу `PlayerVisual.action_contact` в `_on_action_contact`. НЕ `ball.kick(dir,power)` — тот остаётся для фолбэка/подката.
 - **`ShotSystem` не читает `FootballConstants`** — все тюнинги параметрами (как `PassSystem`). Тест сидит RNG.
 - Команды валидации (обе):
@@ -357,7 +357,23 @@ const CLEARANCE_POWER := 26.0       # сила выноса, м/с
 const CLEARANCE_LIFT := 6.0         # подъём выноса, м/с
 ```
 
-- [ ] **Step 2: `_fire_shot` и диспатч из `_fire_charge`**
+- [ ] **Step 2: Гибкий источник целевых ворот (`_attack_dir_z` + `_target_goal_center`)**
+
+Добавить поле рядом с `field_length` (~14) и хелпер (рядом с `_ball_gravity`). Это ОДНО место, которое перевернёт будущая «смена ворот во втором тайме»:
+
+```gdscript
+# team_1 атакует −Z в первом тайме; половина флипает знак (будущий half-time-свап).
+var _attack_dir_z: float = -1.0
+```
+
+```gdscript
+## Центр чужих ворот (в которые бьёт наша команда). Гибко — через _attack_dir_z, не хардкод,
+## чтобы смена ворот во втором тайме меняла прицел ударов в одном месте.
+func _target_goal_center() -> Vector3:
+	return Vector3(0.0, 0.0, _attack_dir_z * field_length)
+```
+
+- [ ] **Step 3: `_fire_shot` и диспатч из `_fire_charge`**
 
 В `_fire_charge`, SHOT-ветку (`if action == ChargeAction.SHOT:` … до `else:`) заменить на диспатч в `_fire_shot` для всех трёх ударов:
 
@@ -381,7 +397,7 @@ func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	if not ball.has_method(&"launch"):
 		return
 	var from: Vector3 = ball.global_position
-	var goal_center := Vector3(0.0, 0.0, -field_length)  # чужие ворота (атакуем −Z)
+	var goal_center := _target_goal_center()  # чужие ворота (гибко, флипается на half-time)
 	var half_w: float = FootballConstants.GOAL_WIDTH / 2.0
 	var height: float = FootballConstants.GOAL_HEIGHT
 	var facing: Vector3 = ball.get_dribble_direction()
@@ -421,7 +437,7 @@ func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	_kick_action_active = false
 ```
 
-- [ ] **Step 3: `_pending_curl` поле + launch_curl в `_on_action_contact`**
+- [ ] **Step 4: `_pending_curl` поле + launch_curl в `_on_action_contact`**
 
 Добавить поле рядом с `_pending_launch`:
 
@@ -439,15 +455,15 @@ var _pending_curl: Vector3 = Vector3.ZERO
 			ball.launch(_pending_launch)
 ```
 
-- [ ] **Step 4: Регресс — обе команды + оба check-скрипта**
+- [ ] **Step 5: Регресс — обе команды + оба check-скрипта**
 
 Expected: baseline; `check_shot_system_math.gd` и `check_ball_state.gd` → `CHECK PASS`.
 
-- [ ] **Step 5: Ручная приёмка (прямой удар + вынос)**
+- [ ] **Step 6: Ручная приёмка (прямой удар + вынос)**
 
-Запустить игру. Ожидание: (1) удар от центра к −Z воротам летит В створ, слабый — низом, сильный — выше (на максимуме иногда мимо/через перекладину — разброс/подъём); (2) удар издалека или спиной к воротам = вынос (мощно вдаль по facing, без прицела); (3) удар в плотную стенку блокируется (Фаза 0). Подстроить `SHOT_POWER_*`, `SHOT_SCATTER_BASE`, `SHOT_OVER_LIFT`, `CLEARANCE_ZONE_DIST`.
+Запустить игру. Ожидание: (1) удар от центра к целевым воротам летит В створ, слабый — низом, сильный — выше (на максимуме иногда мимо/через перекладину — разброс/подъём); (2) удар издалека или спиной к воротам = вынос (мощно вдаль по facing, без прицела); (3) удар в плотную стенку блокируется (Фаза 0). Подстроить `SHOT_POWER_*`, `SHOT_SCATTER_BASE`, `SHOT_OVER_LIFT`, `CLEARANCE_ZONE_DIST`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add scripts/data/football_constants.gd scripts/match/match_manager.gd
@@ -591,6 +607,8 @@ git commit -m "chore(shot): remove dead placeholder kick path; finalize Phase 1 
 - Кручёный через Magnus (`launch_curl`, `_curl`) — Задача 5 (физика — Фаза 0). ✓
 - Черпачок = лоб-баллистика — Задача 6 (переиспользует `PassSystem.launch_lob`). ✓
 - Commit-launch (не `kick`), блок стенкой из Фазы 0 — Global Constraints + Задача 4. ✓
+
+**Гибкость под смену ворот (второй тайм):** целевые ворота — через `_target_goal_center()` / `_attack_dir_z`, НЕ хардкод; half-time-свап перевернёт одно поле. `ShotSystem` берёт `goal_center` параметром, поэтому кручёный/прицел/вынос флипаются автоматически. Централизация направления атаки у ИИ (`teammate_ai`/`simple_ai` хардкодят `−Z`) — отдельная будущая задача, вне охвата Фазы 1.
 
 **Отклонения/упрощения:** `curl_side`/`goal_aim_point.side_bias` упрощены до ±1 угла (не плавное смещение по стику) — достаточно для «в ближний угол по facing»; плавное смещение — тюнинг позже, если нужно. Точка прицела считается по `get_dribble_direction()` (facing владельца), т.к. движение камеро-относительное и стик = facing.
 
