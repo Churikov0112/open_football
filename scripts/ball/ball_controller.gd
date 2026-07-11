@@ -73,12 +73,16 @@ func _draw_hexagon(img: Image, cx: float, cy: float, r: float, color: Color) -> 
 					img.set_pixel(x, y, color)
 
 
-func set_dribbler(node: Node3D) -> void:
-	var now := Time.get_ticks_msec()
-	if now - _last_release_time < _release_cooldown_msec:
-		return
-	if node and node == last_kicker and now - _last_kick_time < _kick_cooldown_msec:
-		return
+## force=true — принять мяч немедленно, минуя кулдауны релиза/кикера (для адресата паса:
+## короткий/слабый пас доходит быстрее кулдауна релиза (500мс), иначе приём блокируется и
+## мяч проносит мимо).
+func set_dribbler(node: Node3D, force: bool = false) -> void:
+	if not force:
+		var now := Time.get_ticks_msec()
+		if now - _last_release_time < _release_cooldown_msec:
+			return
+		if node and node == last_kicker and now - _last_kick_time < _kick_cooldown_msec:
+			return
 	dribbler = node
 	_dribbler_prev_pos = node.global_position if node else Vector3.ZERO
 	state = BallState.TRAPPED if node else BallState.OPEN

@@ -670,18 +670,19 @@ func _handle_dribbling() -> void:
 		if dist > FootballConstants.DRIBBLE_KEEP_DIST:
 			ball.release_dribble()
 		return
-	# Быстрый (летящий) мяч не подбираем — он «в полёте», ждём пока замедлится/отскочит.
-	if ball.linear_velocity.length() > FootballConstants.BALL_TRAP_MAX_SPEED:
-		return
-	# Пас летит на _receiver — расширенный радиус подбора именно для него, иначе быстрый
-	# мяч проносит мимо, пока receive-assist ещё довозит игрока на линию мяча.
+	# Адресат паса ловит мяч НЕЗАВИСИМО от скорости (это пас НА него) — иначе быстрый пас в
+	# ноги проносит мимо и приходится разворачиваться. Гейт скорости ниже к нему не применяем.
+	# Приём в широком радиусе; трап тут же выключит коллизию мяча, не дав ему отскочить от капсулы.
 	if _receive_active and is_instance_valid(_receiver):
 		var recv_dist: float = _receiver.global_position.distance_to(ball.global_position)
 		if recv_dist < FootballConstants.PASS_RECEIVE_CATCH_RADIUS:
-			ball.set_dribbler(_receiver)
+			ball.set_dribbler(_receiver, true)  # force: минуем кулдаун релиза (короткий пас доходит <500мс)
 			if _receiver.has_method(&"end_receiving"):
 				_receiver.end_receiving()
 			return
+	# Прочий подбор (бесхозный/остановившийся мяч) — только медленный: быстрый мяч «в полёте».
+	if ball.linear_velocity.length() > FootballConstants.BALL_TRAP_MAX_SPEED:
+		return
 	for p in [player_home, player_teammate, player_away]:
 		if not p or not is_instance_valid(p):
 			continue
