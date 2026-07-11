@@ -52,7 +52,7 @@ var _manual_swap_cooldown: int = 0
 var _kick_action_active: bool = false
 
 # Обобщённый заряд: одно действие заряжается за раз (удар ИЛИ один из пасов).
-enum ChargeAction { NONE, SHOT, PASS_SHORT, PASS_THROUGH, PASS_LOB, PASS_WALL, PASS_THROUGH_AIR }
+enum ChargeAction { NONE, SHOT, SHOT_CURL, SHOT_CHIP, CLEARANCE, PASS_SHORT, PASS_THROUGH, PASS_LOB, PASS_WALL, PASS_THROUGH_AIR }
 var _charge_action: ChargeAction = ChargeAction.NONE
 var _charge_time: float = 0.0
 var _charge_player: CharacterBody3D
@@ -139,6 +139,7 @@ func _setup_inputs() -> void:
 		&"pass_through":    {"keys": [KEY_W],     "buttons": [JOY_BUTTON_Y], "axes": []},
 		&"pass_lob":        {"keys": [KEY_A],     "buttons": [JOY_BUTTON_B], "axes": []},
 		&"combo_modifier":  {"keys": [KEY_Q],     "buttons": [JOY_BUTTON_LEFT_SHOULDER], "axes": []},
+		&"combo_curl":      {"keys": [KEY_E],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 	}
 	for action in actions:
@@ -543,7 +544,8 @@ func _process(delta: float) -> void:
 
 	# Заряд: копим, пока держим кнопку заряжаемого действия.
 	if _is_charging() and _charge_player == controlled_player:
-		var max_time := KICK_CHARGE_MAX_TIME if _charge_action == ChargeAction.SHOT else FootballConstants.PASS_CHARGE_MAX_TIME
+		var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
+		var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
 		_charge_time += get_process_delta_time()
 		if _charge_time >= max_time:
 			_charge_time = max_time
@@ -558,7 +560,7 @@ func _process(delta: float) -> void:
 		_cancel_charge()
 	power_bar.visible = _is_charging() and _charge_player == controlled_player
 
-	var show_target := _is_charging() and _charge_action != ChargeAction.SHOT and _charge_player == controlled_player
+	var show_target := _is_charging() and not (_charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]) and _charge_player == controlled_player
 	if show_target:
 		var mates := _team_arrays(&"team_1", _charge_player)
 		var mate_pos: PackedVector3Array = mates["pos"]
@@ -839,11 +841,18 @@ func _handle_player_input(delta: float) -> void:
 		if _is_charging():
 			pass  # already charging, ignore
 		elif _is_near_ball(controlled_player) and _is_our_dribbler(controlled_player):
-			_start_charge(ChargeAction.SHOT, controlled_player)
+			# E+D → кручёный, Q+D → черпачок, иначе прямой удар (контекст удар/вынос решается в _fire_shot).
+			var shot_action := ChargeAction.SHOT
+			if Input.is_action_pressed(&"combo_curl"):
+				shot_action = ChargeAction.SHOT_CURL
+			elif Input.is_action_pressed(&"combo_modifier"):
+				shot_action = ChargeAction.SHOT_CHIP
+			_start_charge(shot_action, controlled_player)
 		else:
 			_try_tackle(controlled_player)
 
-	if Input.is_action_just_released(&"kick") and _charge_action == ChargeAction.SHOT and _charge_player == controlled_player:
+	if Input.is_action_just_released(&"kick") and _charge_player == controlled_player \
+			and _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
 		_fire_charge()
 
 	# Пасы: одна кнопка на семейство; combo_modifier в атаке выбирает «спец»-вариант.
@@ -892,7 +901,7 @@ func _fire_charge() -> void:
 		return
 	var action := _charge_action
 	var player := _charge_player
-	if action == ChargeAction.SHOT:
+	if action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
 		var ratio := clampf(_charge_time / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
 		var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
 		var dir: Vector3 = ball.get_dribble_direction()
