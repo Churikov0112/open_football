@@ -622,7 +622,8 @@ func _process(delta: float) -> void:
 				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
 	elif _is_charging():
 		_cancel_charge()
-	power_bar.visible = _is_charging() and _charge_player == controlled_player
+	power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
+		or (_is_queued() and _queue_player == controlled_player)
 
 	var show_target := _is_charging() and not (_charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]) and _charge_player == controlled_player
 	if show_target:
@@ -644,6 +645,10 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
+	if _try_fire_queue():
+		_handle_player_input(delta)
+		return
 	_handle_dribbling()
 	_handle_player_input(delta)
 
@@ -1145,6 +1150,48 @@ func _clear_queue() -> void:
 	_queue_player = null
 	_queue_ratio = 0.0
 	_queue_timer = 0.0
+
+## Если отложенное действие в очереди и игрок дотянулся до мяча — бьём в одно касание.
+## Прицел по facing тела игрока СЕЙЧАС (он ещё не дриблер), сила = заряд + скорость влёта мяча.
+## Возвращает true, если в этом кадре выстрелили (тогда обычный трап/дриблинг пропускаем).
+func _try_fire_queue() -> bool:
+	if not _is_queued():
+		return false
+	if _queue_player == null or not is_instance_valid(_queue_player):
+		_clear_queue()
+		return false
+	var d: float = _queue_player.global_position.distance_to(ball.global_position)
+	if d > FootballConstants.QUEUE_REACH_RADIUS:
+		return false  # ещё не дотянулся — ждём (авто-подбегание ведёт игрока к мячу)
+	# «Добрался ПЕРВЫМ»: не бьём, если соперник СТРОГО ближе к мячу (спорный мяч он выиграл или
+	# вот-вот затрапит → тогда сработает отмена taken_by_other). Так одно касание проходит только
+	# при честной победе в борьбе; иначе ждём/сбрасываемся. Соперники — группа "team_2".
+	for opp in get_tree().get_nodes_in_group("team_2"):
+		if opp is Node3D and is_instance_valid(opp) \
+				and (opp as Node3D).global_position.distance_to(ball.global_position) < d:
+			return false
+	# Дотянулся первым: диспатчим в одно касание.
+	var action := _queued_action
+	var player := _queue_player
+	var base_ratio := _queue_ratio
+	# Всё ещё держим кнопку в момент касания → бьём на ТЕКУЩЕМ заряде (не на зафиксированном).
+	if _is_charging() and _charge_player == player and _charge_action == action:
+		var is_shot: bool = action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
+		var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
+		base_ratio = clampf(_charge_time / max_time, 0.0, 1.0)
+		_cancel_charge()
+	var incoming_speed: float = ball.linear_velocity.length()
+	var eff_ratio := ShotSystem.one_touch_ratio(base_ratio, incoming_speed, FootballConstants.QUEUE_BALL_SPEED_GAIN)
+	var facing: Vector3 = -player.global_transform.basis.z
+	facing.y = 0.0
+	if facing.length_squared() < 0.0001:
+		facing = Vector3.FORWARD
+	_clear_queue()
+	if action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
+		_fire_shot(action, player, eff_ratio, facing.normalized())
+	else:
+		_fire_pass(action, player, eff_ratio, facing.normalized())
+	return true
 
 ## Собрать параметры паса по заряжаемому действию. Заряд множит базовую силу.
 func _pass_params(action: ChargeAction, charge_ratio: float) -> PassParams:
