@@ -43,6 +43,16 @@ func _motor() -> PlayerMotor:
 func _base_scale() -> float:
 	return speed / FootballConstants.LOCO_TOP_SPEED
 
+## Направление атаки нашей команды (team_1 атакует −Z в 1-м тайме). Одно место — готово к
+## half-time-свапу (полная централизация на менеджерский _attack_dir_z — отдельная задача).
+func _attack_dir() -> Vector3:
+	return Vector3(0, 0, -1)
+
+## Владеет ли мячом НАША команда (кто-то из team_1 — дриблер): тогда предлагаем себя под пас,
+## а не бежим в мяч.
+func _team_has_ball() -> bool:
+	return ball.has_method(&"set_dribbler") and ball.dribbler != null and ball.dribbler.is_in_group("team_1")
+
 
 func _physics_process(delta: float) -> void:
 	if not ball or not is_instance_valid(ball):
@@ -58,7 +68,7 @@ func _physics_process(delta: float) -> void:
 			remove_from_group("giving_run")
 			_role = Role.SUPPORT
 		else:
-			var attack := Vector3(0, 0, -1)  # атакуем к −Z
+			var attack := _attack_dir()  # атакуем к −Z (через хелпер — готово к half-time)
 			var target := global_position + attack * FootballConstants.PASS_WALL_RUN_FORWARD \
 				+ Vector3(_gng_lateral_sign * FootballConstants.PASS_WALL_RUN_LATERAL, 0, 0)
 			target.x = clamp(target.x, -field_width + 4, field_width - 4)
@@ -75,25 +85,27 @@ func _physics_process(delta: float) -> void:
 	if controlled_player == self:
 		return
 
-	var has_dribbler: bool = ball.has_method(&"set_dribbler") and ball.dribbler
-
 	match _role:
 		Role.RECEIVING:
 			_move_to_receive(delta)
 			return
 		_:
-			if has_dribbler and ball.dribbler == controlled_player:
+			# Наша команда владеет мячом → предлагаем себя под пас (позиция поддержки), НЕ бежим в
+			# мяч. К мячу идём только когда он ничейный/в борьбе (никто из наших не владеет).
+			if _team_has_ball():
 				_position_for_pass(delta)
 			else:
 				_chase_ball(delta)
 
 
 func _position_for_pass(delta: float) -> void:
-	var carrier_pos := controlled_player.global_position
-	# Position ahead of the carrier at a good passing distance (~10m)
-	# and slightly to the side, alternating based on field position
+	# Носитель — фактический дриблер нашей команды (человек или второй игрок), не обязательно
+	# управляемый. Встаём впереди носителя по атаке + сбоку на пас-дистанции — предлагаем себя
+	# (сам оффсет и есть расстановка: не липнем к носителю).
+	var carrier: Node3D = ball.dribbler if _team_has_ball() else controlled_player
+	var carrier_pos := carrier.global_position
 	var side_sign := 1.0 if carrier_pos.x < 0 else -1.0
-	var target := carrier_pos + Vector3(0, 0, -10.0) + Vector3(side_sign * 6.0, 0, 0)
+	var target := carrier_pos + _attack_dir() * 10.0 + Vector3(side_sign * 6.0, 0, 0)
 
 	target.x = clamp(target.x, -field_width + 4, field_width - 4)
 	target.z = clamp(target.z, -field_length + 4, field_length - 4)
