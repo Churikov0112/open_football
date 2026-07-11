@@ -299,8 +299,11 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 		if state == BallState.FLIGHT:
 			# Magnus: боковой (через left = vel×UP) + подъёмный импульс, с затуханием — дуга
 			# кручёного удара, живёт поверх обычной баллистики и переживает отскоки.
+			# ТОЛЬКО в воздухе: на газоне (мяч у земли) кручение не заносит — иначе при слабом
+			# затухании (_curl держится долго) мяч «крутит» катясь по полю.
 			var horiz := Vector3(vel.x, 0.0, vel.z)
-			if _curl.length_squared() > 0.0001 and horiz.length() > 0.5:
+			var airborne := state_body.transform.origin.y > FootballConstants.BALL_RADIUS + 0.15
+			if airborne and _curl.length_squared() > 0.0001 and horiz.length() > 0.5:
 				var left := horiz.normalized().cross(Vector3.UP)
 				vel += (left * _curl.z + Vector3.UP * _curl.y) * state_body.step * FootballConstants.MAGNUS_FORCE
 				_curl *= FootballConstants.MAGNUS_DECAY

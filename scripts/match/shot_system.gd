@@ -19,14 +19,27 @@ static func wants_clearance(shooter_pos: Vector3, goal_center: Vector3, facing: 
 ## Точка прицела в створе. side_bias/charge задают угол/высоту, потом разброс scatter_m (RNG).
 ## Заряд поднимает точку (сильный удар выше — риск через перекладину на over_lift метров).
 static func goal_aim_point(goal_center: Vector3, half_width: float, height: float,
-		side_bias: float, charge_ratio: float, over_lift: float, scatter_m: float,
+		side_bias: float, charge_ratio: float, aim_y_min: float, over_lift: float, scatter_m: float,
 		rng: RandomNumberGenerator) -> Vector3:
 	var cr := clampf(charge_ratio, 0.0, 1.0)
 	var x := goal_center.x + clampf(side_bias, -1.0, 1.0) * half_width
-	var y := lerpf(0.25, height + over_lift, cr)
+	var y := lerpf(aim_y_min, height + over_lift, cr)
 	x += rng.randf_range(-scatter_m, scatter_m)
 	y += rng.randf_range(-scatter_m * 0.6, scatter_m * 0.6)
 	return Vector3(x, maxf(y, 0.05), goal_center.z)
+
+## Помощь при ударе («магнит к воротам»): мягко притягивает точку прицела ВНУТРЬ рамы створа
+## на долю assist (0 — без помощи, промах возможен; 1 — всегда в раму). margin — насколько
+## внутрь от штанг/перекладины держать цель. Гасит разброс, уводящий мимо ворот.
+static func goal_assist(aim: Vector3, goal_center: Vector3, half_width: float, height: float,
+		assist: float, margin: float) -> Vector3:
+	var a := clampf(assist, 0.0, 1.0)
+	if a <= 0.0:
+		return aim
+	var hw := maxf(half_width - margin, 0.0)
+	var on_x := clampf(aim.x, goal_center.x - hw, goal_center.x + hw)
+	var on_y := clampf(aim.y, margin, maxf(height - margin, margin))
+	return Vector3(lerpf(aim.x, on_x, a), lerpf(aim.y, on_y, a), aim.z)
 
 ## Баллистическая стартовая скорость: горизонталь = horizontal_speed, попадает в точку to
 ## (по высоте — через компенсацию гравитации за время полёта). Общая для bullet и curl.
@@ -40,8 +53,9 @@ static func ballistic_to(from: Vector3, to: Vector3, horizontal_speed: float, gr
 	var vy := (to.y - from.y) / t + 0.5 * gravity * t
 	return flat.normalized() * hs + Vector3.UP * vy
 
-## Знак кручения: в какую сторону от прямой «на центр ворот» смотрит игрок — в тот угол крутим.
-## +1 / -1 (знак подбирается тюнингом живьём — см. ручную приёмку).
+## Знак НАПРАВЛЕНИЯ ЗАКРУТКИ (Magnus), задаёт форму дуги — подтверждён живьём как правильный.
+## ВАЖНО: прицел удара НЕ должен зеркалиться этим знаком (иначе дуга уходит не туда). Прицел
+## считается отдельно (см. _fire_shot: целимся так, чтобы ЭТА дуга занесла мяч в дальний угол).
 static func curl_side(shooter_pos: Vector3, goal_center: Vector3, facing: Vector3) -> float:
 	var straight := goal_center - shooter_pos
 	straight.y = 0.0

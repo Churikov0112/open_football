@@ -67,6 +67,11 @@ var _pass_rng := RandomNumberGenerator.new()
 var _pending_launch: Vector3 = Vector3.ZERO
 var _pending_curl: Vector3 = Vector3.ZERO
 
+# DEBUG: цветной след за мячом (траектория удара)
+var _trail: MeshInstance3D
+var _trail_mesh: ImmediateMesh
+var _trail_points: PackedVector3Array = PackedVector3Array()
+
 # Receive-assist: пока летит пас, слегка подруливаем ввод человека-адресата к мячу.
 var _receive_active: bool = false
 var _receiver: CharacterBody3D
@@ -106,6 +111,46 @@ func _ready() -> void:
 	_setup_target_indicator()
 	_setup_tackle_area()
 	_setup_power_bar()
+	_setup_ball_trail()
+
+
+## DEBUG: линия-след за мячом. MeshInstance3D + ImmediateMesh, перестраивается каждый кадр
+## из истории позиций мяча. Цвет: свежая часть яркая, хвост затухает. Выкл через DEBUG_BALL_TRAIL.
+func _setup_ball_trail() -> void:
+	if not FootballConstants.DEBUG_BALL_TRAIL:
+		return
+	_trail_mesh = ImmediateMesh.new()
+	_trail = MeshInstance3D.new()
+	_trail.mesh = _trail_mesh
+	_trail.name = "BallTrail"
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.no_depth_test = true  # линия видна поверх газона/мяча
+	_trail.material_override = mat
+	add_child(_trail)
+
+
+## Дописать текущую позицию мяча в историю и перестроить линию. Свежая часть яркая, хвост
+## затухает по alpha; цвет: оранжевый пока мяч в полёте (удар/пас), иначе циан.
+func _update_ball_trail(ball_pos: Vector3) -> void:
+	_trail_points.push_back(ball_pos)
+	var max_pts: int = FootballConstants.DEBUG_BALL_TRAIL_POINTS
+	while _trail_points.size() > max_pts:
+		_trail_points.remove_at(0)
+	_trail_mesh.clear_surfaces()
+	var n := _trail_points.size()
+	if n < 2:
+		return
+	var in_flight: bool = ball.has_method(&"is_flight") and ball.is_flight()
+	var base := Color(1.0, 0.5, 0.0) if in_flight else Color(0.1, 0.9, 1.0)
+	_trail_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	for i in range(n):
+		var t := float(i) / float(n - 1)  # 0 = хвост (старое), 1 = голова (свежее)
+		_trail_mesh.surface_set_color(Color(base.r, base.g, base.b, t))
+		_trail_mesh.surface_add_vertex(_trail_points[i])
+	_trail_mesh.surface_end()
 
 
 func _setup_power_bar() -> void:
@@ -543,6 +588,9 @@ func _process(delta: float) -> void:
 	)
 	camera_pivot.look_at(Vector3(0, 0, ball_pos.z), Vector3.UP)
 
+	if _trail != null:
+		_update_ball_trail(ball_pos)
+
 	if controlled_player_indicator and controlled_player:
 		controlled_player_indicator.global_position = controlled_player.global_position + Vector3(0, 2.2, 0)
 
@@ -929,32 +977,56 @@ func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	var launch_vel: Vector3
 	var curl := Vector3.ZERO
 
-	if ShotSystem.wants_clearance(from, goal_center, facing,
+	# На ЧУЖОЙ половине (сторона атакующих ворот) — всегда удар по воротам, без выноса.
+	# Вынос допустим только на своей половине. Половина определяется через _attack_dir_z
+	# (тот же флип, что и целевые ворота — half-time-свап согласован).
+	var on_attacking_half: bool = from.z * _attack_dir_z > 0.0
+	if (not on_attacking_half) and ShotSystem.wants_clearance(from, goal_center, facing,
 			FootballConstants.CLEARANCE_ZONE_DIST, FootballConstants.CLEARANCE_FACING_DOT):
 		# ВЫНОС: мощно по facing вдаль, без прицела в створ.
 		var power := lerpf(FootballConstants.CLEARANCE_POWER, FootballConstants.CLEARANCE_POWER * 1.2, charge_ratio)
 		launch_vel = ShotSystem.clearance_velocity(facing, power, FootballConstants.CLEARANCE_LIFT)
 	else:
 		# УДАР: прицел в створ (гибрид: авто-цель + смещение по facing + разброс).
-		var side_bias := ShotSystem.curl_side(from, goal_center, facing)  # знак угла по facing (±1)
+		# curl_side даёт сторону стика; прицел (прямой/черпачок) — в ДАЛЬНИЙ угол (куда стик),
+		# по тому же принципу, что и кручёный, только без Magnus. Поэтому side_bias = -curl_side.
+		var side_bias := -ShotSystem.curl_side(from, goal_center, facing)
 		var dist := Vector3(goal_center.x - from.x, 0.0, goal_center.z - from.z).length()
 		var scatter := ShotSystem.scatter_meters(FootballConstants.SHOT_SCATTER_BASE, charge_ratio,
 			dist, FootballConstants.SHOT_SCATTER_DIST_REF)
 		var aim := ShotSystem.goal_aim_point(goal_center, half_w, height, side_bias, charge_ratio,
-			FootballConstants.SHOT_OVER_LIFT, scatter, _pass_rng)
+			FootballConstants.SHOT_AIM_Y_MIN, FootballConstants.SHOT_OVER_LIFT, scatter, _pass_rng)
+		# Помощь при ударе: мягкий магнит прицела внутрь рамы (гасит разброс мимо ворот).
+		aim = ShotSystem.goal_assist(aim, goal_center, half_w, height,
+			FootballConstants.SHOT_ASSIST, FootballConstants.SHOT_ASSIST_MARGIN)
 		if action == ChargeAction.SHOT_CHIP:
-			# Черпачок: перекидывающая парабола к точке прицела (высота по заряду).
+			# Черпачок: перекидывающая парабола в СТОРОНУ ворот (с учётом угла прицела), но заряд
+			# задаёт И высоту дуги, И дальность приземления. Слабый — роняет близко, сильный —
+			# далеко перекидывает; точным зарядом попадаешь в ворота.
 			var peak := lerpf(FootballConstants.CHIP_PEAK_MIN, FootballConstants.CHIP_PEAK_MAX, charge_ratio)
-			launch_vel = PassSystem.launch_lob(from, aim, peak, g)
+			var chip_dist := lerpf(FootballConstants.CHIP_DIST_MIN, FootballConstants.CHIP_DIST_MAX, charge_ratio)
+			var chip_dir := Vector3(aim.x - from.x, 0.0, aim.z - from.z)
+			if chip_dir.length() < 0.001:
+				chip_dir = Vector3(facing.x, 0.0, facing.z)
+			chip_dir = chip_dir.normalized()
+			var chip_target := Vector3(from.x + chip_dir.x * chip_dist, from.y, from.z + chip_dir.z * chip_dist)
+			launch_vel = PassSystem.launch_lob(from, chip_target, peak, g)
 		else:
 			# Прямой и кручёный: настильная баллистика в точку прицела.
 			var power := lerpf(FootballConstants.SHOT_POWER_MIN, FootballConstants.SHOT_POWER_MAX, charge_ratio)
-			launch_vel = ShotSystem.ballistic_to(from, aim, power, g)
 			if action == ChargeAction.SHOT_CURL:
-				# Кручёный: боковой Magnus в сторону угла, ближнего к facing.
+				# Кручёный «в дальнюю девятку». Закрутка (curl_side) гнёт мяч в сторону −side —
+				# это ПРАВИЛЬНАЯ дуга. Прицел РАЗВЯЗАН от закрутки: целимся так, чтобы эта дуга
+				# занесла мяч в ДАЛЬНИЙ угол (на −side): при слабом заряде почти прямо в угол, при
+				# сильном — короче (aim смещён на +side на CURL_AIM_OUT), закрутка добьёт в угол.
 				var side := ShotSystem.curl_side(from, goal_center, facing)
+				var far_corner_x: float = goal_center.x - side * half_w
+				aim.x = far_corner_x + side * FootballConstants.CURL_AIM_OUT * charge_ratio
+				launch_vel = ShotSystem.ballistic_to(from, aim, power, g)
 				var strength := lerpf(FootballConstants.CURL_STRENGTH_MIN, FootballConstants.CURL_STRENGTH_MAX, charge_ratio)
 				curl = ShotSystem.curl_vector(side, strength, FootballConstants.CURL_LIFT)
+			else:
+				launch_vel = ShotSystem.ballistic_to(from, aim, power, g)
 
 	# Commit-action: импульс по action_contact, launch-путь (сентинел _action_power = -1).
 	_action_player = player

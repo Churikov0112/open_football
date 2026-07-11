@@ -16,13 +16,22 @@ func _initialize() -> void:
 	# goal_aim_point: side_bias +1 → x у правой штанги; заряд выше → y выше. RNG сидирован.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 42
-	var pr := ShotSystem.goal_aim_point(Vector3(0,0,-52.5), 3.66, 2.44, 1.0, 0.2, 0.0, 0.0, rng)
+	var pr := ShotSystem.goal_aim_point(Vector3(0,0,-52.5), 3.66, 2.44, 1.0, 0.2, 0.25, 0.0, 0.0, rng)
 	ok = _expect(pr.x > 3.0 and pr.z == -52.5, "side_bias +1 → правый угол створа") and ok
-	var pl := ShotSystem.goal_aim_point(Vector3(0,0,-52.5), 3.66, 2.44, -1.0, 0.2, 0.0, 0.0, rng)
+	var pl := ShotSystem.goal_aim_point(Vector3(0,0,-52.5), 3.66, 2.44, -1.0, 0.2, 0.25, 0.0, 0.0, rng)
 	ok = _expect(pl.x < -3.0, "side_bias -1 → левый угол") and ok
-	var low := ShotSystem.goal_aim_point(Vector3(0,0,-52.5), 3.66, 2.44, 0.0, 0.0, 0.0, 0.0, rng)
-	var high := ShotSystem.goal_aim_point(Vector3(0,0,-52.5), 3.66, 2.44, 0.0, 1.0, 0.0, 0.0, rng)
+	var low := ShotSystem.goal_aim_point(Vector3(0,0,-52.5), 3.66, 2.44, 0.0, 0.0, 0.25, 0.0, 0.0, rng)
+	var high := ShotSystem.goal_aim_point(Vector3(0,0,-52.5), 3.66, 2.44, 0.0, 1.0, 0.25, 0.0, 0.0, rng)
 	ok = _expect(high.y > low.y, "больше заряд → выше точка") and ok
+
+	# goal_assist: assist=0 → без изменений; assist=1 → широкий прицел зажат в раму; частично → тянет внутрь.
+	var wide := Vector3(10.0, 5.0, -52.5)  # заведомо мимо (x за штангой, y над перекладиной)
+	var a0 := ShotSystem.goal_assist(wide, Vector3(0,0,-52.5), 3.66, 2.44, 0.0, 0.4)
+	ok = _expect(a0 == wide, "assist=0 → прицел не меняется") and ok
+	var a1 := ShotSystem.goal_assist(wide, Vector3(0,0,-52.5), 3.66, 2.44, 1.0, 0.4)
+	ok = _expect(a1.x <= 3.66 - 0.4 + 0.001 and a1.y <= 2.44 - 0.4 + 0.001, "assist=1 → зажат в раму") and ok
+	var ah := ShotSystem.goal_assist(wide, Vector3(0,0,-52.5), 3.66, 2.44, 0.5, 0.4)
+	ok = _expect(ah.x < wide.x and ah.x > a1.x, "assist=0.5 → тянет внутрь, но не до конца") and ok
 
 	# ballistic_to: с возвращённой скоростью мяч в точке to в момент t (по геометрии).
 	var from := Vector3(0, 0.11, 0)
