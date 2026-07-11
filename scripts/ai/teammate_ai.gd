@@ -110,8 +110,8 @@ func _move_to_receive(delta: float) -> void:
 	if _pass_lead > 0.0:
 		target = global_position + _pass_dir.normalized() * _pass_lead
 	else:
-		var predicted := ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW
-		target = predicted
+		target = PassSystem.receive_point(global_position, ball.global_position, ball.linear_velocity,
+			FootballConstants.PASS_RECEIVE_LEAD_TIME, FootballConstants.PASS_RECEIVE_ONLINE_DOT)
 	target.y = global_position.y
 	var dir := (target - global_position)
 	dir.y = 0.0

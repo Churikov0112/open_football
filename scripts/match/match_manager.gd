@@ -820,7 +820,9 @@ func _handle_player_input(delta: float) -> void:
 	# стик уже переориентирован для нового игрока сразу после хендоффа (обычно он ещё держит
 	# направление ПРЕЖНЕГО игрока), поэтому больше не "уважаем" отклонённый стик как dummy-run.
 	if _receive_active and controlled_player == _receiver and is_instance_valid(ball):
-		var db := (ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW) - controlled_player.global_position
+		var rp := PassSystem.receive_point(controlled_player.global_position, ball.global_position,
+			ball.linear_velocity, FootballConstants.PASS_RECEIVE_LEAD_TIME, FootballConstants.PASS_RECEIVE_ONLINE_DOT)
+		var db := rp - controlled_player.global_position
 		db.y = 0.0
 		if db.length() > 0.01:
 			dir = db.normalized()
