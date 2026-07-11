@@ -13,6 +13,9 @@ var player_teammate: CharacterBody3D
 var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
+# team_1 атакует −Z в первом тайме; половина флипает знак (будущий half-time-свап).
+# ОДНО место, задающее сторону чужих ворот для прицела ударов — см. _target_goal_center().
+var _attack_dir_z: float = -1.0
 var controlled_player_indicator: MeshInstance3D
 var _target_indicator: MeshInstance3D
 
@@ -62,6 +65,7 @@ const KICK_POWER_MAX: float = 34.0
 
 var _pass_rng := RandomNumberGenerator.new()
 var _pending_launch: Vector3 = Vector3.ZERO
+var _pending_curl: Vector3 = Vector3.ZERO
 
 # Receive-assist: пока летит пас, слегка подруливаем ввод человека-адресата к мячу.
 var _receive_active: bool = false
@@ -903,28 +907,72 @@ func _fire_charge() -> void:
 	var player := _charge_player
 	if action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
 		var ratio := clampf(_charge_time / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
-		var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
-		var dir: Vector3 = ball.get_dribble_direction()
-		dir.y = lerpf(0.02, 0.15, ratio)  # настильно: слабый удар почти по земле, сильный — лёгкий подъём
 		_cancel_charge()
-
-		# Подключаемся к commit-action системе, но БЕЗ блокировки мотора.
-		# ball.kick() будет вызван из _on_action_contact по сигналу анимации.
-		_action_player = player
-		_action_dir = dir
-		_action_power = power
-		_kick_action_active = true
-		var visual := _player_visual(player)
-		if visual != null and visual.trigger("kick"):
-			return  # ждём action_contact
-		# Фолбэк без анимации: бьём сразу
-		ball.kick(dir, power)
-		_action_player = null
-		_kick_action_active = false
+		_fire_shot(action, player, ratio)
 	else:
 		var charge_ratio := clampf(_charge_time / FootballConstants.PASS_CHARGE_MAX_TIME, 0.0, 1.0)
 		_cancel_charge()
 		_fire_pass(action, player, charge_ratio)
+
+
+## Удар: контекст решает удар в ворота vs вынос; тип (прямой/кручёный/черпачок) — по action.
+## Импульс — через commit-action (ball.launch / launch_curl по action_contact), как у паса.
+func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: float) -> void:
+	if not ball.has_method(&"launch"):
+		return
+	var from: Vector3 = ball.global_position
+	var goal_center := _target_goal_center()  # чужие ворота (гибко, флипается на half-time)
+	var half_w: float = FootballConstants.GOAL_WIDTH / 2.0
+	var height: float = FootballConstants.GOAL_HEIGHT
+	var facing: Vector3 = ball.get_dribble_direction()
+	var g := _ball_gravity()
+	var launch_vel: Vector3
+	var curl := Vector3.ZERO
+
+	if ShotSystem.wants_clearance(from, goal_center, facing,
+			FootballConstants.CLEARANCE_ZONE_DIST, FootballConstants.CLEARANCE_FACING_DOT):
+		# ВЫНОС: мощно по facing вдаль, без прицела в створ.
+		var power := lerpf(FootballConstants.CLEARANCE_POWER, FootballConstants.CLEARANCE_POWER * 1.2, charge_ratio)
+		launch_vel = ShotSystem.clearance_velocity(facing, power, FootballConstants.CLEARANCE_LIFT)
+	else:
+		# УДАР: прицел в створ (гибрид: авто-цель + смещение по facing + разброс).
+		var side_bias := ShotSystem.curl_side(from, goal_center, facing)  # знак угла по facing (±1)
+		var dist := Vector3(goal_center.x - from.x, 0.0, goal_center.z - from.z).length()
+		var scatter := ShotSystem.scatter_meters(FootballConstants.SHOT_SCATTER_BASE, charge_ratio,
+			dist, FootballConstants.SHOT_SCATTER_DIST_REF)
+		var aim := ShotSystem.goal_aim_point(goal_center, half_w, height, side_bias, charge_ratio,
+			FootballConstants.SHOT_OVER_LIFT, scatter, _pass_rng)
+		if action == ChargeAction.SHOT_CHIP:
+			# Черпачок: перекидывающая парабола к точке прицела (высота по заряду).
+			var peak := lerpf(FootballConstants.CHIP_PEAK_MIN, FootballConstants.CHIP_PEAK_MAX, charge_ratio)
+			launch_vel = PassSystem.launch_lob(from, aim, peak, g)
+		else:
+			# Прямой и кручёный: настильная баллистика в точку прицела.
+			var power := lerpf(FootballConstants.SHOT_POWER_MIN, FootballConstants.SHOT_POWER_MAX, charge_ratio)
+			launch_vel = ShotSystem.ballistic_to(from, aim, power, g)
+			if action == ChargeAction.SHOT_CURL:
+				# Кручёный: боковой Magnus в сторону угла, ближнего к facing.
+				var side := ShotSystem.curl_side(from, goal_center, facing)
+				var strength := lerpf(FootballConstants.CURL_STRENGTH_MIN, FootballConstants.CURL_STRENGTH_MAX, charge_ratio)
+				curl = ShotSystem.curl_vector(side, strength, FootballConstants.CURL_LIFT)
+
+	# Commit-action: импульс по action_contact, launch-путь (сентинел _action_power = -1).
+	_action_player = player
+	_action_dir = launch_vel
+	_action_power = -1.0
+	_kick_action_active = true
+	_pending_launch = launch_vel
+	_pending_curl = curl
+	var visual := _player_visual(player)
+	if visual != null and visual.trigger("kick"):
+		return  # ждём action_contact
+	# Фолбэк без анимации: бьём сразу
+	if curl.length_squared() > 0.0001 and ball.has_method(&"launch_curl"):
+		ball.launch_curl(launch_vel, curl)
+	else:
+		ball.launch(launch_vel)
+	_action_player = null
+	_kick_action_active = false
 
 func _cancel_charge() -> void:
 	_charge_action = ChargeAction.NONE
@@ -1006,6 +1054,12 @@ func _ball_gravity() -> float:
 	return g * ball.gravity_scale
 
 
+## Центр чужих ворот (в которые бьёт наша команда). Гибко — через _attack_dir_z, не хардкод,
+## чтобы смена ворот во втором тайме меняла прицел ударов в одном месте.
+func _target_goal_center() -> Vector3:
+	return Vector3(0.0, 0.0, _attack_dir_z * field_length)
+
+
 ## Выполнить пас: выбрать цель по прицелу, посчитать траекторию, применить импульс через
 ## commit-action (как удар), передать управление принимающему сразу.
 func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: float) -> void:
@@ -1058,6 +1112,7 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	_action_power = -1.0       # маркер «это launch, а не kick»
 	_kick_action_active = true
 	_pending_launch = launch_vel
+	_pending_curl = Vector3.ZERO  # пас не крутится (сброс остаточного curl от прошлого кручёного удара)
 	# Передать управление принимающему сразу.
 	if receiver != null:
 		controlled_player = receiver
@@ -1133,7 +1188,10 @@ func _on_action_contact(_action: String, player: Node) -> void:
 				and facing.normalized().dot(to_ball.normalized()) < -0.2:
 			return  # мяч за спиной — удар/пас не производим
 	if _action_power < 0.0 and ball.has_method(&"launch"):
-		ball.launch(_pending_launch)
+		if _pending_curl.length_squared() > 0.0001 and ball.has_method(&"launch_curl"):
+			ball.launch_curl(_pending_launch, _pending_curl)
+		else:
+			ball.launch(_pending_launch)
 	elif ball.has_method(&"kick"):
 		ball.kick(_action_dir, _action_power)
 
