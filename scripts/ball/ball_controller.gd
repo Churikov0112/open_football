@@ -134,6 +134,22 @@ func player() -> Node3D:
 	return dribbler
 
 
+## Мяч сейчас в полёте (после удара/паса)? Нейтральный предикат без доступа к enum извне.
+func is_flight() -> bool:
+	return state == BallState.FLIGHT
+
+
+## Блок в полёте: контакт летящего мяча с игроком гасит скорость, сбрасывает кручение и роняет
+## мяч в OPEN (коллизия с игроками выключается). Дальше — обычная борьба за подбор. Хук под
+## вратарский сейв — отдельная SaveArea в будущем; пока обычный блок.
+func block_in_flight() -> void:
+	linear_velocity *= 0.25
+	angular_velocity = Vector3.ZERO
+	_curl = Vector3.ZERO
+	state = BallState.OPEN
+	_set_player_collision(false)
+
+
 ## Слой игроков в маске мяча — ВКЛючаем только в полёте (блок/перехват), иначе капсула игрока
 ## толкала бы мяч на дриблинге/подборе (ломает близкий контроль, подскок). Bit2 = PLAYER.
 func _set_player_collision(on: bool) -> void:
@@ -288,9 +304,10 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 				var left := horiz.normalized().cross(Vector3.UP)
 				vel += (left * _curl.z + Vector3.UP * _curl.y) * state_body.step * FootballConstants.MAGNUS_FORCE
 				_curl *= FootballConstants.MAGNUS_DECAY
-			# Полёт закончился, когда мяч замедлился до «подбираемого» — снова OPEN, коллизия с
-			# игроками выключается (чтобы капсула подбирающего не сбивала/подкидывала мяч).
-			if Vector3(vel.x, 0.0, vel.z).length() < FootballConstants.BALL_TRAP_MAX_SPEED:
+			# Полёт закончился, когда мяч почти остановился — снова OPEN, коллизия с игроками
+			# выключается (чтобы капсула подбирающего не сбивала/подкидывала мяч). Порог низкий,
+			# чтобы быстрый летящий мяч блокировался стенкой, а не выпадал из FLIGHT рано.
+			if Vector3(vel.x, 0.0, vel.z).length() < FootballConstants.FLIGHT_END_SPEED:
 				state = BallState.OPEN
 				_curl = Vector3.ZERO
 				_set_player_collision(false)

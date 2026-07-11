@@ -57,8 +57,8 @@ var _charge_action: ChargeAction = ChargeAction.NONE
 var _charge_time: float = 0.0
 var _charge_player: CharacterBody3D
 const KICK_CHARGE_MAX_TIME: float = 0.5
-const KICK_POWER_MIN: float = 12.0
-const KICK_POWER_MAX: float = 25.0
+const KICK_POWER_MIN: float = 18.0
+const KICK_POWER_MAX: float = 34.0
 
 var _pass_rng := RandomNumberGenerator.new()
 var _pending_launch: Vector3 = Vector3.ZERO
@@ -455,6 +455,49 @@ func _setup_away_player() -> void:
 	new_player.ball = ball
 	new_player.home_goal = $GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null
 	player_away = new_player
+	# Тестовая стенка из бездействующих соперников (только пока соперник отключён флагом) —
+	# удобно проверять удары/блоки. Вернём настоящего соперника → флаг false → стенки нет.
+	if FootballConstants.DEBUG_DISABLE_OPPONENT:
+		_spawn_wall_dummies()
+
+
+## Стенки из стоящих болванок team_2 (для теста ударов/блоков). Требует
+## DEBUG_DISABLE_OPPONENT=true (иначе они бы стали активным ИИ).
+func _spawn_wall_dummies() -> void:
+	_spawn_wall_line(Vector3(0.0, 0.5, -13.0), 2.0)    # разреженная (с зазорами), центр X=0
+	_spawn_wall_line(Vector3(15.0, 0.5, -13.0), 0.62)  # плотная (болванки вплотную), центр X=15
+
+
+## 4 болванки в линию по X, центрированы, с интервалом spacing (м).
+func _spawn_wall_line(center: Vector3, spacing: float) -> void:
+	for i in range(4):
+		var offset := (float(i) - 1.5) * spacing
+		_make_dummy_opponent(center + Vector3(offset, 0.0, 0.0))
+
+
+func _make_dummy_opponent(pos: Vector3) -> void:
+	var p := CharacterBody3D.new()
+	p.name = "WallDummy"
+	p.global_position = pos
+	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
+	p.add_child(visual)
+	p.add_child(PlayerMotor.new())
+	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
+	var col := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.height = 1.5
+	shape.radius = 0.3
+	col.shape = shape
+	col.position = Vector3(0, 0.25, 0)
+	p.add_child(col)
+	add_child(p)
+	p.add_to_group("team_2")
+	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
+	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
+	p.set_script(preload("res://scripts/ai/simple_ai.gd"))
+	p.set_physics_process(true)
+	p.ball = ball
+	p.home_goal = $GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null
 
 
 func _setup_teammate() -> void:
@@ -749,11 +792,18 @@ func _handle_player_input(delta: float) -> void:
 			var sprint_now := Input.get_action_strength(&"sprint")
 			ball.set_dribble_intent(stick, FootballConstants.DRIBBLE_SPRINT_PUSH_EXTRA * sprint_now)
 		if chasing:
-			# ДОГОН (мяч вырвался): бежим СТРОГО к мячу (даже если стик отпущен), стик не отклоняет.
+			# ДОГОН (мяч вырвался): ведём к мячу, но стик может ПОДРУЛИТЬ (обойти соперника на
+			# пути), не теряя мяч — блёнд DRIBBLE_CHASE_STEER. Стик отпущен → строго к мячу.
 			var to_ball := ball.global_position - controlled_player.global_position
 			to_ball.y = 0.0
 			if to_ball.length() > 0.01:
-				dir = to_ball.normalized()
+				var chase_dir := to_ball.normalized()
+				if active:
+					var w := FootballConstants.DRIBBLE_CHASE_STEER
+					var mixed := chase_dir * (1.0 - w) + stick.normalized() * w
+					if mixed.length() > 0.01:
+						chase_dir = mixed.normalized()
+				dir = chase_dir
 		elif active:
 			# Мяч у ног: ведём в направлении СТИКА (толкаем сквозь).
 			dir = stick.normalized()
@@ -846,7 +896,7 @@ func _fire_charge() -> void:
 		var ratio := clampf(_charge_time / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
 		var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
 		var dir: Vector3 = ball.get_dribble_direction()
-		dir.y = lerpf(0.05, 0.5, ratio)  # слабый удар — низом, сильный — с подъёмом
+		dir.y = lerpf(0.02, 0.15, ratio)  # настильно: слабый удар почти по земле, сильный — лёгкий подъём
 		_cancel_charge()
 
 		# Подключаемся к commit-action системе, но БЕЗ блокировки мотора.
@@ -1511,7 +1561,11 @@ func _same_team(a: Node, b: Node) -> bool:
 
 
 func _on_ball_collision(body: Node) -> void:
-	pass
+	# Блок: летящий мяч коснулся игрока (защитник на пути / попал в своего). Гасим и роняем
+	# мяч в OPEN (без мгновенной передачи владения — дальше обычная борьба за подбор).
+	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
+			and ball.has_method(&"is_flight") and ball.is_flight() and ball.has_method(&"block_in_flight"):
+		ball.block_in_flight()
 
 
 func _reset_ball() -> void:
