@@ -32,6 +32,13 @@ func _initialize() -> void:
 	if not is_equal_approx(lg.normalized().dot(Vector3(3, 0, 4).normalized()), 1.0):
 		print("CHECK FAIL: launch_ground direction"); ok = false
 
+	# launch_ground с подъёмом: горизонталь прежней длины power, плюс вертикаль up.
+	var lgu := PassSystem.launch_ground(Vector3.ZERO, Vector3(3, 0, 4), 10.0, 1.5)
+	if not is_equal_approx(Vector3(lgu.x, 0, lgu.z).length(), 10.0):
+		print("CHECK FAIL: launch_ground(up) horizontal magnitude → ", lgu); ok = false
+	if not is_equal_approx(lgu.y, 1.5):
+		print("CHECK FAIL: launch_ground(up) vertical → ", lgu); ok = false
+
 	# launch_lob: ре-симуляция дуги приземляет мяч ≈ в to, пик ≈ peak_height.
 	var g := 20.0
 	var v0 := PassSystem.launch_lob(Vector3.ZERO, Vector3(12, 0, 0), 3.0, g)

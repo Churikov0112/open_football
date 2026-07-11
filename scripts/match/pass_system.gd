@@ -44,12 +44,12 @@ static func lead_point(target_pos: Vector3, target_vel: Vector3, passer_pos: Vec
 	return point
 
 ## Низовой пас: плоская скорость к цели, величиной power (м/с).
-static func launch_ground(from: Vector3, to: Vector3, power: float) -> Vector3:
+static func launch_ground(from: Vector3, to: Vector3, power: float, up: float = 0.0) -> Vector3:
 	var dir := to - from
 	dir.y = 0.0
 	if dir.length() < 0.001:
 		return Vector3.ZERO
-	return dir.normalized() * power
+	return dir.normalized() * power + Vector3.UP * up
 
 ## Скорость низового паса: чтобы мяч ВСЕГДА проходил distance м, скорость выводится из
 ## дистанции и времени полёта (не задаётся абсолютно). Заряд лерпит время полёта между

@@ -1319,7 +1319,7 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		var ground_speed := PassSystem.ground_pass_speed(ground_dist, charge_ratio,
 			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
 			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
-		launch_vel = PassSystem.launch_ground(from, aim_point, ground_speed)
+		launch_vel = PassSystem.launch_ground(from, aim_point, ground_speed, FootballConstants.PASS_GROUND_LIFT)
 	_maybe_flag_interceptor(from, aim_point, launch_vel)
 	# Commit-action: импульс по action_contact, без блокировки мотора (как kick).
 	_action_player = player
