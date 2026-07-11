@@ -36,6 +36,12 @@ func begin_intercept(point: Vector3) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if FootballConstants.DEBUG_DISABLE_OPPONENT:
+		var dm := _motor()
+		if dm != null:
+			dm.set_move_intent(Vector3.ZERO)
+		return
+
 	if not ball or not is_instance_valid(ball):
 		return
 

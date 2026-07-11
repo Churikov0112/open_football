@@ -25,13 +25,19 @@ var _dribble_push_extra: float = 0.0         # доп. сила толчка (с
 var _was_far: bool = true                    # мяч был вне зоны догона → следующий контакт = толчок
 var _dribble_chasing: bool = false           # true → мяч ушёл, владелец должен БЕЖАТЬ к мячу (гистерезис)
 var _dribble_suppressed: bool = false        # true → НЕ толкать мяч (идёт зарядка/commit паса-удара) → одно касание
+var _wobble_dir_n: float = 0.0               # плавный случайный дрейф направления удержания [-1..1] (спринт-неточность)
+var _wobble_lead_n: float = 0.0              # плавный случайный дрейф дистанции удержания [-1..1]
 
 
 func _ready() -> void:
 	_football_texture()
 	var phys_mat := PhysicsMaterial.new()
-	phys_mat.bounce = 0.4
+	phys_mat.friction = 0.4
+	phys_mat.bounce = 0.35
 	physics_material_override = phys_mat
+	continuous_cd = true           # быстрый удар не должен туннелировать сквозь игрока/штангу
+	max_contacts_reported = 2
+	contact_monitor = true
 
 
 func _football_texture() -> void:
@@ -76,6 +82,7 @@ func set_dribbler(node: Node3D) -> void:
 	dribbler = node
 	_dribbler_prev_pos = node.global_position if node else Vector3.ZERO
 	state = BallState.TRAPPED if node else BallState.OPEN
+	_set_player_collision(false)  # трапнутый/бесхозный мяч не сталкивается с капсулами игроков
 	if node:
 		var f := -node.global_transform.basis.z
 		f.y = 0.0
@@ -115,11 +122,22 @@ func release_dribble() -> void:
 		_last_release_time = Time.get_ticks_msec()
 	_dribbler_prev_pos = Vector3.ZERO
 	state = BallState.OPEN
+	_set_player_collision(false)
 
 
 ## Текущий владелец мяча (нейтральное имя поверх legacy-поля dribbler).
 func player() -> Node3D:
 	return dribbler
+
+
+## Слой игроков в маске мяча — ВКЛючаем только в полёте (блок/перехват), иначе капсула игрока
+## толкала бы мяч на дриблинге/подборе (ломает близкий контроль, подскок). Bit2 = PLAYER.
+func _set_player_collision(on: bool) -> void:
+	var pbit := FootballConstants.PLAYER_COLLISION_MASK
+	if on:
+		collision_mask |= pbit
+	else:
+		collision_mask &= ~pbit
 
 
 func clear_last_kicker() -> void:
@@ -159,6 +177,7 @@ func kick(direction: Vector3, power: float) -> void:
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
+	_set_player_collision(true)  # в полёте мяч сталкивается с игроками (блок/перехват)
 	_pending_impulse = direction * power
 
 
@@ -170,6 +189,7 @@ func launch(velocity: Vector3) -> void:
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
+	_set_player_collision(true)  # в полёте мяч сталкивается с игроками (блок/перехват)
 	_pending_impulse = velocity * mass
 
 
@@ -184,47 +204,68 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 		_dribbler_prev_pos = player_pos
 		pos_delta.y = 0.0
 
-		var player_speed := 0.0
+		var player_vel := Vector3.ZERO
 		if dt > 0.0:
-			player_speed = pos_delta.length() / dt
-
-		# Свободное качение с трением — мяч живёт своей инерцией между толчками (не пиннится).
-		vel.x *= FootballConstants.DRIBBLE_ROLL_DRAG
-		vel.z *= FootballConstants.DRIBBLE_ROLL_DRAG
+			player_vel = (pos_delta / dt).limit_length(15.0)
+		var player_speed := player_vel.length()
 
 		var gap := state_body.transform.origin - player_pos
 		gap.y = 0.0
 		var gd := gap.length()
 
-		# Флаг «бежать к мячу» с гистерезисом: ушёл дальше CHASE_DIST → chasing; догнал ближе
-		# CATCH_DIST → ведём стиком; между — держим текущее (нет флип-флопа/«танца»).
+		# Гистерезис: мяч вырвался дальше CHASE → «догон» (свободный ролл, игрок бежит к мячу);
+		# догнал ближе CATCH → снова под контролем. Между — держим текущий режим (без флип-флопа).
 		if gd > FootballConstants.DRIBBLE_CHASE_DIST:
 			_dribble_chasing = true
 		elif gd < FootballConstants.DRIBBLE_CATCH_DIST:
 			_dribble_chasing = false
 
-		if gd < FootballConstants.DRIBBLE_CATCH_DIST:
-			# Игрок ДОГНАЛ мяч: только сейчас можно сменить направление и толкнуть. Толчок —
-			# на «фронте» (был далеко → догнал), а не каждый кадр, чтобы не приклеивать мяч.
-			# Подавление: пока идёт зарядка/commit паса-удара — НЕ толкаем (одно касание = пас).
-			if _was_far and player_speed > 0.3 and not _dribble_suppressed:
-				# Направление толчка: стик владельца (intent), иначе — facing (путь ИИ).
-				var pdir := _dribble_intent
-				if pdir.length_squared() < 0.0001:
-					var f := -dribbler.global_transform.basis.z
-					f.y = 0.0
-					pdir = f.normalized() if f.length_squared() > 0.0001 else _dribble_dir
-				_dribble_dir = pdir
-				var push := _dribble_dir * (player_speed + FootballConstants.DRIBBLE_PUSH_BONUS + _dribble_push_extra)
-				vel.x = push.x
-				vel.z = push.z
-				# «Взвод» снимаем ТОЛЬКО после реального толчка: иначе, подойдя к мячу медленно
-				# (<0.3) на старте, _was_far гасился без толчка и игрок «залипал» на мяче (деадлок).
-				_was_far = false
+		if _dribble_chasing:
+			# Мяч вырвался — свободно катится с трением, игрок догоняет (match_manager ведёт к мячу).
+			vel.x *= FootballConstants.DRIBBLE_ROLL_DRAG
+			vel.z *= FootballConstants.DRIBBLE_ROLL_DRAG
 		else:
-			_was_far = true
+			# Под контролем: удерживаем мяч в точке впереди. Lead растёт со скоростью — плотно
+			# на медленном (мяч у ног, не пробежать мимо), далеко на бегу. Скорость мяча =
+			# скорость игрока + подтягивание к точке, сглаженно (лаг = «живость»). Заряд/стоп
+			# (suppressed) → плотное удержание (базовый lead), чтобы пас/остановка были чистыми.
+			var pdir := _dribble_intent
+			if pdir.length_squared() < 0.0001:
+				pdir = _dribble_dir
+			_dribble_dir = pdir
+			var lead := FootballConstants.DRIBBLE_LEAD_BASE
+			if not _dribble_suppressed:
+				lead += (player_speed + _dribble_push_extra) * FootballConstants.DRIBBLE_LEAD_PER_SPEED
+			# Спринт-неточность: плавный случайный увод направления и дистанции удержания,
+			# масштаб по силе спринта (доля от DRIBBLE_SPRINT_PUSH_EXTRA). Дрейф не по-кадровый:
+			# копится с затуханием (*0.99 + маленький рандом) → медленное «плавание», не джиттер.
+			var pdir_w := pdir
+			var sprint_factor := 0.0
+			if FootballConstants.DRIBBLE_SPRINT_PUSH_EXTRA > 0.0:
+				sprint_factor = clampf(_dribble_push_extra / FootballConstants.DRIBBLE_SPRINT_PUSH_EXTRA, 0.0, 1.0)
+			if sprint_factor > 0.01 and not _dribble_suppressed:
+				_wobble_dir_n = clampf(_wobble_dir_n * 0.98 + randf_range(-0.15, 0.15), -1.0, 1.0)
+				_wobble_lead_n = clampf(_wobble_lead_n * 0.98 + randf_range(-0.15, 0.15), -1.0, 1.0)
+				pdir_w = pdir.rotated(Vector3.UP, deg_to_rad(FootballConstants.DRIBBLE_SPRINT_WOBBLE_ANGLE) * _wobble_dir_n * sprint_factor)
+				lead += FootballConstants.DRIBBLE_SPRINT_WOBBLE_LEAD * _wobble_lead_n * sprint_factor
+			else:
+				_wobble_dir_n *= 0.9
+				_wobble_lead_n *= 0.9
+			var front := player_pos + pdir_w * lead
+			var to_front := front - state_body.transform.origin
+			to_front.y = 0.0
+			var desired := player_vel + to_front * FootballConstants.DRIBBLE_CONTROL_GAIN
+			var flat_vel := Vector3(vel.x, 0.0, vel.z)
+			var blended := flat_vel.lerp(desired, FootballConstants.DRIBBLE_CONTROL_LERP)
+			vel.x = blended.x
+			vel.z = blended.z
 		vel.y *= air_resistance
 	else:
+		# Полёт закончился, когда мяч замедлился до «подбираемого» — снова OPEN, коллизия с
+		# игроками выключается (чтобы капсула подбирающего не сбивала/подкидывала мяч).
+		if state == BallState.FLIGHT and Vector3(vel.x, 0.0, vel.z).length() < FootballConstants.BALL_TRAP_MAX_SPEED:
+			state = BallState.OPEN
+			_set_player_collision(false)
 		vel.x *= drag_factor
 		vel.z *= drag_factor
 		vel.y *= air_resistance

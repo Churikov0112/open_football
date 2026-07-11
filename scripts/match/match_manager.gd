@@ -308,8 +308,10 @@ func _setup_field_markings() -> void:
 func _setup_ball() -> void:
 	ball.script = preload("res://scripts/ball/ball_controller.gd")
 	ball.set_script(ball.script)
-	# Мяч остаётся на слое 1 (гол-детект и подкат-детект завязаны на это), но должен
-	# сталкиваться и с питчем (слой 1), и с границами (ушли на отдельный слой) — иначе улетит за поле.
+	# Мяч на слое 1 (гол/подкат-детект завязаны на это), сталкивается с питчем (1) и границами.
+	# Слой ИГРОКОВ добавляется в маску ТОЛЬКО на время полёта (ball_controller, состояние FLIGHT):
+	# на дриблинге/подборе капсула игрока не должна толкать мяч (иначе близкий контроль и подбор
+	# ломаются — расталкивание/подскок), а блок/перехват нужны лишь для летящего мяча.
 	ball.collision_mask = 1 | FootballConstants.BOUNDARY_COLLISION_LAYER
 	ball.body_entered.connect(_on_ball_collision)
 
@@ -660,11 +662,6 @@ func _setup_floor() -> void:
 func _handle_dribbling() -> void:
 	if not ball.has_method(&"release_dribble"):
 		return
-	# Пока владелец заряжает/выполняет пас-удар — подавляем дриблинг-толчок, чтобы касание
-	# было ровно одно (сам пас), а не «толкнул на дриблинге + пас» (двойное касание/удар «в
-	# воздух»). Полноценную очередь «в одно касание» достроит Фаза 2 поверх этого шва.
-	if ball.has_method(&"set_dribble_suppressed"):
-		ball.set_dribble_suppressed(_is_charging() or _kick_action_active)
 	if ball.dribbler:
 		var dist: float = ball.dribbler.global_position.distance_to(ball.global_position)
 		# Владение НЕ теряется от собственного толчка/резкого поворота — только по внешнему
@@ -739,22 +736,28 @@ func _handle_player_input(delta: float) -> void:
 	# по intent'у делает ball_controller в момент «догнал».
 	if is_instance_valid(ball) and ball.has_method(&"set_dribble_intent") and ball.player() == controlled_player:
 		var stick := dir
+		var active := stick.length() > 0.2  # человек активно ведёт (стик нажат)
 		var chasing: bool = ball.has_method(&"should_chase") and ball.should_chase()
-		# Стик задаёт ТОЛЬКО направление следующего толчка (intent) + доп. силу спринта — бегом
-		# во время догона он не рулит.
-		if stick.length() > 0.2:
+		# Толкать мяч — только пока человек активно ведёт (плюс подавление на зарядке/commit
+		# паса-удара). Отпустил стик → толчок подавлен: игрок добегает к мячу и ОСТАНАВЛИВАЕТСЯ,
+		# а не продолжает дриблить по остаточной скорости.
+		if ball.has_method(&"set_dribble_suppressed"):
+			ball.set_dribble_suppressed(_is_charging() or _kick_action_active or not active)
+		# Стик задаёт направление следующего толчка (intent) + доп. силу спринта.
+		if active:
 			var sprint_now := Input.get_action_strength(&"sprint")
 			ball.set_dribble_intent(stick, FootballConstants.DRIBBLE_SPRINT_PUSH_EXTRA * sprint_now)
 		if chasing:
-			# ДОГОН (мяч ушёл): бежим СТРОГО к мячу, стик не отклоняет — куда бы ни направлял и
-			# даже если отпущен. Так игрок не теряет фокус на мяче в фазе догона.
+			# ДОГОН (мяч вырвался): бежим СТРОГО к мячу (даже если стик отпущен), стик не отклоняет.
 			var to_ball := ball.global_position - controlled_player.global_position
 			to_ball.y = 0.0
 			if to_ball.length() > 0.01:
 				dir = to_ball.normalized()
-		elif stick.length() > 0.2:
-			# Мяч у ног: ведём в направлении СТИКА (толкаем сквозь). Нет стика → стоп.
+		elif active:
+			# Мяч у ног: ведём в направлении СТИКА (толкаем сквозь).
 			dir = stick.normalized()
+		else:
+			dir = Vector3.ZERO  # мяч у ног, стик отпущен → стоп
 
 	# Притягивание к НИЧЕЙНОМУ мячу (вне владения): если игрок движется примерно к
 	# подбираемому (медленному, бесхозному) мячу поблизости — подруливаем к нему, чтобы не
