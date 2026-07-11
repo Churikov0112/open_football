@@ -16,8 +16,8 @@ var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 # team_1 атакует −Z в первом тайме; половина флипает знак (будущий half-time-свап).
 # ОДНО место, задающее сторону чужих ворот для прицела ударов — см. _target_goal_center().
 var _attack_dir_z: float = -1.0
-var controlled_player_indicator: MeshInstance3D
-var _target_indicator: MeshInstance3D
+var _controlled_marker: Polygon2D
+var _match_camera: Camera3D
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -117,7 +117,6 @@ func _ready() -> void:
 	_setup_boundaries()
 	_give_ai_to_player_home()
 	_setup_controlled_indicator()
-	_setup_target_indicator()
 	_setup_tackle_area()
 	_setup_power_bar()
 	_setup_ball_trail()
@@ -380,6 +379,7 @@ func _setup_camera() -> void:
 	var cam_script = preload("res://scripts/camera/match_camera.gd")
 	cam.set_script(cam_script)
 	cam.target = ball
+	_match_camera = cam
 
 
 func _setup_goals() -> void:
@@ -600,8 +600,13 @@ func _process(delta: float) -> void:
 	if _trail != null:
 		_update_ball_trail(ball_pos)
 
-	if controlled_player_indicator and controlled_player:
-		controlled_player_indicator.global_position = controlled_player.global_position + Vector3(0, 2.2, 0)
+	if _controlled_marker != null and controlled_player and _match_camera != null:
+		var marker_world_pos := controlled_player.global_position + Vector3(0, 2.2, 0)
+		if _match_camera.is_position_behind(marker_world_pos):
+			_controlled_marker.visible = false
+		else:
+			_controlled_marker.visible = true
+			_controlled_marker.position = _match_camera.unproject_position(marker_world_pos)
 
 	# Заряд: копим, пока держим кнопку заряжаемого действия.
 	if _is_charging() and _charge_player == controlled_player:
@@ -625,23 +630,6 @@ func _process(delta: float) -> void:
 	power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
 		or (_is_queued() and _queue_player == controlled_player)
 
-	var show_target := _is_charging() and not (_charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]) and _charge_player == controlled_player
-	if show_target:
-		var mates := _team_arrays(&"team_1", _charge_player)
-		var mate_pos: PackedVector3Array = mates["pos"]
-		var mate_vel: PackedVector3Array = mates["vel"]
-		var mate_nodes: Array = mates["nodes"]
-		var aim: Vector3 = ball.peek_dribble_direction()
-		var idx := PassSystem.select_target(_charge_player.global_position, aim, mate_pos, mate_vel,
-			FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
-		if idx >= 0:
-			var tgt: Node3D = mate_nodes[idx]
-			_target_indicator.global_position = tgt.global_position + Vector3(0, 2.6, 0)
-			_target_indicator.visible = true
-		else:
-			_target_indicator.visible = false
-	else:
-		_target_indicator.visible = false
 
 
 func _physics_process(delta: float) -> void:
@@ -704,40 +692,18 @@ func _physics_process(delta: float) -> void:
 			_clear_queue()
 
 
+## Плоский UI-маркер контролируемого игрока — CanvasLayer + Polygon2D-треугольник, а НЕ 3D-меш
+## (тот отбрасывал тень на газон, выглядело странно). Позиционируется каждый рендер-кадр через
+## Camera3D.unproject_position() (world -> screen), поверх головы игрока.
 func _setup_controlled_indicator() -> void:
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.0
-	mesh.bottom_radius = 0.2
-	mesh.height = 0.4
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	var marker := Polygon2D.new()
+	marker.polygon = PackedVector2Array([Vector2(-2.67, -4.67), Vector2(2.67, -4.67), Vector2(0, 0.67)])
+	marker.color = Color(0.3, 0.6, 1.0)
+	layer.add_child(marker)
+	_controlled_marker = marker
 
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.3, 0.6, 1.0)
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.position = Vector3(0, 2.2, 0)
-	add_child(mi)
-	controlled_player_indicator = mi
-
-
-func _setup_target_indicator() -> void:
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.0
-	mesh.bottom_radius = 0.2
-	mesh.height = 0.4
-
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(1.0, 0.9, 0.2)  # жёлтый — цель паса
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.visible = false
-	add_child(mi)
-	_target_indicator = mi
 
 
 func _sync_ai_controllers() -> void:
@@ -858,6 +824,18 @@ func _handle_player_input(delta: float) -> void:
 		db.y = 0.0
 		if db.length() > 0.01:
 			dir = db.normalized()
+	# Очередь «в одно касание» на СПОРНЫЙ/ничейный мяч: пока ждём касания, автоматически бежим к
+	# мячу (прогноз позиции), даже если стик отпущен. Пас на нас уже ведёт receive-assist выше;
+	# свой спринт-отрыв уже ведёт chasing-блок ниже (мяч ещё наш, дриблер = controlled_player) —
+	# там же живёт DRIBBLE_CHASE_STEER-блендинг стика, который эта ветка НЕ должна перебивать
+	# (иначе `stick := dir` в дриблинг-блоке подменит настоящий ввод игрока нашим авто-курсом).
+	if _is_queued() and _queue_player == controlled_player and is_instance_valid(ball) \
+			and not (_receive_active and _receiver == controlled_player) \
+			and ball.player() != controlled_player:
+		var qb := (ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW) - controlled_player.global_position
+		qb.y = 0.0
+		if qb.length() > 0.01:
+			dir = qb.normalized()
 	# Дриблинг: стик задаёт направление ТОЛЧКА мяча, а бег авто-направляется К МЯЧУ —
 	# игрок толкает мяч в сторону стика и сам бежит его догонять (аркадная петля). Толчок
 	# по intent'у делает ball_controller в момент «догнал».
@@ -1182,10 +1160,7 @@ func _try_fire_queue() -> bool:
 		_cancel_charge()
 	var incoming_speed: float = ball.linear_velocity.length()
 	var eff_ratio := ShotSystem.one_touch_ratio(base_ratio, incoming_speed, FootballConstants.QUEUE_BALL_SPEED_GAIN)
-	var facing: Vector3 = -player.global_transform.basis.z
-	facing.y = 0.0
-	if facing.length_squared() < 0.0001:
-		facing = Vector3.FORWARD
+	var facing: Vector3 = _queue_aim_dir(player)
 	_clear_queue()
 	if action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
 		_fire_shot(action, player, eff_ratio, facing.normalized())
@@ -1271,6 +1246,33 @@ func _ball_gravity() -> float:
 ## чтобы смена ворот во втором тайме меняла прицел ударов в одном месте.
 func _target_goal_center() -> Vector3:
 	return Vector3(0.0, 0.0, _attack_dir_z * field_length)
+
+## Направление прицела для очереди «в одно касание»: стик (камеро-относительный), если реально
+## наклонён — человек явно указывает направление удара/паса, даже пока авто-бег к спорному мячу
+## (см. Task 6) насильно ведёт движение К МЯЧУ, а не туда, куда игрок целится. Facing тела для
+## этого не годится: PlayerMotor разворачивает тело по направлению ДВИЖЕНИЯ, так что во время
+## авто-бега facing гоняется за постоянно меняющимся углом подбегания, а не отражает намерение
+## (баг из плейтеста: дёргающийся/мигающий маркер цели). Стик отпущен → фолбэк на facing тела.
+## Используется И для превью-маркера (_process), И для реального выстрела (_try_fire_queue) —
+## иначе маркер покажет одну цель, а полетит в другую.
+func _queue_aim_dir(player_node: CharacterBody3D) -> Vector3:
+	var input_vec := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
+	if input_vec.length() > 0.2:
+		var cam_basis := camera_pivot.global_transform.basis
+		var cam_forward := -cam_basis.z
+		cam_forward.y = 0.0
+		cam_forward = cam_forward.normalized()
+		var cam_right := cam_basis.x
+		cam_right.y = 0.0
+		cam_right = cam_right.normalized()
+		var d := (cam_forward * -input_vec.y + cam_right * input_vec.x)
+		if d.length() > 0.01:
+			return d.normalized()
+	var facing := -player_node.global_transform.basis.z
+	facing.y = 0.0
+	if facing.length_squared() > 0.0001:
+		return facing.normalized()
+	return Vector3.FORWARD
 
 
 ## Выполнить пас: выбрать цель по прицелу, посчитать траекторию, применить импульс через
