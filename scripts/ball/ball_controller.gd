@@ -181,6 +181,7 @@ func kick(direction: Vector3, power: float) -> void:
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
+	_curl = Vector3.ZERO         # прямой удар не крутится
 	_set_player_collision(true)  # в полёте мяч сталкивается с игроками (блок/перехват)
 	_pending_impulse = direction * power
 
@@ -193,7 +194,21 @@ func launch(velocity: Vector3) -> void:
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
+	_curl = Vector3.ZERO         # низовой/навесной пас не крутится (кручёный — через launch_curl)
 	_set_player_collision(true)  # в полёте мяч сталкивается с игроками (блок/перехват)
+	_pending_impulse = velocity * mass
+
+
+## Запуск с кручением: как launch(), но задаёт вектор _curl (Magnus в _integrate_forces).
+## curl.z — боковая составляющая (через left = vel×UP), curl.y — подъём (для дуги). Для
+## кручёного удара Фазы 1; ShotSystem посчитает velocity и curl.
+func launch_curl(velocity: Vector3, curl: Vector3) -> void:
+	last_kicker = dribbler
+	_last_kick_time = Time.get_ticks_msec()
+	release_dribble()
+	state = BallState.FLIGHT
+	_curl = curl
+	_set_player_collision(true)
 	_pending_impulse = velocity * mass
 
 
@@ -265,11 +280,20 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 			vel.z = blended.z
 		vel.y *= air_resistance
 	else:
-		# Полёт закончился, когда мяч замедлился до «подбираемого» — снова OPEN, коллизия с
-		# игроками выключается (чтобы капсула подбирающего не сбивала/подкидывала мяч).
-		if state == BallState.FLIGHT and Vector3(vel.x, 0.0, vel.z).length() < FootballConstants.BALL_TRAP_MAX_SPEED:
-			state = BallState.OPEN
-			_set_player_collision(false)
+		if state == BallState.FLIGHT:
+			# Magnus: боковой (через left = vel×UP) + подъёмный импульс, с затуханием — дуга
+			# кручёного удара, живёт поверх обычной баллистики и переживает отскоки.
+			var horiz := Vector3(vel.x, 0.0, vel.z)
+			if _curl.length_squared() > 0.0001 and horiz.length() > 0.5:
+				var left := horiz.normalized().cross(Vector3.UP)
+				vel += (left * _curl.z + Vector3.UP * _curl.y) * state_body.step * FootballConstants.MAGNUS_FORCE
+				_curl *= FootballConstants.MAGNUS_DECAY
+			# Полёт закончился, когда мяч замедлился до «подбираемого» — снова OPEN, коллизия с
+			# игроками выключается (чтобы капсула подбирающего не сбивала/подкидывала мяч).
+			if Vector3(vel.x, 0.0, vel.z).length() < FootballConstants.BALL_TRAP_MAX_SPEED:
+				state = BallState.OPEN
+				_curl = Vector3.ZERO
+				_set_player_collision(false)
 		vel.x *= drag_factor
 		vel.z *= drag_factor
 		vel.y *= air_resistance

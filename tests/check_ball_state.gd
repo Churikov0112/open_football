@@ -31,11 +31,18 @@ func _initialize() -> void:
 	ok = _expect(ball.state == ball.BallState.OPEN, "release_dribble → OPEN") and ok
 	ok = _expect(ball.player() == null, "player() == null после release") and ok
 
-	# kick → FLIGHT.
+	# kick → FLIGHT, _curl обнулён (прямой удар не крутится).
 	ball._last_release_time = -100000
 	ball.set_dribbler(stub)
 	ball.kick(Vector3.FORWARD, 15.0)
 	ok = _expect(ball.state == ball.BallState.FLIGHT, "kick → FLIGHT") and ok
+	ok = _expect(ball._curl.length() < 0.001, "kick обнуляет _curl") and ok
+
+	# launch_curl → FLIGHT, _curl задан.
+	ball.release_dribble()
+	ball.launch_curl(Vector3(0, 0, -20), Vector3(0, 0, 3))
+	ok = _expect(ball.state == ball.BallState.FLIGHT, "launch_curl → FLIGHT") and ok
+	ok = _expect(ball._curl.length() > 0.01, "launch_curl задаёт _curl") and ok
 
 	if ok:
 		print("CHECK PASS")
