@@ -1302,13 +1302,25 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	else:
 		var flat := Vector3(aim.x, 0.0, aim.z).normalized()
 		aim_point = from + flat * 12.0
-	# Разброс точности.
-	var flat_dir := (aim_point - from)
-	flat_dir.y = 0.0
-	var spread := PassSystem.scatter_degrees(FootballConstants.PASS_SPREAD_BASE, FootballConstants.PASS_ASSIST,
-		flat_dir.length(), FootballConstants.PASS_SPREAD_DIST_REF)
-	flat_dir = PassSystem.apply_scatter(flat_dir, spread, _pass_rng)
-	aim_point = from + flat_dir + Vector3(0.0, aim_point.y - from.y, 0.0)
+	# Верховой на ход (LB+Y) — ПОЛНОСТЬЮ РУЧНОЙ, без автопомощи: направление строго по стику,
+	# дальность/сила по ЗАРЯДУ (тап → минимум, полный заряд → ~пол поля), БЕЗ автонаводки на цель,
+	# БЕЗ разброса (ниже), БЕЗ передачи управления/receive-assist (receiver = null). Играешь мяч в
+	# пространство — тиммейт сам реагирует своим ИИ (бежит за мячом), можно и вручную переключиться.
+	if action == ChargeAction.PASS_THROUGH_AIR:
+		var aim_flat := Vector3(aim.x, 0.0, aim.z)
+		if aim_flat.length() < 0.001:
+			aim_flat = Vector3(0.0, 0.0, _attack_dir_z)
+		var space := lerpf(FootballConstants.PASS_THROUGH_AIR_SPACE_MIN, FootballConstants.PASS_THROUGH_AIR_SPACE_MAX, charge_ratio)
+		aim_point = from + aim_flat.normalized() * space
+		receiver = null  # без хендоффа/receive-assist — полностью ручной
+	# Разброс точности — КРОМЕ полностью ручного верхового-на-ход (он летит точно по стику).
+	if action != ChargeAction.PASS_THROUGH_AIR:
+		var flat_dir := (aim_point - from)
+		flat_dir.y = 0.0
+		var spread := PassSystem.scatter_degrees(FootballConstants.PASS_SPREAD_BASE, FootballConstants.PASS_ASSIST,
+			flat_dir.length(), FootballConstants.PASS_SPREAD_DIST_REF)
+		flat_dir = PassSystem.apply_scatter(flat_dir, spread, _pass_rng)
+		aim_point = from + flat_dir + Vector3(0.0, aim_point.y - from.y, 0.0)
 	# Баллистика.
 	var launch_vel: Vector3
 	if params.is_air:
