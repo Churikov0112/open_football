@@ -986,14 +986,14 @@ func _fire_charge() -> void:
 
 ## Удар: контекст решает удар в ворота vs вынос; тип (прямой/кручёный/черпачок) — по action.
 ## Импульс — через commit-action (ball.launch / launch_curl по action_contact), как у паса.
-func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: float) -> void:
+func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: float, facing_override: Vector3 = Vector3.ZERO) -> void:
 	if not ball.has_method(&"launch"):
 		return
 	var from: Vector3 = ball.global_position
 	var goal_center := _target_goal_center()  # чужие ворота (гибко, флипается на half-time)
 	var half_w: float = FootballConstants.GOAL_WIDTH / 2.0
 	var height: float = FootballConstants.GOAL_HEIGHT
-	var facing: Vector3 = ball.get_dribble_direction()
+	var facing: Vector3 = facing_override if facing_override.length_squared() > 0.0001 else ball.get_dribble_direction()
 	var g := _ball_gravity()
 	var launch_vel: Vector3
 	var curl := Vector3.ZERO
@@ -1162,7 +1162,7 @@ func _target_goal_center() -> Vector3:
 
 ## Выполнить пас: выбрать цель по прицелу, посчитать траекторию, применить импульс через
 ## commit-action (как удар), передать управление принимающему сразу.
-func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: float) -> void:
+func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: float, facing_override: Vector3 = Vector3.ZERO) -> void:
 	if not ball.has_method(&"launch"):
 		return
 	var params := _pass_params(action, charge_ratio)
@@ -1170,7 +1170,7 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	var mate_pos: PackedVector3Array = mates["pos"]
 	var mate_vel: PackedVector3Array = mates["vel"]
 	var mate_nodes: Array = mates["nodes"]
-	var aim: Vector3 = ball.get_dribble_direction()
+	var aim: Vector3 = facing_override if facing_override.length_squared() > 0.0001 else ball.get_dribble_direction()
 	var idx := PassSystem.select_target(player.global_position, aim, mate_pos, mate_vel,
 		FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
 	# Точка прицела: в ноги (короткий/навес) или на ход (through). Нет цели → по направлению прицела.
