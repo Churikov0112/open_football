@@ -610,7 +610,10 @@ func _process(delta: float) -> void:
 		_charge_time += get_process_delta_time()
 		if _charge_time >= max_time:
 			_charge_time = max_time
-			_fire_charge()
+			if _is_queued():
+				_stop_queue_fix_ratio()  # мяч не у ног — фиксируем силу на макс., ждём касания
+			else:
+				_fire_charge()
 		if _is_charging():
 			var ratio := clampf(_charge_time / max_time, 0.0, 1.0)
 			power_bar.value = ratio
@@ -911,8 +914,8 @@ func _handle_player_input(delta: float) -> void:
 
 	# Kick charge system (OpenSoccer-style)
 	if Input.is_action_just_pressed(&"kick"):
-		if _is_charging():
-			pass  # already charging, ignore
+		if _is_charging() or _is_queued():
+			pass  # уже заряжаем/в очереди, игнор
 		elif _is_near_ball(controlled_player) and _is_our_dribbler(controlled_player):
 			# E+D → кручёный, Q+D → черпачок, иначе прямой удар (контекст удар/вынос решается в _fire_shot).
 			var shot_action := ChargeAction.SHOT
@@ -921,12 +924,24 @@ func _handle_player_input(delta: float) -> void:
 			elif Input.is_action_pressed(&"combo_modifier"):
 				shot_action = ChargeAction.SHOT_CHIP
 			_start_charge(shot_action, controlled_player)
+		elif _can_queue(controlled_player):
+			# Мяч не у ног (летит пасом / убежал в спринте / спорный ничейный) — заряжаем в очередь,
+			# выстрелит в одно касание, когда игрок дотянется (см. _try_fire_queue).
+			var q_action := ChargeAction.SHOT
+			if Input.is_action_pressed(&"combo_curl"):
+				q_action = ChargeAction.SHOT_CURL
+			elif Input.is_action_pressed(&"combo_modifier"):
+				q_action = ChargeAction.SHOT_CHIP
+			_start_queue_charge(q_action, controlled_player)
 		else:
 			_try_tackle(controlled_player)
 
 	if Input.is_action_just_released(&"kick") and _charge_player == controlled_player \
 			and _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
-		_fire_charge()
+		if _is_queued():
+			_stop_queue_fix_ratio()  # мяч ещё не у ног — фиксируем силу, ждём касания
+		else:
+			_fire_charge()
 
 	# Пасы: одна кнопка на семейство; combo_modifier в атаке выбирает «спец»-вариант.
 	var combo := Input.is_action_pressed(&"combo_modifier")
@@ -937,9 +952,20 @@ func _handle_player_input(delta: float) -> void:
 			_start_charge(ChargeAction.PASS_THROUGH_AIR if combo else ChargeAction.PASS_THROUGH, controlled_player)
 		elif Input.is_action_just_pressed(&"pass_lob"):
 			_start_charge(ChargeAction.PASS_LOB, controlled_player)
+	elif not _is_charging() and not _is_queued() and _can_queue(controlled_player):
+		if Input.is_action_just_pressed(&"pass_short"):
+			_start_queue_charge(ChargeAction.PASS_WALL if combo else ChargeAction.PASS_SHORT, controlled_player)
+		elif Input.is_action_just_pressed(&"pass_through"):
+			_start_queue_charge(ChargeAction.PASS_THROUGH_AIR if combo else ChargeAction.PASS_THROUGH, controlled_player)
+		elif Input.is_action_just_pressed(&"pass_lob"):
+			_start_queue_charge(ChargeAction.PASS_LOB, controlled_player)
 	for act in [&"pass_short", &"pass_through", &"pass_lob"]:
-		if Input.is_action_just_released(act) and _is_charging() and _charge_action != ChargeAction.SHOT and _charge_player == controlled_player:
-			_fire_charge()
+		if Input.is_action_just_released(act) and _charge_player == controlled_player \
+				and _charge_action != ChargeAction.SHOT and _is_charging():
+			if _is_queued():
+				_stop_queue_fix_ratio()
+			else:
+				_fire_charge()
 			break
 
 
@@ -959,6 +985,26 @@ func _we_possess() -> bool:
 		return false
 	return ball.dribbler == player_home or ball.dribbler == player_teammate
 
+## Можно ли поставить действие в очередь: мяч НЕ у ног (иначе обычный немедленный заряд) и им
+## не владеет кто-то ДРУГОЙ (тогда это территория подката/смены). Источники очереди:
+##  - incoming: летит к нам пасом нашей команды (receive-assist),
+##  - breakaway: мы дриблер, но мяч убежал вперёд (спринт-отрыв, владение не потеряно),
+##  - loose: мяч бесхозный/летящий (dribbler == null) и в разумной близости — СПОРНЫЙ мяч
+##    (борьба с соперником). Заряжать можно; удар выполнится, только если добежим первыми
+##    (см. отмену taken_by_other и «ближе всех» в _try_fire_queue).
+func _can_queue(player_node: CharacterBody3D) -> bool:
+	if player_node == null or not is_instance_valid(player_node):
+		return false
+	if _is_near_ball(player_node):
+		return false  # у ног — обычный путь (немедленный заряд), не очередь
+	if ball.has_method(&"set_dribbler") and ball.dribbler != null and ball.dribbler != player_node:
+		return false  # мячом владеет кто-то другой (соперник/партнёр) → подкат/смена, не очередь
+	var incoming: bool = _receive_active and _receiver == player_node
+	var breakaway: bool = _is_our_dribbler(player_node)  # дриблер, но не near (проверено выше)
+	var loose: bool = (not ball.has_method(&"set_dribbler") or ball.dribbler == null) \
+		and player_node.global_position.distance_to(ball.global_position) <= FootballConstants.QUEUE_CONSIDER_RADIUS
+	return incoming or breakaway or loose
+
 func _start_charge(action: ChargeAction, player_node: CharacterBody3D) -> void:
 	_charge_action = action
 	_charge_time = 0.0
@@ -967,6 +1013,26 @@ func _start_charge(action: ChargeAction, player_node: CharacterBody3D) -> void:
 	var flat := Vector3(dir.x, 0.0, dir.z)
 	if flat.length() > 0.01:
 		player_node.rotation.y = atan2(-flat.x, -flat.z)
+
+## Начать заряд «в очередь» (мяч ещё не у ног). Копим силу как обычно (power_bar виден),
+## но по касанию будем бить в одно касание, а не сразу. Тело НЕ доворачиваем к мячу
+## (get_dribble_direction для не-дриблера бессмыслен — прицел возьмём по facing на касании).
+func _start_queue_charge(action: ChargeAction, player_node: CharacterBody3D) -> void:
+	_charge_action = action
+	_charge_time = 0.0
+	_charge_player = player_node
+	_queued_action = action
+	_queue_player = player_node
+	_queue_ratio = 0.0
+	_queue_timer = FootballConstants.QUEUE_MAX_TIME
+
+## Отпустили кнопку (или дошли до макс.) ДО касания: фиксируем текущий ratio в очереди и
+## гасим активный заряд (шкалу), но очередь остаётся ждать касания.
+func _stop_queue_fix_ratio() -> void:
+	var is_shot: bool = _queued_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
+	var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
+	_queue_ratio = clampf(_charge_time / max_time, 0.0, 1.0)
+	_cancel_charge()
 
 func _fire_charge() -> void:
 	if not _is_charging() or not _charge_player or not is_instance_valid(_charge_player):
