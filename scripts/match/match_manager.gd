@@ -60,8 +60,6 @@ var _charge_action: ChargeAction = ChargeAction.NONE
 var _charge_time: float = 0.0
 var _charge_player: CharacterBody3D
 const KICK_CHARGE_MAX_TIME: float = 0.5
-const KICK_POWER_MIN: float = 18.0
-const KICK_POWER_MAX: float = 34.0
 
 var _pass_rng := RandomNumberGenerator.new()
 var _pending_launch: Vector3 = Vector3.ZERO
