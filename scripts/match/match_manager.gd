@@ -75,8 +75,19 @@ var _receive_active: bool = false
 var _receiver: CharacterBody3D
 var _receive_timer: float = 0.0
 
+# Очередь действия «в одно касание»: заряжаем удар/пас, пока мяч ещё не у ног (летит пасом,
+# убежал вперёд в спринт-дриблинге, или это спорный ничейный мяч), бьём в момент, когда
+# игрок дотянулся до мяча.
+var _queued_action: ChargeAction = ChargeAction.NONE
+var _queue_player: CharacterBody3D
+var _queue_ratio: float = 0.0
+var _queue_timer: float = 0.0
+
 func _is_charging() -> bool:
 	return _charge_action != ChargeAction.NONE
+
+func _is_queued() -> bool:
+	return _queued_action != ChargeAction.NONE
 
 
 func _ready() -> void:
@@ -672,6 +683,18 @@ func _physics_process(delta: float) -> void:
 			_receive_active = false
 			_receiver = null
 
+	# Очередь «в одно касание»: тикаем таймаут и сбрасываем по невалидности/смене/потере мяча.
+	# taken_by_other = мяч успел забрать кто-то другой (соперник ИЛИ партнёр) → мы НЕ добрались
+	# первыми → отменяем удар (правило спорного мяча).
+	if _is_queued():
+		_queue_timer -= delta
+		var taken_by_other: bool = ball.has_method(&"set_dribbler") and ball.dribbler != null and ball.dribbler != _queue_player
+		if _queue_timer <= 0.0 \
+				or _queue_player != controlled_player or not is_instance_valid(_queue_player) \
+				or _queue_player.is_in_group("fallen") \
+				or taken_by_other:
+			_clear_queue()
+
 
 func _setup_controlled_indicator() -> void:
 	var mesh := CylinderMesh.new()
@@ -1049,6 +1072,13 @@ func _cancel_charge() -> void:
 	_charge_time = 0.0
 	_charge_player = null
 	power_bar.visible = false
+
+## Сбросить очередь «в одно касание» (перехват/аут/таймаут/смена игрока/падение).
+func _clear_queue() -> void:
+	_queued_action = ChargeAction.NONE
+	_queue_player = null
+	_queue_ratio = 0.0
+	_queue_timer = 0.0
 
 ## Собрать параметры паса по заряжаемому действию. Заряд множит базовую силу.
 func _pass_params(action: ChargeAction, charge_ratio: float) -> PassParams:
@@ -1564,6 +1594,8 @@ func _finish_fall() -> void:
 		var motor := _player_motor(_fall_player)
 		if motor != null:
 			motor.set_control_locked(false)
+	if _queue_player == _fall_player:
+		_clear_queue()
 	_fall_player = null
 	_fall_visual = null
 	_fall_state = FallState.NONE
