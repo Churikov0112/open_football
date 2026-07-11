@@ -54,6 +54,12 @@ func _initialize() -> void:
 	# scatter_meters: растёт с зарядом.
 	ok = _expect(ShotSystem.scatter_meters(1.0, 1.0, 20.0, 20.0) > ShotSystem.scatter_meters(1.0, 0.0, 20.0, 20.0), "разброс растёт с зарядом") and ok
 
+	# one_touch_ratio: база + вклад скорости, кламп в 0..1.
+	ok = _expect(absf(ShotSystem.one_touch_ratio(0.2, 0.0, 0.02) - 0.2) < 0.001, "нет скорости → ratio = база") and ok
+	ok = _expect(absf(ShotSystem.one_touch_ratio(0.2, 20.0, 0.02) - 0.6) < 0.001, "скорость 20 при gain 0.02 → +0.4") and ok
+	ok = _expect(ShotSystem.one_touch_ratio(0.5, 100.0, 0.02) == 1.0, "быстрый мяч → кламп до 1.0") and ok
+	ok = _expect(ShotSystem.one_touch_ratio(-0.5, 0.0, 0.02) == 0.0, "кламп снизу до 0.0") and ok
+
 	if ok:
 		print("CHECK PASS"); quit(0)
 	else:

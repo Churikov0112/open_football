@@ -82,3 +82,9 @@ static func scatter_meters(base_m: float, charge_ratio: float, distance: float, 
 	var cr := clampf(charge_ratio, 0.0, 1.0)
 	var dist_factor := clampf(distance / maxf(dist_ref, 0.001), 0.5, 1.5)
 	return base_m * (0.5 + cr) * dist_factor
+
+## Эффективная сила удара/паса «в одно касание»: базовый заряд + вклад скорости влетающего
+## мяча (быстрый пас/прострел замыкается мощно даже при коротком удержании; «мёртвый» мяч
+## требует полного заряда). Результат — charge_ratio в 0..1 для _fire_shot/_fire_pass.
+static func one_touch_ratio(base_ratio: float, incoming_speed: float, gain: float) -> float:
+	return clampf(base_ratio + gain * maxf(incoming_speed, 0.0), 0.0, 1.0)
