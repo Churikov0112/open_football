@@ -19,6 +19,7 @@ var _attack_dir_z: float = -1.0
 var _controlled_marker: Polygon2D
 var _match_camera: Camera3D
 var _goal_nets: Dictionary = {}
+var _celebrating: bool = false
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -443,13 +444,17 @@ func _setup_goals() -> void:
 		area.global_position = g.pos + Vector3(0, 1.22, -0.25 if g.side == "Home" else 0.25)
 
 		area.body_entered.connect(func(body: Node):
-			if body == ball:
+			if body == ball and not _celebrating:
+				_celebrating = true
 				if g.side == "Home":
 					away_score += 1
 				else:
 					home_score += 1
 				score_label.text = "%d : %d" % [home_score, away_score]
-				_reset_ball()
+				var net = _goal_nets.get(g.side)
+				if net:
+					net.start_sim()
+				_celebrate_then_reset(net)
 		)
 
 
@@ -1961,6 +1966,17 @@ func _reset_ball() -> void:
 
 	controlled_player = player_home
 	_sync_ai_controllers()
+
+
+## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через
+## NET_CELEBRATION_TIME сброс мяча и остановка симуляции. Не await-им игроков —
+## по решению ничего не замораживаем. Не await-ит вызывающий (fire-and-forget).
+func _celebrate_then_reset(net) -> void:
+	await get_tree().create_timer(FootballConstants.NET_CELEBRATION_TIME).timeout
+	_reset_ball()
+	if net and is_instance_valid(net):
+		net.stop_sim()
+	_celebrating = false
 
 
 func _poll_ai_tackles() -> void:
