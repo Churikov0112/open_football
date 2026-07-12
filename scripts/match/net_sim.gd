@@ -87,6 +87,7 @@ static func integrate(net: Dictionary, ball_pos: Vector3, ball_speed: float,
 	var vel_scale: float = p["ball_vel_scale"]
 	var ball_force: float = p["ball_force"]
 	var ball_min_speed: float = p["ball_min_speed"]
+	var constraint_iterations: int = p["constraint_iterations"]
 
 	var force := PackedVector3Array()
 	force.resize(n)
@@ -124,5 +125,29 @@ static func integrate(net: Dictionary, ball_pos: Vector3, ball_speed: float,
 		var temp := pos[i]
 		pos[i] = pos[i] + (pos[i] - prev[i]) * damping + force[i] * dt2
 		prev[i] = temp
+	# Нерастяжимость (Position-Based Dynamics, метод Якобсена): после интегрирования сил
+	# несколько раз подтягиваем каждое ребро обратно к rest-длине. Сетка ведёт себя как
+	# плотная ткань — ячейки не растягиваются, — но свободно колышется/провисает.
+	# Модифицируем только pos (не prev): коррекция неявно гасится в скорости Верле.
+	for _iter in range(constraint_iterations):
+		for ek in range(e):
+			var ca: int = edges[ek * 2]
+			var cb: int = edges[ek * 2 + 1]
+			var a_pinned := pinned[ca] == 1
+			var b_pinned := pinned[cb] == 1
+			if a_pinned and b_pinned:
+				continue
+			var cd := pos[ca] - pos[cb]
+			var cdist := cd.length()
+			if cdist <= 0.00001:
+				continue
+			var corr := cd * ((cdist - rest_len[ek]) / cdist)
+			if a_pinned:
+				pos[cb] = pos[cb] + corr
+			elif b_pinned:
+				pos[ca] = pos[ca] - corr
+			else:
+				pos[ca] = pos[ca] - corr * 0.5
+				pos[cb] = pos[cb] + corr * 0.5
 	net["pos"] = pos
 	net["prev"] = prev

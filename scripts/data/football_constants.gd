@@ -343,6 +343,7 @@ const NET_DAMPING := 0.98          # затухание скорости узл�
 const NET_SPRING_STIFFNESS := 400.0 # жёсткость структурных пружин
 const NET_SHAPE_RETURN := 40.0     # тяга узла обратно к исходной форме
 const NET_SIM_STEP := 0.016        # dt шага симуляции (с)
+const NET_CONSTRAINT_ITERATIONS := 4   # проходов relaxation нерастяжимости за шаг (больше = жёстче ткань)
 const NET_BALL_RADIUS := 0.6       # радиус влияния мяча на узлы (м)
 const NET_BALL_VEL_SCALE := 0.4    # множитель толчка от скорости мяча (было 0.3)
 const NET_BALL_MIN_SPEED := 1.5    # мяч медленнее этого (м/с) НЕ толкает сетку (лежащий мяч не колышет)

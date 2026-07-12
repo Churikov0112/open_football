@@ -65,7 +65,7 @@ func _test_integrate() -> void:
 	var gp := {
 		"gravity": 50.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
 		"ball_radius": 1.0, "ball_vel_scale": 0.0, "ball_force": 0.0,
-		"ball_min_speed": 0.0,
+		"ball_min_speed": 0.0, "constraint_iterations": 0,
 	}
 	for _s in range(30):
 		NetSim.integrate(net, Vector3(0, -1000, 0), 0.0, gp, 0.1)
@@ -81,7 +81,7 @@ func _test_integrate() -> void:
 	var bp := {
 		"gravity": 0.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
 		"ball_radius": 1.0, "ball_vel_scale": 0.5, "ball_force": 100.0,
-		"ball_min_speed": 0.0,
+		"ball_min_speed": 0.0, "constraint_iterations": 0,
 	}
 	for _s2 in range(5):
 		NetSim.integrate(net2, ball_local, 5.0, bp, 0.1)
@@ -95,8 +95,27 @@ func _test_integrate() -> void:
 	var sp := {
 		"gravity": 0.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 20.0,
 		"ball_radius": 1.0, "ball_vel_scale": 0.5, "ball_force": 100.0,
-		"ball_min_speed": 1.5,
+		"ball_min_speed": 1.5, "constraint_iterations": 0,
 	}
 	for _s3 in range(20):
 		NetSim.integrate(net3, ball_at, 0.0, sp, 0.1)
 	_expect(net3["pos"][f3].distance_to(rest3) < 0.001, "resting ball does not push net")
+
+	# Нерастяжимость: под нагрузкой (гравитация) рёбра держат rest-длину — ткань, не резина.
+	var net4 := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2)
+	var cp := {
+		"gravity": 30.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
+		"ball_radius": 0.001, "ball_vel_scale": 0.0, "ball_force": 0.0,
+		"ball_min_speed": 0.0, "constraint_iterations": 5,
+	}
+	for _s4 in range(60):
+		NetSim.integrate(net4, Vector3(0, -100, 0), 0.0, cp, 0.03)
+	var edges4: PackedInt32Array = net4["edges"]
+	var rl4: PackedFloat32Array = net4["rest_len"]
+	var max_stretch := 0.0
+	for ek in range(edges4.size() / 2):
+		var cur: float = net4["pos"][edges4[ek * 2]].distance_to(net4["pos"][edges4[ek * 2 + 1]])
+		var st: float = absf(cur - rl4[ek]) / rl4[ek]
+		if st > max_stretch:
+			max_stretch = st
+	_expect(max_stretch < 0.06, "edges stay near rest length under load (max stretch %.3f)" % max_stretch)

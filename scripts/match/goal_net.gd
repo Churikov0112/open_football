@@ -27,6 +27,7 @@ func initialize(ball_ref: RigidBody3D) -> void:
 		"ball_vel_scale": C.NET_BALL_VEL_SCALE,
 		"ball_force": C.NET_BALL_FORCE,
 		"ball_min_speed": C.NET_BALL_MIN_SPEED,
+		"constraint_iterations": C.NET_CONSTRAINT_ITERATIONS,
 	}
 	_mat = StandardMaterial3D.new()
 	_mat.albedo_color = Color(1, 1, 1, 0.55)
