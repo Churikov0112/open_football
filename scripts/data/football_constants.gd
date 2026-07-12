@@ -341,9 +341,10 @@ const NET_DEPTH_DIV := 5           # ячеек по глубине (было 3)
 const NET_GRAVITY := 9.8           # ускорение провисания сетки (м/с²)
 const NET_DAMPING := 0.98          # затухание скорости узла за шаг Verlet
 const NET_SPRING_STIFFNESS := 400.0 # жёсткость структурных пружин
-const NET_SHAPE_RETURN := 8.0      # тяга узла к исходной форме (снижено с 40, чтобы был виден провис от slack)
+const NET_SHAPE_RETURN := 3.0      # тяга к исходной форме (снижено с 8, чтобы колыхание было свободнее)
 const NET_SIM_STEP := 0.016        # dt шага симуляции (с)
-const NET_CONSTRAINT_ITERATIONS := 4   # проходов relaxation нерастяжимости за шаг (больше = жёстче ткань)
+const NET_CONSTRAINT_ITERATIONS := 2   # проходов relaxation за шаг (снижено с 4 — мягче/живее)
+const NET_STIFFNESS := 0.2         # жёсткость связей 0..1: НИЗ = сетка свободно колышется/пружинит, 1.0 = жёсткая (стена)
 const NET_SLACK := 0.9              # запас материала сетки (1.0 = барабан, меньше = провисает свободнее)
 const NET_BALL_RADIUS := 0.6       # радиус влияния мяча на узлы (м)
 const NET_BALL_VEL_SCALE := 0.4    # множитель толчка от скорости мяча (было 0.3)

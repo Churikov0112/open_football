@@ -97,6 +97,7 @@ static func integrate(net: Dictionary, ball_pos: Vector3, ball_speed: float,
 	var ball_force: float = p["ball_force"]
 	var ball_min_speed: float = p["ball_min_speed"]
 	var constraint_iterations: int = p["constraint_iterations"]
+	var constraint_stiffness: float = p["constraint_stiffness"]
 
 	var force := PackedVector3Array()
 	force.resize(n)
@@ -150,7 +151,7 @@ static func integrate(net: Dictionary, ball_pos: Vector3, ball_speed: float,
 			var cdist := cd.length()
 			if cdist <= 0.00001:
 				continue
-			var corr := cd * ((cdist - rest_len[ek]) / cdist)
+			var corr := cd * ((cdist - rest_len[ek]) / cdist) * constraint_stiffness
 			if a_pinned:
 				pos[cb] = pos[cb] + corr
 			elif b_pinned:

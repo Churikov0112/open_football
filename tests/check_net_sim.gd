@@ -66,6 +66,17 @@ func _first_free(net: Dictionary) -> int:
 			return i
 	return -1
 
+func _max_edge_stretch(net: Dictionary) -> float:
+	var ed: PackedInt32Array = net["edges"]
+	var rl: PackedFloat32Array = net["rest_len"]
+	var m := 0.0
+	for k in range(ed.size() / 2):
+		var cur: float = net["pos"][ed[k * 2]].distance_to(net["pos"][ed[k * 2 + 1]])
+		var st: float = absf(cur - rl[k]) / rl[k]
+		if st > m:
+			m = st
+	return m
+
 func _test_integrate() -> void:
 	# Гравитация: свободный узел проседает ниже rest; закреплённые не двигаются.
 	var net := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2)
@@ -79,7 +90,7 @@ func _test_integrate() -> void:
 	var gp := {
 		"gravity": 50.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
 		"ball_radius": 1.0, "ball_vel_scale": 0.0, "ball_force": 0.0,
-		"ball_min_speed": 0.0, "constraint_iterations": 0,
+		"ball_min_speed": 0.0, "constraint_iterations": 0, "constraint_stiffness": 1.0,
 	}
 	for _s in range(30):
 		NetSim.integrate(net, Vector3(0, -1000, 0), 0.0, gp, 0.1)
@@ -95,7 +106,7 @@ func _test_integrate() -> void:
 	var bp := {
 		"gravity": 0.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
 		"ball_radius": 1.0, "ball_vel_scale": 0.5, "ball_force": 100.0,
-		"ball_min_speed": 0.0, "constraint_iterations": 0,
+		"ball_min_speed": 0.0, "constraint_iterations": 0, "constraint_stiffness": 1.0,
 	}
 	for _s2 in range(5):
 		NetSim.integrate(net2, ball_local, 5.0, bp, 0.1)
@@ -109,7 +120,7 @@ func _test_integrate() -> void:
 	var sp := {
 		"gravity": 0.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 20.0,
 		"ball_radius": 1.0, "ball_vel_scale": 0.5, "ball_force": 100.0,
-		"ball_min_speed": 1.5, "constraint_iterations": 0,
+		"ball_min_speed": 1.5, "constraint_iterations": 0, "constraint_stiffness": 1.0,
 	}
 	for _s3 in range(20):
 		NetSim.integrate(net3, ball_at, 0.0, sp, 0.1)
@@ -120,7 +131,7 @@ func _test_integrate() -> void:
 	var cp := {
 		"gravity": 30.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
 		"ball_radius": 0.001, "ball_vel_scale": 0.0, "ball_force": 0.0,
-		"ball_min_speed": 0.0, "constraint_iterations": 5,
+		"ball_min_speed": 0.0, "constraint_iterations": 5, "constraint_stiffness": 1.0,
 	}
 	for _s4 in range(60):
 		NetSim.integrate(net4, Vector3(0, -100, 0), 0.0, cp, 0.03)
@@ -133,3 +144,21 @@ func _test_integrate() -> void:
 		if st > max_stretch:
 			max_stretch = st
 	_expect(max_stretch < 0.06, "edges stay near rest length under load (max stretch %.3f)" % max_stretch)
+
+	# constraint_stiffness регулирует свободу: мягкие связи дают заметно больше провиса/растяжения.
+	var base_p := {
+		"gravity": 30.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
+		"ball_radius": 0.001, "ball_vel_scale": 0.0, "ball_force": 0.0,
+		"ball_min_speed": 0.0, "constraint_iterations": 2,
+	}
+	var net_stiff := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2)
+	var net_soft := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2)
+	var p_stiff := base_p.duplicate()
+	p_stiff["constraint_stiffness"] = 1.0
+	var p_soft := base_p.duplicate()
+	p_soft["constraint_stiffness"] = 0.15
+	for _sc in range(60):
+		NetSim.integrate(net_stiff, Vector3(0, -100, 0), 0.0, p_stiff, 0.03)
+		NetSim.integrate(net_soft, Vector3(0, -100, 0), 0.0, p_soft, 0.03)
+	_expect(_max_edge_stretch(net_soft) > _max_edge_stretch(net_stiff),
+		"softer constraint_stiffness gives more edge freedom")
