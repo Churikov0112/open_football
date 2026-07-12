@@ -18,6 +18,7 @@ var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var _attack_dir_z: float = -1.0
 var _controlled_marker: Polygon2D
 var _match_camera: Camera3D
+var _goal_nets: Dictionary = {}
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -411,6 +412,14 @@ func _setup_goals() -> void:
 		goal_group.add_child(post_right_back)
 		var crossbar_back := _make_crossbar(0, 2.44, net_z)
 		goal_group.add_child(crossbar_back)
+
+		# Сетка-колыхание (компонент GoalNet) на этих воротах.
+		var goal_net = preload("res://scripts/match/goal_net.gd").new()
+		goal_net.name = "GoalNet"
+		goal_group.add_child(goal_net)
+		goal_net.rotation.y = PI if g.side == "Home" else 0.0
+		goal_net.initialize(ball)
+		_goal_nets[g.side] = goal_net
 
 		var area := Area3D.new()
 		area.name = "GoalArea"
