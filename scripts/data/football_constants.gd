@@ -334,9 +334,9 @@ const CAMERA_TILT := -55.0         # градусов
 # ═══════════════════════════════════════════
 
 const NET_DEPTH := 1.5             # глубина коробки ворот за линией (м)
-const NET_WIDTH_DIV := 8           # ячеек решётки по ширине ворот
-const NET_HEIGHT_DIV := 6          # ячеек по высоте
-const NET_DEPTH_DIV := 3           # ячеек по глубине
+const NET_WIDTH_DIV := 24          # ячеек решётки по ширине ворот (было 8)
+const NET_HEIGHT_DIV := 12         # ячеек по высоте (было 6)
+const NET_DEPTH_DIV := 5           # ячеек по глубине (было 3)
 
 const NET_GRAVITY := 9.8           # ускорение провисания сетки (м/с²)
 const NET_DAMPING := 0.98          # затухание скорости узла за шаг Verlet
@@ -344,7 +344,8 @@ const NET_SPRING_STIFFNESS := 400.0 # жёсткость структурных 
 const NET_SHAPE_RETURN := 40.0     # тяга узла обратно к исходной форме
 const NET_SIM_STEP := 0.016        # dt шага симуляции (с)
 const NET_BALL_RADIUS := 0.6       # радиус влияния мяча на узлы (м)
-const NET_BALL_VEL_SCALE := 0.3    # добавка к толчку от скорости мяча
+const NET_BALL_VEL_SCALE := 0.4    # множитель толчка от скорости мяча (было 0.3)
+const NET_BALL_MIN_SPEED := 1.5    # мяч медленнее этого (м/с) НЕ толкает сетку (лежащий мяч не колышет)
 const NET_BALL_FORCE := 120.0      # базовая сила толчка мяча по нормали
 
 const NET_BOUNCE := 0.15           # упругость коллайдеров-стопперов сетки

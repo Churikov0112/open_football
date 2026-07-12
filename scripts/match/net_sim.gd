@@ -86,6 +86,7 @@ static func integrate(net: Dictionary, ball_pos: Vector3, ball_speed: float,
 	var radius: float = p["ball_radius"]
 	var vel_scale: float = p["ball_vel_scale"]
 	var ball_force: float = p["ball_force"]
+	var ball_min_speed: float = p["ball_min_speed"]
 
 	var force := PackedVector3Array()
 	force.resize(n)
@@ -97,8 +98,9 @@ static func integrate(net: Dictionary, ball_pos: Vector3, ball_speed: float,
 		f += (rest[i] - pos[i]) * shape_return
 		var d := pos[i] - ball_pos
 		var prox := 1.0 - smoothstep(radius, radius * 1.15, d.length())
-		if prox > 0.0:
-			f += normal[i] * prox * (1.0 + ball_speed * vel_scale) * ball_force
+		var push_speed := maxf(0.0, ball_speed - ball_min_speed)
+		if prox > 0.0 and push_speed > 0.0:
+			f += normal[i] * prox * push_speed * vel_scale * ball_force
 		force[i] = f
 	# Пружины по рёбрам (симметрично на оба конца).
 	var e := edges.size() / 2

@@ -65,6 +65,7 @@ func _test_integrate() -> void:
 	var gp := {
 		"gravity": 50.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
 		"ball_radius": 1.0, "ball_vel_scale": 0.0, "ball_force": 0.0,
+		"ball_min_speed": 0.0,
 	}
 	for _s in range(30):
 		NetSim.integrate(net, Vector3(0, -1000, 0), 0.0, gp, 0.1)
@@ -80,7 +81,22 @@ func _test_integrate() -> void:
 	var bp := {
 		"gravity": 0.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
 		"ball_radius": 1.0, "ball_vel_scale": 0.5, "ball_force": 100.0,
+		"ball_min_speed": 0.0,
 	}
 	for _s2 in range(5):
 		NetSim.integrate(net2, ball_local, 5.0, bp, 0.1)
 	_expect(net2["pos"][f2].z > rest_z + 0.001, "ball pushes near node outward (+z)")
+
+	# Мяч в покое (ball_speed=0) НЕ толкает сетку: узел остаётся у rest.
+	var net3 := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2)
+	var f3 := _first_free(net3)
+	var rest3: Vector3 = net3["rest"][f3]
+	var ball_at: Vector3 = rest3 - Vector3(0, 0, 0.05)  # мяч вплотную, но неподвижен
+	var sp := {
+		"gravity": 0.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 20.0,
+		"ball_radius": 1.0, "ball_vel_scale": 0.5, "ball_force": 100.0,
+		"ball_min_speed": 1.5,
+	}
+	for _s3 in range(20):
+		NetSim.integrate(net3, ball_at, 0.0, sp, 0.1)
+	_expect(net3["pos"][f3].distance_to(rest3) < 0.001, "resting ball does not push net")
