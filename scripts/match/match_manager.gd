@@ -587,6 +587,9 @@ func _setup_teammate() -> void:
 	new_player.controlled_player = controlled_player
 	new_player.teammate_home_goal = $GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null
 	player_teammate = new_player
+	# DEBUG: соперник опекает именно этого тиммейта (он спавнится после соперника — ссылку ставим тут).
+	if FootballConstants.DEBUG_MARK_TEAMMATE and player_away and is_instance_valid(player_away):
+		player_away.set(&"mark_target", new_player)
 
 
 func _process(delta: float) -> void:
@@ -977,6 +980,19 @@ func _we_possess() -> bool:
 ##  - loose: мяч бесхозный/летящий (dribbler == null) и в разумной близости — СПОРНЫЙ мяч
 ##    (борьба с соперником). Заряжать можно; удар выполнится, только если добежим первыми
 ##    (см. отмену taken_by_other и «ближе всех» в _try_fire_queue).
+## Есть ли соперник (team_2) СТРОГО ближе к мячу, чем наш игрок. Спорный мяч тогда скорее его —
+## на нажатие кнопки логичнее подкат (отобрать), а не заряд удара в очередь.
+func _opponent_closer_to_ball(player_node: Node3D) -> bool:
+	if player_node == null or not is_instance_valid(player_node):
+		return false
+	var my_d: float = player_node.global_position.distance_to(ball.global_position)
+	for opp in get_tree().get_nodes_in_group("team_2"):
+		if opp is Node3D and is_instance_valid(opp) \
+				and (opp as Node3D).global_position.distance_to(ball.global_position) < my_d:
+			return true
+	return false
+
+
 func _can_queue(player_node: CharacterBody3D) -> bool:
 	if player_node == null or not is_instance_valid(player_node):
 		return false
@@ -989,8 +1005,12 @@ func _can_queue(player_node: CharacterBody3D) -> bool:
 		return false  # мячом владеет кто-то другой (соперник/партнёр) → подкат/смена, не очередь
 	var incoming: bool = _receive_active and _receiver == player_node
 	var breakaway: bool = _is_our_dribbler(player_node)
+	# Ничейный мяч рядом → очередь одного касания, НО только если соперник не ближе к мячу: если
+	# он ближе, спорный мяч скорее его — логичнее подкат (отобрать), а не заряд удара, который всё
+	# равно не выстрелит (гейт «добрался первым» в _try_fire_queue) и лишь съест нажатие.
 	var loose: bool = (not ball.has_method(&"set_dribbler") or ball.dribbler == null) \
-		and player_node.global_position.distance_to(ball.global_position) <= FootballConstants.QUEUE_CONSIDER_RADIUS
+		and player_node.global_position.distance_to(ball.global_position) <= FootballConstants.QUEUE_CONSIDER_RADIUS \
+		and not _opponent_closer_to_ball(player_node)
 	# Наш мяч в полёте (пас нашей команды, летит) — на ЛЮБОЙ дистанции: принимающий бежит на длинный
 	# пас на ход, receive-assist истёк по таймауту, а мяч дальше QUEUE_CONSIDER_RADIUS. Не соперника
 	# (last_kicker из team_1) и не свой же удар (last_kicker != этот игрок) → удар в очередь, не подкат.

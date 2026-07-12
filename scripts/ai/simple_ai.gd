@@ -12,6 +12,9 @@ extends CharacterBody3D
 var can_kick: bool = true
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var _wander_timer: float = 0.0
+
+## DEBUG: кого маркировать (ставит менеджер при DEBUG_MARK_TEAMMATE) — встаём в линию паса к нему.
+var mark_target: Node3D = null
 var wants_to_tackle: bool = false
 var tackle_cooldown: float = 0.0
 
@@ -67,7 +70,11 @@ func _physics_process(delta: float) -> void:
 				m.set_move_intent(dir.normalized(), _base_scale())
 			return
 
-	if _is_dribbling():
+	if FootballConstants.DEBUG_MARK_TEAMMATE:
+		# DEBUG-режим: не гоняемся за мячом/воротами — только держим тиммейта под опекой.
+		# Перехват (выше) и подкат (ниже) остаются живыми — это и есть предмет теста.
+		_mark(delta)
+	elif _is_dribbling():
 		_dribble_toward_goal(delta)
 	elif target_node and is_instance_valid(target_node):
 		_chase_target(target_node, delta)
@@ -93,6 +100,27 @@ func _physics_process(delta: float) -> void:
 
 func _is_dribbling() -> bool:
 	return ball.has_method(&"set_dribbler") and is_instance_valid(ball) and ball.dribbler == self
+
+
+## DEBUG-маркировка: встаём между мячом и тиммейтом (в линию паса) на DEBUG_MARK_DISTANCE,
+## чтобы честный перехват и подкат реально срабатывали при пасе на этого тиммейта.
+func _mark(delta: float) -> void:
+	if mark_target == null or not is_instance_valid(mark_target):
+		_wander(delta)
+		return
+	var tpos := mark_target.global_position
+	var to_ball := ball.global_position - tpos
+	to_ball.y = 0.0
+	var off: Vector3
+	if to_ball.length() > 0.1:
+		off = to_ball.normalized() * FootballConstants.DEBUG_MARK_DISTANCE
+	else:
+		off = Vector3(0, 0, FootballConstants.DEBUG_MARK_DISTANCE)  # мяч у ног тиммейта → чуть в сторону наших ворот (+Z)
+	var target := tpos + off
+	target.y = global_position.y
+	var dir := (target - global_position)
+	dir.y = 0.0
+	_move_or_wander(dir, delta)
 
 
 func _chase_target(target: Node3D, delta: float) -> void:
