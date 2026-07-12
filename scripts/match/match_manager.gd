@@ -402,6 +402,16 @@ func _setup_goals() -> void:
 		var crossbar := _make_crossbar(0, 2.44, 0)
 		goal_group.add_child(crossbar)
 
+		# Объёмный box: задний каркас на глубине NET_DEPTH за линией ворот.
+		var ds: float = -1.0 if g.side == "Home" else 1.0
+		var net_z: float = ds * FootballConstants.NET_DEPTH
+		var post_left_back := _make_post(-3.66, 0, net_z)
+		goal_group.add_child(post_left_back)
+		var post_right_back := _make_post(3.66, 0, net_z)
+		goal_group.add_child(post_right_back)
+		var crossbar_back := _make_crossbar(0, 2.44, net_z)
+		goal_group.add_child(crossbar_back)
+
 		var area := Area3D.new()
 		area.name = "GoalArea"
 		area.add_to_group("goal")
