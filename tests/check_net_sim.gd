@@ -6,6 +6,7 @@ var _ok := true
 
 func _init() -> void:
 	_test_topology()
+	_test_integrate()
 	if _ok:
 		print("CHECK PASS")
 		quit(0)
@@ -44,3 +45,42 @@ func _test_topology() -> void:
 		if absf(net["pos"][a].distance_to(net["pos"][b]) - net["rest_len"][k]) > 0.0001:
 			bad += 1
 	_expect(bad == 0, "rest_len == actual edge length")
+
+func _first_free(net: Dictionary) -> int:
+	for i in range(net["pinned"].size()):
+		if net["pinned"][i] == 0:
+			return i
+	return -1
+
+func _test_integrate() -> void:
+	# Гравитация: свободный узел проседает ниже rest; закреплённые не двигаются.
+	var net := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2)
+	var free := _first_free(net)
+	_expect(free >= 0, "has a free node")
+	var rest_y: float = net["rest"][free].y
+	# Запомним позицию любого закреплённого узла.
+	var pin_idx := 0
+	var pin_before: Vector3 = net["pos"][pin_idx]
+	_expect(net["pinned"][pin_idx] == 1, "node 0 is pinned (panel corner)")
+	var gp := {
+		"gravity": 50.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
+		"ball_radius": 1.0, "ball_vel_scale": 0.0, "ball_force": 0.0,
+	}
+	for _s in range(30):
+		NetSim.integrate(net, Vector3(0, -1000, 0), 0.0, gp, 0.1)
+	_expect(net["pos"][free].y < rest_y - 0.01, "free node sags under gravity")
+	_expect(net["pos"][pin_idx].distance_to(pin_before) < 0.0001, "pinned node did not move")
+
+	# Толчок мяча: узел у мяча смещается наружу вдоль нормали (+z для задней панели).
+	var net2 := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2)
+	var f2 := _first_free(net2)
+	var rest_z: float = net2["rest"][f2].z
+	# Мяч чуть «внутри» узла (со стороны поля), в радиусе влияния.
+	var ball_local: Vector3 = net2["rest"][f2] - Vector3(0, 0, 0.1)
+	var bp := {
+		"gravity": 0.0, "damping": 0.9, "stiffness": 0.0, "shape_return": 0.0,
+		"ball_radius": 1.0, "ball_vel_scale": 0.5, "ball_force": 100.0,
+	}
+	for _s2 in range(5):
+		NetSim.integrate(net2, ball_local, 5.0, bp, 0.1)
+	_expect(net2["pos"][f2].z > rest_z + 0.001, "ball pushes near node outward (+z)")

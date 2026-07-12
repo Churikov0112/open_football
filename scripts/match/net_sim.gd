@@ -65,3 +65,62 @@ static func _add_edge(net: Dictionary, a: int, b: int) -> void:
 	net["edges"].append(a)
 	net["edges"].append(b)
 	net["rest_len"].append(net["pos"][a].distance_to(net["pos"][b]))
+
+# Один шаг полу-неявного Verlet. Мутирует net["pos"]/net["prev"]. Силы —
+# ускорения; интегрируется как pos += (pos-prev)*damping + force*dt*dt.
+static func integrate(net: Dictionary, ball_pos: Vector3, ball_speed: float,
+		p: Dictionary, dt: float) -> void:
+	var pos: PackedVector3Array = net["pos"]
+	var prev: PackedVector3Array = net["prev"]
+	var rest: PackedVector3Array = net["rest"]
+	var pinned: PackedByteArray = net["pinned"]
+	var normal: PackedVector3Array = net["normal"]
+	var edges: PackedInt32Array = net["edges"]
+	var rest_len: PackedFloat32Array = net["rest_len"]
+	var n := pos.size()
+
+	var gravity: float = p["gravity"]
+	var damping: float = p["damping"]
+	var stiffness: float = p["stiffness"]
+	var shape_return: float = p["shape_return"]
+	var radius: float = p["ball_radius"]
+	var vel_scale: float = p["ball_vel_scale"]
+	var ball_force: float = p["ball_force"]
+
+	var force := PackedVector3Array()
+	force.resize(n)
+	# Узловые силы: гравитация, возврат к форме, толчок мяча.
+	for i in range(n):
+		if pinned[i] == 1:
+			continue
+		var f := Vector3(0.0, -gravity, 0.0)
+		f += (rest[i] - pos[i]) * shape_return
+		var d := pos[i] - ball_pos
+		var prox := 1.0 - smoothstep(radius, radius * 1.15, d.length())
+		if prox > 0.0:
+			f += normal[i] * prox * (1.0 + ball_speed * vel_scale) * ball_force
+		force[i] = f
+	# Пружины по рёбрам (симметрично на оба конца).
+	var e := edges.size() / 2
+	for k in range(e):
+		var a: int = edges[k * 2]
+		var b: int = edges[k * 2 + 1]
+		var sv := pos[a] - pos[b]
+		var length := sv.length()
+		if length > 0.00001:
+			var sf := -sv * (stiffness * (1.0 - rest_len[k] / length))
+			if pinned[a] == 0:
+				force[a] = force[a] + sf
+			if pinned[b] == 0:
+				force[b] = force[b] - sf
+	# Verlet-шаг.
+	var dt2 := dt * dt
+	for i in range(n):
+		if pinned[i] == 1:
+			prev[i] = pos[i]
+			continue
+		var temp := pos[i]
+		pos[i] = pos[i] + (pos[i] - prev[i]) * damping + force[i] * dt2
+		prev[i] = temp
+	net["pos"] = pos
+	net["prev"] = prev
