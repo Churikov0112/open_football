@@ -421,6 +421,16 @@ func _setup_goals() -> void:
 		goal_net.initialize(ball)
 		_goal_nets[g.side] = goal_net
 
+		# Стопперы: мяч влетает в открытый перёд, тормозит о заднюю/боковые/верхнюю сетку.
+		var w := FootballConstants.GOAL_WIDTH
+		var h := FootballConstants.GOAL_HEIGHT
+		var nd := FootballConstants.NET_DEPTH
+		var t := 0.1
+		goal_group.add_child(_make_net_collider(Vector3(0, h * 0.5, ds * nd), Vector3(w, h, t)))          # задняя
+		goal_group.add_child(_make_net_collider(Vector3(0, h, ds * nd * 0.5), Vector3(w, t, nd)))          # верх
+		goal_group.add_child(_make_net_collider(Vector3(-w * 0.5, h * 0.5, ds * nd * 0.5), Vector3(t, h, nd)))  # лево
+		goal_group.add_child(_make_net_collider(Vector3(w * 0.5, h * 0.5, ds * nd * 0.5), Vector3(t, h, nd)))   # право
+
 		var area := Area3D.new()
 		area.name = "GoalArea"
 		area.add_to_group("goal")
@@ -470,6 +480,23 @@ func _make_crossbar(x: float, y: float, z: float) -> MeshInstance3D:
 	mi.position = Vector3(x, y, z)
 	mi.rotation.z = deg_to_rad(90)
 	return mi
+
+
+func _make_net_collider(local_pos: Vector3, size: Vector3) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	body.collision_layer = FootballConstants.BOUNDARY_COLLISION_LAYER
+	body.collision_mask = 0
+	var pm := PhysicsMaterial.new()
+	pm.bounce = FootballConstants.NET_BOUNCE
+	pm.friction = FootballConstants.NET_FRICTION
+	body.physics_material_override = pm
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	col.shape = shape
+	body.add_child(col)
+	body.position = local_pos
+	return body
 
 
 func _setup_boundaries() -> void:
