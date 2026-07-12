@@ -20,7 +20,7 @@ func _process(_delta: float) -> bool:
 		return false  # ждём, пока отработает _ready
 	var ok := true
 	# Действия, для которых у нас есть клипы в footballer.glb.
-	var want := ["kick", "pass", "penalty", "header", "header_alt", "header_jump", "throw_in"]
+	var want := ["kick", "pass", "penalty", "throw_in"]
 	for a in want:
 		if not _inst.has_action(a):
 			print("CHECK FAIL: нет one-shot стейта под действие '%s'" % a)

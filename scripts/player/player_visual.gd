@@ -20,9 +20,6 @@ const ACTION_CLIPS := {
 	"kick": "pass",
 	"pass": "pass",
 	"penalty": "penalty_kick",
-	"header": "idle_header",
-	"header_alt": "idle_header_2",
-	"header_jump": "idle_header_jump",
 	"throw_in": "throw_in",
 }
 ## Клипы, которые нужно зациклить; остальные one-shot доигрывают и авто-возвращаются.

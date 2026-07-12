@@ -42,9 +42,10 @@
 - **RigidBody3D**, радиус 0.11m, масса 0.43kg
 - Процедурная текстура (белый + чёрные шестиугольники PNG)
 - Drag: `0.985` (горизонталь), `0.999` (вертикаль)
-- **Дриблинг:** velocity-matching через `_integrate_forces` (НЕ spring-force)
-  - Скорость мяча = скорость дриблера + скорректированное смещение (`disp * 30`, кламп 12)
-  - `SPRING_*` константы в `football_constants.gd` — legacy, не используются
+- **Дриблинг:** непрерывное lead-удержание через `_integrate_forces` (НЕ velocity-matching и НЕ spring)
+  - Мяч удерживается впереди дриблёра на дистанции, растущей со скоростью (плотно медленно, далеко на спринте); вырвался за `DRIBBLE_CHASE_DIST` → игрок авто-догоняет. Стик задаёт направление удержания. Полная модель — в `CLAUDE.md` (*Ball model & dribbling*)
+  - Стейт-машина мяча `BallState { OPEN, TRAPPED, FLIGHT, CAUGHT }`; коллизия мяча с игроками — только в полёте (FLIGHT), блок через `block_in_flight()`
+  - `SPRING_*`, `DRIBBLE_FORWARD_DIST` в `football_constants.gd` — legacy, не используются
   - После удара/паса kicker не может подхватить мяч 1.5 секунды
 
 ## Локомоция (PlayerMotor)
@@ -107,7 +108,7 @@ OpenFootball/
 │   │   ├── simple_ai.gd    — AI противника (team_2, красный)
 │   │   └── teammate_ai.gd  — AI напарника (team_1, синий; также для PlayerHome когда не под управлением человека)
 │   ├── ball/
-│   │   └── ball_controller.gd  — физика мяча, дриблинг (velocity-matching)
+│   │   └── ball_controller.gd  — физика мяча, дриблинг (lead-follow), BallState, Magnus
 │   └── camera/
 │       └── match_camera.gd — FIFA-style камера
 ├── assets/
@@ -129,7 +130,7 @@ OpenFootball/
 - [x] HUD со счётом
 - [x] FIFA-style камера (слежение за мячом сверху-сзади)
 - [x] Управление WASD + Space (удар) + E (пас)
-- [x] Дриблинг (velocity-matching, мяч «приклеен» к ноге)
+- [x] Дриблинг (непрерывное lead-удержание: мяч впереди, дальше на скорости, догон при отрыве)
 - [x] AI: бежит к мячу, дриблит, бьёт по воротам
 - [x] Сброс мяча после гола
 - [x] Невидимые стенки по краям
@@ -160,8 +161,8 @@ OpenFootball/
 ## FIFA/PES Reference
 
 - **Камера:** классическая FIFA — над и позади мяча, смотрит по направлению атаки
-- **Физика мяча:** drag с затуханием, отскок от газона (реализовано в `_integrate_forces`), отскок от штанг
-- **Дриблинг:** мяч «приклеен» к ноге — не отлетает при беге, следует за поворотом игрока
+- **Физика мяча:** drag с затуханием, отскок от газона/штанг, коллизия с игроками только в полёте (FLIGHT, `continuous_cd`), блок летящего мяча
+- **Дриблинг:** непрерывное lead-удержание — мяч впереди игрока, дальше на скорости; вырвался → игрок догоняет (не «приклеен»)
 - **Удар/пас:** направление по движению игрока (не по тому, куда смотрит камера)
 - **Приём мяча:** автоматический, в радиусе 1m
 - **AI:** прессинг ближайшего к мячу, при дриблинге движется к воротам, бьёт с дистанции
@@ -171,8 +172,8 @@ OpenFootball/
 - `CharacterBody3D` для игроков, `RigidBody3D` для мяча — бесплатная физика
 - **Три компонента на игрока:** gameplay (`CharacterBody3D` + AI/input) / motor (`PlayerMotor`, locomotion) / visual (`PlayerVisual`, модель + анимация). Каждый — отдельный дочерний узел; общаются через публичный API (`set_move_intent`, `set_locomotion`, `set_lean`)
 - **Локомоция через `PlayerMotor`:** velocity + inertia + `move_and_slide()`. Никаких прямых `global_position`/`rotation`. Вызов `motor.set_move_intent(dir, speed_scale)` — единственный способ движения
-- **Collision layers — три отдельных слоя:** default (бит 1: поле + мяч, для Area3D-детекции), player (бит 2: `PLAYER_COLLISION_MASK`), boundary (бит 3: `BOUNDARY_COLLISION_LAYER`). Игроки не маскируют слой мяча — иначе `move_and_slide()` физически цепляет мяч (дёрганый дриблинг)
-- Дриблинг через velocity-matching в `_integrate_forces` — мяч копирует скорость дриблера + коррекция позиции (`disp * 30`, кламп 12)
+- **Collision layers — три отдельных слоя:** default (бит 1: поле + мяч, для Area3D-детекции), player (бит 2: `PLAYER_COLLISION_MASK`), boundary (бит 3: `BOUNDARY_COLLISION_LAYER`). Игроки не маскируют слой мяча. Коллизия мяч↔игрок — **только в полёте**: мяч добавляет бит игроков в свою маску лишь в `FLIGHT` (удар/пас → блок/перехват) и убирает на дриблинге/подборе (иначе капсула расталкивает мяч — дёрганый контроль/спавн-толчок)
+- Дриблинг через непрерывное lead-удержание в `_integrate_forces` (модель — в `CLAUDE.md`); старый velocity-matching/spring выпилен
 - InputMap настраивается программно в `_setup_inputs()` — `project.godot` не используется
 - **Разделение геймплей/презентация:** физика/AI на `CharacterBody3D` не знают про модель; визуал — отдельный `PlayerVisual`, получает скорость от `PlayerMotor.set_locomotion()`
 - Модели/анимации игроков — Mixamo, собираются в `.glb` через headless Blender (`tools/merge_mixamo.py`); в репо только `.glb`, сырые FBX gitignored (public/open-source)

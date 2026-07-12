@@ -32,6 +32,13 @@ func _initialize() -> void:
 	if not is_equal_approx(lg.normalized().dot(Vector3(3, 0, 4).normalized()), 1.0):
 		print("CHECK FAIL: launch_ground direction"); ok = false
 
+	# launch_ground с подъёмом: горизонталь прежней длины power, плюс вертикаль up.
+	var lgu := PassSystem.launch_ground(Vector3.ZERO, Vector3(3, 0, 4), 10.0, 1.5)
+	if not is_equal_approx(Vector3(lgu.x, 0, lgu.z).length(), 10.0):
+		print("CHECK FAIL: launch_ground(up) horizontal magnitude → ", lgu); ok = false
+	if not is_equal_approx(lgu.y, 1.5):
+		print("CHECK FAIL: launch_ground(up) vertical → ", lgu); ok = false
+
 	# launch_lob: ре-симуляция дуги приземляет мяч ≈ в to, пик ≈ peak_height.
 	var g := 20.0
 	var v0 := PassSystem.launch_lob(Vector3.ZERO, Vector3(12, 0, 0), 3.0, g)
@@ -94,6 +101,18 @@ func _initialize() -> void:
 		print("CHECK FAIL: ground_pass_speed min clamp"); ok = false
 	if not is_equal_approx(PassSystem.ground_pass_speed(100.0, 1.0, 0.5, 1.4, 4.0, 28.0), 28.0):
 		print("CHECK FAIL: ground_pass_speed max clamp"); ok = false
+
+	# receive_point: пас в ноги (мяч летит прямо в принимающего) → цель == позиция принимающего (стоим).
+	var rp_online := PassSystem.receive_point(Vector3(2, 0, 3), Vector3(2, 0, 13), Vector3(0, 0, -5), 0.2, 0.9)
+	if not rp_online.is_equal_approx(Vector3(2, 0, 3)):
+		print("CHECK FAIL: receive_point to-feet → stand → ", rp_online); ok = false
+	# мяч идёт вбок мимо → ведём вперёд по скорости на lead_time.
+	var rp_side := PassSystem.receive_point(Vector3(0, 0, 0), Vector3(0, 0, 10), Vector3(5, 0, 0), 0.2, 0.9)
+	if not rp_side.is_equal_approx(Vector3(1.0, 0, 10)):
+		print("CHECK FAIL: receive_point side lead → ", rp_side); ok = false
+	# нулевая скорость мяча → позиция мяча.
+	if not PassSystem.receive_point(Vector3(0, 0, 0), Vector3(3, 0, 7), Vector3.ZERO, 0.2, 0.9).is_equal_approx(Vector3(3, 0, 7)):
+		print("CHECK FAIL: receive_point zero vel → ball pos"); ok = false
 
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)

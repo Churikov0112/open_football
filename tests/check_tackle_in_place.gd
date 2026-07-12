@@ -1,10 +1,12 @@
 extends SceneTree
 
-# Проверяет, что у клипов из IN_PLACE_CLIPS позиция Hips (X, Y, Z) почти не меняется
-# вдоль клипа — т.е. root motion убран (клип in-place) по всем трём осям. Раньше
-# проверяли только горизонталь (X,Z), считая вертикаль (Y) безобидным "бобом" — но
-# у tackle.fbx она оказалась неограниченным дрейфом (Hips монотонно уезжал вверх на
-# несколько метров за клип), из-за чего подкатчик визуально зависал в воздухе.
+# Проверяет, что у клипов из IN_PLACE_CLIPS убран ГОРИЗОНТАЛЬНЫЙ root motion.
+# ВАЖНО: у Hips в этом glb локальная ось Z Position3D-трека = МИРОВАЯ ВЕРТИКАЛЬ (присед/
+# подъём таза), а X/Y — горизонталь. Поэтому:
+#  • tackle морозится по горизонтали (Blender-оси 0,2), а вертикаль (трек-Z) ОСТАЁТСЯ живой —
+#    таз должен опускаться к земле в слайде (иначе подкатчик «висит в воздухе»). Проверяем,
+#    что заморожены X/Y, а Z (вертикаль) допускаем.
+#  • roll_left/roll_right пока морозятся по всем трём — проверяем все оси.
 func _initialize() -> void:
 	var ok := true
 	var scene: PackedScene = load("res://assets/models/footballer.glb")
@@ -16,6 +18,8 @@ func _initialize() -> void:
 		print("CHECK FAIL: нет AnimationPlayer в glb"); quit(1); return
 
 	var eps := 0.05  # метры в единицах модели; дрейф больше — значит root motion остался
+	# clip -> проверять ли вертикаль (трек-Z). Для tackle вертикаль намеренно живая.
+	var check_vertical := {"tackle": false, "roll_left": true, "roll_right": true}
 	for clip in ["tackle", "roll_left", "roll_right"]:
 		if not ap.has_animation(clip):
 			print("CHECK FAIL: нет клипа ", clip); ok = false; continue
@@ -32,8 +36,16 @@ func _initialize() -> void:
 		var drift_x := max_x - min_x
 		var drift_y := max_y - min_y
 		var drift_z := max_z - min_z
-		if drift_x > eps or drift_y > eps or drift_z > eps:
-			print("CHECK FAIL: ", clip, " дрейф Hips X=", drift_x, " Y=", drift_y, " Z=", drift_z); ok = false
+		print("  ", clip, " дрейф Hips X=", drift_x, " Y=", drift_y, " Z(верт)=", drift_z)
+		# Горизонталь (X,Y) должна быть заморожена всегда.
+		if drift_x > eps or drift_y > eps:
+			print("CHECK FAIL: ", clip, " горизонтальный дрейф Hips X=", drift_x, " Y=", drift_y); ok = false
+		# Вертикаль (Z) — только там, где морозим все три (роллы).
+		if check_vertical[clip] and drift_z > eps:
+			print("CHECK FAIL: ", clip, " вертикальный дрейф Hips Z=", drift_z); ok = false
+		# У tackle вертикаль ОБЯЗАНА быть живой (иначе таз пришпилен → зависание).
+		if clip == "tackle" and drift_z <= eps:
+			print("CHECK FAIL: tackle вертикаль Hips заморожена (Z дрейф=", drift_z, ") — таз не приседает, вернётся зависание"); ok = false
 
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)

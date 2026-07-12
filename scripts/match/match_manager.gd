@@ -13,8 +13,11 @@ var player_teammate: CharacterBody3D
 var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
-var controlled_player_indicator: MeshInstance3D
-var _target_indicator: MeshInstance3D
+# team_1 атакует −Z в первом тайме; половина флипает знак (будущий half-time-свап).
+# ОДНО место, задающее сторону чужих ворот для прицела ударов — см. _target_goal_center().
+var _attack_dir_z: float = -1.0
+var _controlled_marker: Polygon2D
+var _match_camera: Camera3D
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -52,24 +55,39 @@ var _manual_swap_cooldown: int = 0
 var _kick_action_active: bool = false
 
 # Обобщённый заряд: одно действие заряжается за раз (удар ИЛИ один из пасов).
-enum ChargeAction { NONE, SHOT, PASS_SHORT, PASS_THROUGH, PASS_LOB, PASS_WALL, PASS_THROUGH_AIR }
+enum ChargeAction { NONE, SHOT, SHOT_CURL, SHOT_CHIP, CLEARANCE, PASS_SHORT, PASS_THROUGH, PASS_LOB, PASS_WALL, PASS_THROUGH_AIR }
 var _charge_action: ChargeAction = ChargeAction.NONE
 var _charge_time: float = 0.0
 var _charge_player: CharacterBody3D
 const KICK_CHARGE_MAX_TIME: float = 0.5
-const KICK_POWER_MIN: float = 12.0
-const KICK_POWER_MAX: float = 25.0
 
 var _pass_rng := RandomNumberGenerator.new()
 var _pending_launch: Vector3 = Vector3.ZERO
+var _pending_curl: Vector3 = Vector3.ZERO
+
+# DEBUG: цветной след за мячом (траектория удара)
+var _trail: MeshInstance3D
+var _trail_mesh: ImmediateMesh
+var _trail_points: PackedVector3Array = PackedVector3Array()
 
 # Receive-assist: пока летит пас, слегка подруливаем ввод человека-адресата к мячу.
 var _receive_active: bool = false
 var _receiver: CharacterBody3D
 var _receive_timer: float = 0.0
 
+# Очередь действия «в одно касание»: заряжаем удар/пас, пока мяч ещё не у ног (летит пасом,
+# убежал вперёд в спринт-дриблинге, или это спорный ничейный мяч), бьём в момент, когда
+# игрок дотянулся до мяча.
+var _queued_action: ChargeAction = ChargeAction.NONE
+var _queue_player: CharacterBody3D
+var _queue_ratio: float = 0.0
+var _queue_timer: float = 0.0
+
 func _is_charging() -> bool:
 	return _charge_action != ChargeAction.NONE
+
+func _is_queued() -> bool:
+	return _queued_action != ChargeAction.NONE
 
 
 func _ready() -> void:
@@ -99,9 +117,48 @@ func _ready() -> void:
 	_setup_boundaries()
 	_give_ai_to_player_home()
 	_setup_controlled_indicator()
-	_setup_target_indicator()
 	_setup_tackle_area()
 	_setup_power_bar()
+	_setup_ball_trail()
+
+
+## DEBUG: линия-след за мячом. MeshInstance3D + ImmediateMesh, перестраивается каждый кадр
+## из истории позиций мяча. Цвет: свежая часть яркая, хвост затухает. Выкл через DEBUG_BALL_TRAIL.
+func _setup_ball_trail() -> void:
+	if not FootballConstants.DEBUG_BALL_TRAIL:
+		return
+	_trail_mesh = ImmediateMesh.new()
+	_trail = MeshInstance3D.new()
+	_trail.mesh = _trail_mesh
+	_trail.name = "BallTrail"
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.no_depth_test = true  # линия видна поверх газона/мяча
+	_trail.material_override = mat
+	add_child(_trail)
+
+
+## Дописать текущую позицию мяча в историю и перестроить линию. Свежая часть яркая, хвост
+## затухает по alpha; цвет: оранжевый пока мяч в полёте (удар/пас), иначе циан.
+func _update_ball_trail(ball_pos: Vector3) -> void:
+	_trail_points.push_back(ball_pos)
+	var max_pts: int = FootballConstants.DEBUG_BALL_TRAIL_POINTS
+	while _trail_points.size() > max_pts:
+		_trail_points.remove_at(0)
+	_trail_mesh.clear_surfaces()
+	var n := _trail_points.size()
+	if n < 2:
+		return
+	var in_flight: bool = ball.has_method(&"is_flight") and ball.is_flight()
+	var base := Color(1.0, 0.5, 0.0) if in_flight else Color(0.1, 0.9, 1.0)
+	_trail_mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	for i in range(n):
+		var t := float(i) / float(n - 1)  # 0 = хвост (старое), 1 = голова (свежее)
+		_trail_mesh.surface_set_color(Color(base.r, base.g, base.b, t))
+		_trail_mesh.surface_add_vertex(_trail_points[i])
+	_trail_mesh.surface_end()
 
 
 func _setup_power_bar() -> void:
@@ -139,6 +196,7 @@ func _setup_inputs() -> void:
 		&"pass_through":    {"keys": [KEY_W],     "buttons": [JOY_BUTTON_Y], "axes": []},
 		&"pass_lob":        {"keys": [KEY_A],     "buttons": [JOY_BUTTON_B], "axes": []},
 		&"combo_modifier":  {"keys": [KEY_Q],     "buttons": [JOY_BUTTON_LEFT_SHOULDER], "axes": []},
+		&"combo_curl":      {"keys": [KEY_E],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 	}
 	for action in actions:
@@ -308,8 +366,10 @@ func _setup_field_markings() -> void:
 func _setup_ball() -> void:
 	ball.script = preload("res://scripts/ball/ball_controller.gd")
 	ball.set_script(ball.script)
-	# Мяч остаётся на слое 1 (гол-детект и подкат-детект завязаны на это), но должен
-	# сталкиваться и с питчем (слой 1), и с границами (ушли на отдельный слой) — иначе улетит за поле.
+	# Мяч на слое 1 (гол/подкат-детект завязаны на это), сталкивается с питчем (1) и границами.
+	# Слой ИГРОКОВ добавляется в маску ТОЛЬКО на время полёта (ball_controller, состояние FLIGHT):
+	# на дриблинге/подборе капсула игрока не должна толкать мяч (иначе близкий контроль и подбор
+	# ломаются — расталкивание/подскок), а блок/перехват нужны лишь для летящего мяча.
 	ball.collision_mask = 1 | FootballConstants.BOUNDARY_COLLISION_LAYER
 	ball.body_entered.connect(_on_ball_collision)
 
@@ -319,6 +379,7 @@ func _setup_camera() -> void:
 	var cam_script = preload("res://scripts/camera/match_camera.gd")
 	cam.set_script(cam_script)
 	cam.target = ball
+	_match_camera = cam
 
 
 func _setup_goals() -> void:
@@ -453,6 +514,49 @@ func _setup_away_player() -> void:
 	new_player.ball = ball
 	new_player.home_goal = $GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null
 	player_away = new_player
+	# Тестовая стенка из бездействующих соперников (только пока соперник отключён флагом) —
+	# удобно проверять удары/блоки. Вернём настоящего соперника → флаг false → стенки нет.
+	if FootballConstants.DEBUG_DISABLE_OPPONENT:
+		_spawn_wall_dummies()
+
+
+## Стенки из стоящих болванок team_2 (для теста ударов/блоков). Требует
+## DEBUG_DISABLE_OPPONENT=true (иначе они бы стали активным ИИ).
+func _spawn_wall_dummies() -> void:
+	_spawn_wall_line(Vector3(0.0, 0.5, -13.0), 2.0)    # разреженная (с зазорами), центр X=0
+	_spawn_wall_line(Vector3(15.0, 0.5, -13.0), 0.62)  # плотная (болванки вплотную), центр X=15
+
+
+## 4 болванки в линию по X, центрированы, с интервалом spacing (м).
+func _spawn_wall_line(center: Vector3, spacing: float) -> void:
+	for i in range(4):
+		var offset := (float(i) - 1.5) * spacing
+		_make_dummy_opponent(center + Vector3(offset, 0.0, 0.0))
+
+
+func _make_dummy_opponent(pos: Vector3) -> void:
+	var p := CharacterBody3D.new()
+	p.name = "WallDummy"
+	p.global_position = pos
+	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
+	p.add_child(visual)
+	p.add_child(PlayerMotor.new())
+	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
+	var col := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.height = 1.5
+	shape.radius = 0.3
+	col.shape = shape
+	col.position = Vector3(0, 0.25, 0)
+	p.add_child(col)
+	add_child(p)
+	p.add_to_group("team_2")
+	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
+	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
+	p.set_script(preload("res://scripts/ai/simple_ai.gd"))
+	p.set_physics_process(true)
+	p.ball = ball
+	p.home_goal = $GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null
 
 
 func _setup_teammate() -> void:
@@ -483,6 +587,9 @@ func _setup_teammate() -> void:
 	new_player.controlled_player = controlled_player
 	new_player.teammate_home_goal = $GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null
 	player_teammate = new_player
+	# DEBUG: соперник опекает именно этого тиммейта (он спавнится после соперника — ссылку ставим тут).
+	if FootballConstants.DEBUG_MARK_TEAMMATE and player_away and is_instance_valid(player_away):
+		player_away.set(&"mark_target", new_player)
 
 
 func _process(delta: float) -> void:
@@ -493,16 +600,28 @@ func _process(delta: float) -> void:
 	)
 	camera_pivot.look_at(Vector3(0, 0, ball_pos.z), Vector3.UP)
 
-	if controlled_player_indicator and controlled_player:
-		controlled_player_indicator.global_position = controlled_player.global_position + Vector3(0, 2.2, 0)
+	if _trail != null:
+		_update_ball_trail(ball_pos)
+
+	if _controlled_marker != null and controlled_player and _match_camera != null:
+		var marker_world_pos := controlled_player.global_position + Vector3(0, 2.2, 0)
+		if _match_camera.is_position_behind(marker_world_pos):
+			_controlled_marker.visible = false
+		else:
+			_controlled_marker.visible = true
+			_controlled_marker.position = _match_camera.unproject_position(marker_world_pos)
 
 	# Заряд: копим, пока держим кнопку заряжаемого действия.
 	if _is_charging() and _charge_player == controlled_player:
-		var max_time := KICK_CHARGE_MAX_TIME if _charge_action == ChargeAction.SHOT else FootballConstants.PASS_CHARGE_MAX_TIME
+		var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
+		var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
 		_charge_time += get_process_delta_time()
 		if _charge_time >= max_time:
 			_charge_time = max_time
-			_fire_charge()
+			if _is_queued():
+				_stop_queue_fix_ratio()  # мяч не у ног — фиксируем силу на макс., ждём касания
+			else:
+				_fire_charge()
 		if _is_charging():
 			var ratio := clampf(_charge_time / max_time, 0.0, 1.0)
 			power_bar.value = ratio
@@ -511,28 +630,16 @@ func _process(delta: float) -> void:
 				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
 	elif _is_charging():
 		_cancel_charge()
-	power_bar.visible = _is_charging() and _charge_player == controlled_player
+	power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
+		or (_is_queued() and _queue_player == controlled_player)
 
-	var show_target := _is_charging() and _charge_action != ChargeAction.SHOT and _charge_player == controlled_player
-	if show_target:
-		var mates := _team_arrays(&"team_1", _charge_player)
-		var mate_pos: PackedVector3Array = mates["pos"]
-		var mate_vel: PackedVector3Array = mates["vel"]
-		var mate_nodes: Array = mates["nodes"]
-		var aim: Vector3 = ball.peek_dribble_direction()
-		var idx := PassSystem.select_target(_charge_player.global_position, aim, mate_pos, mate_vel,
-			FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
-		if idx >= 0:
-			var tgt: Node3D = mate_nodes[idx]
-			_target_indicator.global_position = tgt.global_position + Vector3(0, 2.6, 0)
-			_target_indicator.visible = true
-		else:
-			_target_indicator.visible = false
-	else:
-		_target_indicator.visible = false
 
 
 func _physics_process(delta: float) -> void:
+	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
+	if _try_fire_queue():
+		_handle_player_input(delta)
+		return
 	_handle_dribbling()
 	_handle_player_input(delta)
 
@@ -575,41 +682,31 @@ func _physics_process(delta: float) -> void:
 			_receive_active = false
 			_receiver = null
 
+	# Очередь «в одно касание»: тикаем таймаут и сбрасываем по невалидности/смене/потере мяча.
+	# taken_by_other = мяч успел забрать кто-то другой (соперник ИЛИ партнёр) → мы НЕ добрались
+	# первыми → отменяем удар (правило спорного мяча).
+	if _is_queued():
+		_queue_timer -= delta
+		var taken_by_other: bool = ball.has_method(&"set_dribbler") and ball.dribbler != null and ball.dribbler != _queue_player
+		if _queue_timer <= 0.0 \
+				or _queue_player != controlled_player or not is_instance_valid(_queue_player) \
+				or _queue_player.is_in_group("fallen") \
+				or taken_by_other:
+			_clear_queue()
 
+
+## Плоский UI-маркер контролируемого игрока — CanvasLayer + Polygon2D-треугольник, а НЕ 3D-меш
+## (тот отбрасывал тень на газон, выглядело странно). Позиционируется каждый рендер-кадр через
+## Camera3D.unproject_position() (world -> screen), поверх головы игрока.
 func _setup_controlled_indicator() -> void:
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.0
-	mesh.bottom_radius = 0.2
-	mesh.height = 0.4
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	var marker := Polygon2D.new()
+	marker.polygon = PackedVector2Array([Vector2(-2.67, -4.67), Vector2(2.67, -4.67), Vector2(0, 0.67)])
+	marker.color = Color(0.3, 0.6, 1.0)
+	layer.add_child(marker)
+	_controlled_marker = marker
 
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.3, 0.6, 1.0)
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.position = Vector3(0, 2.2, 0)
-	add_child(mi)
-	controlled_player_indicator = mi
-
-
-func _setup_target_indicator() -> void:
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.0
-	mesh.bottom_radius = 0.2
-	mesh.height = 0.4
-
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(1.0, 0.9, 0.2)  # жёлтый — цель паса
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.visible = false
-	add_child(mi)
-	_target_indicator = mi
 
 
 func _sync_ai_controllers() -> void:
@@ -662,18 +759,25 @@ func _handle_dribbling() -> void:
 		return
 	if ball.dribbler:
 		var dist: float = ball.dribbler.global_position.distance_to(ball.global_position)
-		if dist > 3.0:
+		# Владение НЕ теряется от собственного толчка/резкого поворота — только по внешнему
+		# фактору (подкат/перехват, они зовут release_dribble отдельно). Дистанционный сброс —
+		# лишь страховка для реально улетевшего мяча (порог выше макс. ролл-дистанции толчка).
+		if dist > FootballConstants.DRIBBLE_KEEP_DIST:
 			ball.release_dribble()
 		return
-	# Пас летит на _receiver — расширенный радиус подбора именно для него, иначе быстрый
-	# мяч проносит мимо, пока receive-assist ещё довозит игрока на линию мяча.
+	# Адресат паса ловит мяч НЕЗАВИСИМО от скорости (это пас НА него) — иначе быстрый пас в
+	# ноги проносит мимо и приходится разворачиваться. Гейт скорости ниже к нему не применяем.
+	# Приём в широком радиусе; трап тут же выключит коллизию мяча, не дав ему отскочить от капсулы.
 	if _receive_active and is_instance_valid(_receiver):
 		var recv_dist: float = _receiver.global_position.distance_to(ball.global_position)
 		if recv_dist < FootballConstants.PASS_RECEIVE_CATCH_RADIUS:
-			ball.set_dribbler(_receiver)
+			ball.set_dribbler(_receiver, true)  # force: минуем кулдаун релиза (короткий пас доходит <500мс)
 			if _receiver.has_method(&"end_receiving"):
 				_receiver.end_receiving()
 			return
+	# Прочий подбор (бесхозный/остановившийся мяч) — только медленный: быстрый мяч «в полёте».
+	if ball.linear_velocity.length() > FootballConstants.BALL_TRAP_MAX_SPEED:
+		return
 	for p in [player_home, player_teammate, player_away]:
 		if not p or not is_instance_valid(p):
 			continue
@@ -719,10 +823,76 @@ func _handle_player_input(delta: float) -> void:
 	# стик уже переориентирован для нового игрока сразу после хендоффа (обычно он ещё держит
 	# направление ПРЕЖНЕГО игрока), поэтому больше не "уважаем" отклонённый стик как dummy-run.
 	if _receive_active and controlled_player == _receiver and is_instance_valid(ball):
-		var db := (ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW) - controlled_player.global_position
+		var rp := PassSystem.receive_point(controlled_player.global_position, ball.global_position,
+			ball.linear_velocity, FootballConstants.PASS_RECEIVE_LEAD_TIME, FootballConstants.PASS_RECEIVE_ONLINE_DOT)
+		var db := rp - controlled_player.global_position
 		db.y = 0.0
 		if db.length() > 0.01:
 			dir = db.normalized()
+	# Очередь «в одно касание» на СПОРНЫЙ/ничейный мяч: пока ждём касания, автоматически бежим к
+	# мячу (прогноз позиции), даже если стик отпущен. Пас на нас уже ведёт receive-assist выше;
+	# свой спринт-отрыв уже ведёт chasing-блок ниже (мяч ещё наш, дриблер = controlled_player) —
+	# там же живёт DRIBBLE_CHASE_STEER-блендинг стика, который эта ветка НЕ должна перебивать
+	# (иначе `stick := dir` в дриблинг-блоке подменит настоящий ввод игрока нашим авто-курсом).
+	if _is_queued() and _queue_player == controlled_player and is_instance_valid(ball) \
+			and not (_receive_active and _receiver == controlled_player) \
+			and ball.player() != controlled_player:
+		var qb := (ball.global_position + ball.linear_velocity * FootballConstants.PASS_RECEIVE_PREDICT_WINDOW) - controlled_player.global_position
+		qb.y = 0.0
+		if qb.length() > 0.01:
+			dir = qb.normalized()
+	# Дриблинг: стик задаёт направление ТОЛЧКА мяча, а бег авто-направляется К МЯЧУ —
+	# игрок толкает мяч в сторону стика и сам бежит его догонять (аркадная петля). Толчок
+	# по intent'у делает ball_controller в момент «догнал».
+	if is_instance_valid(ball) and ball.has_method(&"set_dribble_intent") and ball.player() == controlled_player:
+		var stick := dir
+		var active := stick.length() > 0.2  # человек активно ведёт (стик нажат)
+		var chasing: bool = ball.has_method(&"should_chase") and ball.should_chase()
+		# Толкать мяч — только пока человек активно ведёт (плюс подавление на зарядке/commit
+		# паса-удара). Отпустил стик → толчок подавлен: игрок добегает к мячу и ОСТАНАВЛИВАЕТСЯ,
+		# а не продолжает дриблить по остаточной скорости.
+		if ball.has_method(&"set_dribble_suppressed"):
+			ball.set_dribble_suppressed(_is_charging() or _kick_action_active or not active)
+		# Стик задаёт направление следующего толчка (intent) + доп. силу спринта.
+		if active:
+			var sprint_now := Input.get_action_strength(&"sprint")
+			ball.set_dribble_intent(stick, FootballConstants.DRIBBLE_SPRINT_PUSH_EXTRA * sprint_now)
+		if chasing:
+			# ДОГОН (мяч вырвался): ведём к мячу, но стик может ПОДРУЛИТЬ (обойти соперника на
+			# пути), не теряя мяч — блёнд DRIBBLE_CHASE_STEER. Стик отпущен → строго к мячу.
+			var to_ball := ball.global_position - controlled_player.global_position
+			to_ball.y = 0.0
+			if to_ball.length() > 0.01:
+				var chase_dir := to_ball.normalized()
+				if active:
+					var w := FootballConstants.DRIBBLE_CHASE_STEER
+					var mixed := chase_dir * (1.0 - w) + stick.normalized() * w
+					if mixed.length() > 0.01:
+						chase_dir = mixed.normalized()
+				dir = chase_dir
+		elif active:
+			# Мяч у ног: ведём в направлении СТИКА (толкаем сквозь).
+			dir = stick.normalized()
+		else:
+			dir = Vector3.ZERO  # мяч у ног, стик отпущен → стоп
+
+	# Притягивание к НИЧЕЙНОМУ мячу (вне владения): если игрок движется примерно к
+	# подбираемому (медленному, бесхозному) мячу поблизости — подруливаем к нему, чтобы не
+	# целиться точно и проще подбирать. Сам подбор (трап на <1 м) — как есть, ниже по кадру.
+	elif is_instance_valid(ball) and ball.has_method(&"set_dribble_intent") and ball.player() == null \
+			and not _receive_active and ball.linear_velocity.length() <= FootballConstants.BALL_TRAP_MAX_SPEED \
+			and dir.length() > 0.2:
+		var to_ball := ball.global_position - controlled_player.global_position
+		to_ball.y = 0.0
+		var d := to_ball.length()
+		if d > 0.01 and d < FootballConstants.PICKUP_ASSIST_RADIUS:
+			var stick_dir := dir.normalized()
+			var ball_dir := to_ball.normalized()
+			if stick_dir.dot(ball_dir) > 0.0:  # движемся примерно к мячу (в пределах ~90°)
+				var strength := clampf(1.0 - d / FootballConstants.PICKUP_ASSIST_RADIUS, 0.0, 1.0) \
+					* FootballConstants.PICKUP_ASSIST_STRENGTH
+				dir = stick_dir.slerp(ball_dir, strength) * dir.length()
+
 	# Аналоговый спринт: сила триггера (или 1.0 с клавиши Shift) лерпит speed_scale.
 	var sprint_strength := Input.get_action_strength(&"sprint")
 	var sprint_scale := lerpf(1.0, FootballConstants.LOCO_SPRINT_SPEED / FootballConstants.LOCO_TOP_SPEED, sprint_strength)
@@ -732,15 +902,34 @@ func _handle_player_input(delta: float) -> void:
 
 	# Kick charge system (OpenSoccer-style)
 	if Input.is_action_just_pressed(&"kick"):
-		if _is_charging():
-			pass  # already charging, ignore
+		if _is_charging() or _is_queued():
+			pass  # уже заряжаем/в очереди, игнор
 		elif _is_near_ball(controlled_player) and _is_our_dribbler(controlled_player):
-			_start_charge(ChargeAction.SHOT, controlled_player)
+			# E+D → кручёный, Q+D → черпачок, иначе прямой удар (контекст удар/вынос решается в _fire_shot).
+			var shot_action := ChargeAction.SHOT
+			if Input.is_action_pressed(&"combo_curl"):
+				shot_action = ChargeAction.SHOT_CURL
+			elif Input.is_action_pressed(&"combo_modifier"):
+				shot_action = ChargeAction.SHOT_CHIP
+			_start_charge(shot_action, controlled_player)
+		elif _can_queue(controlled_player):
+			# Мяч не у ног (летит пасом / убежал в спринте / спорный ничейный) — заряжаем в очередь,
+			# выстрелит в одно касание, когда игрок дотянется (см. _try_fire_queue).
+			var q_action := ChargeAction.SHOT
+			if Input.is_action_pressed(&"combo_curl"):
+				q_action = ChargeAction.SHOT_CURL
+			elif Input.is_action_pressed(&"combo_modifier"):
+				q_action = ChargeAction.SHOT_CHIP
+			_start_queue_charge(q_action, controlled_player)
 		else:
 			_try_tackle(controlled_player)
 
-	if Input.is_action_just_released(&"kick") and _charge_action == ChargeAction.SHOT and _charge_player == controlled_player:
-		_fire_charge()
+	if Input.is_action_just_released(&"kick") and _charge_player == controlled_player \
+			and _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
+		if _is_queued():
+			_stop_queue_fix_ratio()  # мяч ещё не у ног — фиксируем силу, ждём касания
+		else:
+			_fire_charge()
 
 	# Пасы: одна кнопка на семейство; combo_modifier в атаке выбирает «спец»-вариант.
 	var combo := Input.is_action_pressed(&"combo_modifier")
@@ -751,9 +940,20 @@ func _handle_player_input(delta: float) -> void:
 			_start_charge(ChargeAction.PASS_THROUGH_AIR if combo else ChargeAction.PASS_THROUGH, controlled_player)
 		elif Input.is_action_just_pressed(&"pass_lob"):
 			_start_charge(ChargeAction.PASS_LOB, controlled_player)
+	elif not _is_charging() and not _is_queued() and _can_queue(controlled_player):
+		if Input.is_action_just_pressed(&"pass_short"):
+			_start_queue_charge(ChargeAction.PASS_WALL if combo else ChargeAction.PASS_SHORT, controlled_player)
+		elif Input.is_action_just_pressed(&"pass_through"):
+			_start_queue_charge(ChargeAction.PASS_THROUGH_AIR if combo else ChargeAction.PASS_THROUGH, controlled_player)
+		elif Input.is_action_just_pressed(&"pass_lob"):
+			_start_queue_charge(ChargeAction.PASS_LOB, controlled_player)
 	for act in [&"pass_short", &"pass_through", &"pass_lob"]:
-		if Input.is_action_just_released(act) and _is_charging() and _charge_action != ChargeAction.SHOT and _charge_player == controlled_player:
-			_fire_charge()
+		if Input.is_action_just_released(act) and _charge_player == controlled_player \
+				and _charge_action != ChargeAction.SHOT and _is_charging():
+			if _is_queued():
+				_stop_queue_fix_ratio()
+			else:
+				_fire_charge()
 			break
 
 
@@ -773,6 +973,52 @@ func _we_possess() -> bool:
 		return false
 	return ball.dribbler == player_home or ball.dribbler == player_teammate
 
+## Можно ли поставить действие в очередь: мяч НЕ у ног (иначе обычный немедленный заряд) и им
+## не владеет кто-то ДРУГОЙ (тогда это территория подката/смены). Источники очереди:
+##  - incoming: летит к нам пасом нашей команды (receive-assist),
+##  - breakaway: мы дриблер, но мяч убежал вперёд (спринт-отрыв, владение не потеряно),
+##  - loose: мяч бесхозный/летящий (dribbler == null) и в разумной близости — СПОРНЫЙ мяч
+##    (борьба с соперником). Заряжать можно; удар выполнится, только если добежим первыми
+##    (см. отмену taken_by_other и «ближе всех» в _try_fire_queue).
+## Есть ли соперник (team_2) СТРОГО ближе к мячу, чем наш игрок. Спорный мяч тогда скорее его —
+## на нажатие кнопки логичнее подкат (отобрать), а не заряд удара в очередь.
+func _opponent_closer_to_ball(player_node: Node3D) -> bool:
+	if player_node == null or not is_instance_valid(player_node):
+		return false
+	var my_d: float = player_node.global_position.distance_to(ball.global_position)
+	for opp in get_tree().get_nodes_in_group("team_2"):
+		if opp is Node3D and is_instance_valid(opp) \
+				and (opp as Node3D).global_position.distance_to(ball.global_position) < my_d:
+			return true
+	return false
+
+
+func _can_queue(player_node: CharacterBody3D) -> bool:
+	if player_node == null or not is_instance_valid(player_node):
+		return false
+	# У ног И мы дриблер → обычный путь (немедленный удар/пас), не очередь. НО «близко к мячу, но
+	# ещё НЕ владеем» (принимающий добежал до летящего/ничейного мяча) — это как раз очередь одного
+	# касания, не подкат; поэтому near-гейт срабатывает только вместе с владением.
+	if _is_near_ball(player_node) and _is_our_dribbler(player_node):
+		return false
+	if ball.has_method(&"set_dribbler") and ball.dribbler != null and ball.dribbler != player_node:
+		return false  # мячом владеет кто-то другой (соперник/партнёр) → подкат/смена, не очередь
+	var incoming: bool = _receive_active and _receiver == player_node
+	var breakaway: bool = _is_our_dribbler(player_node)
+	# Ничейный мяч рядом → очередь одного касания, НО только если соперник не ближе к мячу: если
+	# он ближе, спорный мяч скорее его — логичнее подкат (отобрать), а не заряд удара, который всё
+	# равно не выстрелит (гейт «добрался первым» в _try_fire_queue) и лишь съест нажатие.
+	var loose: bool = (not ball.has_method(&"set_dribbler") or ball.dribbler == null) \
+		and player_node.global_position.distance_to(ball.global_position) <= FootballConstants.QUEUE_CONSIDER_RADIUS \
+		and not _opponent_closer_to_ball(player_node)
+	# Наш мяч в полёте (пас нашей команды, летит) — на ЛЮБОЙ дистанции: принимающий бежит на длинный
+	# пас на ход, receive-assist истёк по таймауту, а мяч дальше QUEUE_CONSIDER_RADIUS. Не соперника
+	# (last_kicker из team_1) и не свой же удар (last_kicker != этот игрок) → удар в очередь, не подкат.
+	var friendly_flight: bool = ball.has_method(&"is_flight") and ball.is_flight() \
+		and ball.last_kicker != null and is_instance_valid(ball.last_kicker) \
+		and ball.last_kicker.is_in_group("team_1") and ball.last_kicker != player_node
+	return incoming or breakaway or loose or friendly_flight
+
 func _start_charge(action: ChargeAction, player_node: CharacterBody3D) -> void:
 	_charge_action = action
 	_charge_time = 0.0
@@ -782,42 +1028,176 @@ func _start_charge(action: ChargeAction, player_node: CharacterBody3D) -> void:
 	if flat.length() > 0.01:
 		player_node.rotation.y = atan2(-flat.x, -flat.z)
 
+## Начать заряд «в очередь» (мяч ещё не у ног). Копим силу как обычно (power_bar виден),
+## но по касанию будем бить в одно касание, а не сразу. Тело НЕ доворачиваем к мячу
+## (get_dribble_direction для не-дриблера бессмыслен — прицел возьмём по facing на касании).
+func _start_queue_charge(action: ChargeAction, player_node: CharacterBody3D) -> void:
+	_charge_action = action
+	_charge_time = 0.0
+	_charge_player = player_node
+	_queued_action = action
+	_queue_player = player_node
+	_queue_ratio = 0.0
+	_queue_timer = FootballConstants.QUEUE_MAX_TIME
+
+## Отпустили кнопку (или дошли до макс.) ДО касания: фиксируем текущий ratio в очереди и
+## гасим активный заряд (шкалу), но очередь остаётся ждать касания.
+func _stop_queue_fix_ratio() -> void:
+	var is_shot: bool = _queued_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
+	var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
+	_queue_ratio = clampf(_charge_time / max_time, 0.0, 1.0)
+	_cancel_charge()
+
 func _fire_charge() -> void:
 	if not _is_charging() or not _charge_player or not is_instance_valid(_charge_player):
 		_cancel_charge()
 		return
 	var action := _charge_action
 	var player := _charge_player
-	if action == ChargeAction.SHOT:
+	if action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
 		var ratio := clampf(_charge_time / KICK_CHARGE_MAX_TIME, 0.0, 1.0)
-		var power := lerpf(KICK_POWER_MIN, KICK_POWER_MAX, ratio)
-		var dir: Vector3 = ball.get_dribble_direction()
-		dir.y = lerpf(0.05, 0.5, ratio)  # слабый удар — низом, сильный — с подъёмом
 		_cancel_charge()
-
-		# Подключаемся к commit-action системе, но БЕЗ блокировки мотора.
-		# ball.kick() будет вызван из _on_action_contact по сигналу анимации.
-		_action_player = player
-		_action_dir = dir
-		_action_power = power
-		_kick_action_active = true
-		var visual := _player_visual(player)
-		if visual != null and visual.trigger("kick"):
-			return  # ждём action_contact
-		# Фолбэк без анимации: бьём сразу
-		ball.kick(dir, power)
-		_action_player = null
-		_kick_action_active = false
+		_fire_shot(action, player, ratio)
 	else:
 		var charge_ratio := clampf(_charge_time / FootballConstants.PASS_CHARGE_MAX_TIME, 0.0, 1.0)
 		_cancel_charge()
 		_fire_pass(action, player, charge_ratio)
+
+
+## Удар: контекст решает удар в ворота vs вынос; тип (прямой/кручёный/черпачок) — по action.
+## Импульс — через commit-action (ball.launch / launch_curl по action_contact), как у паса.
+func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: float, facing_override: Vector3 = Vector3.ZERO) -> void:
+	if not ball.has_method(&"launch"):
+		return
+	var from: Vector3 = ball.global_position
+	var goal_center := _target_goal_center()  # чужие ворота (гибко, флипается на half-time)
+	var half_w: float = FootballConstants.GOAL_WIDTH / 2.0
+	var height: float = FootballConstants.GOAL_HEIGHT
+	var facing: Vector3 = facing_override if facing_override.length_squared() > 0.0001 else ball.get_dribble_direction()
+	var g := _ball_gravity()
+	var launch_vel: Vector3
+	var curl := Vector3.ZERO
+
+	# На ЧУЖОЙ половине (сторона атакующих ворот) — всегда удар по воротам, без выноса.
+	# Вынос допустим только на своей половине. Половина определяется через _attack_dir_z
+	# (тот же флип, что и целевые ворота — half-time-свап согласован).
+	var on_attacking_half: bool = from.z * _attack_dir_z > 0.0
+	if (not on_attacking_half) and ShotSystem.wants_clearance(from, goal_center, facing,
+			FootballConstants.CLEARANCE_ZONE_DIST, FootballConstants.CLEARANCE_FACING_DOT):
+		# ВЫНОС: мощно по facing вдаль, без прицела в створ.
+		var power := lerpf(FootballConstants.CLEARANCE_POWER, FootballConstants.CLEARANCE_POWER * 1.2, charge_ratio)
+		launch_vel = ShotSystem.clearance_velocity(facing, power, FootballConstants.CLEARANCE_LIFT)
+	else:
+		# УДАР: прицел в створ (гибрид: авто-цель + смещение по facing + разброс).
+		# curl_side даёт сторону стика; прицел (прямой/черпачок) — в ДАЛЬНИЙ угол (куда стик),
+		# по тому же принципу, что и кручёный, только без Magnus. Поэтому side_bias = -curl_side.
+		var side_bias := -ShotSystem.curl_side(from, goal_center, facing)
+		var dist := Vector3(goal_center.x - from.x, 0.0, goal_center.z - from.z).length()
+		var scatter := ShotSystem.scatter_meters(FootballConstants.SHOT_SCATTER_BASE, charge_ratio,
+			dist, FootballConstants.SHOT_SCATTER_DIST_REF)
+		var aim := ShotSystem.goal_aim_point(goal_center, half_w, height, side_bias, charge_ratio,
+			FootballConstants.SHOT_AIM_Y_MIN, FootballConstants.SHOT_OVER_LIFT, scatter, _pass_rng)
+		# Помощь при ударе: мягкий магнит прицела внутрь рамы (гасит разброс мимо ворот).
+		aim = ShotSystem.goal_assist(aim, goal_center, half_w, height,
+			FootballConstants.SHOT_ASSIST, FootballConstants.SHOT_ASSIST_MARGIN)
+		if action == ChargeAction.SHOT_CHIP:
+			# Черпачок: перекидывающая парабола в СТОРОНУ ворот (с учётом угла прицела), но заряд
+			# задаёт И высоту дуги, И дальность приземления. Слабый — роняет близко, сильный —
+			# далеко перекидывает; точным зарядом попадаешь в ворота.
+			var peak := lerpf(FootballConstants.CHIP_PEAK_MIN, FootballConstants.CHIP_PEAK_MAX, charge_ratio)
+			var chip_dist := lerpf(FootballConstants.CHIP_DIST_MIN, FootballConstants.CHIP_DIST_MAX, charge_ratio)
+			var chip_dir := Vector3(aim.x - from.x, 0.0, aim.z - from.z)
+			if chip_dir.length() < 0.001:
+				chip_dir = Vector3(facing.x, 0.0, facing.z)
+			chip_dir = chip_dir.normalized()
+			var chip_target := Vector3(from.x + chip_dir.x * chip_dist, from.y, from.z + chip_dir.z * chip_dist)
+			launch_vel = PassSystem.launch_lob(from, chip_target, peak, g)
+		else:
+			# Прямой и кручёный: настильная баллистика в точку прицела.
+			var power := lerpf(FootballConstants.SHOT_POWER_MIN, FootballConstants.SHOT_POWER_MAX, charge_ratio)
+			if action == ChargeAction.SHOT_CURL:
+				# Кручёный «в дальнюю девятку». Закрутка (curl_side) гнёт мяч в сторону −side —
+				# это ПРАВИЛЬНАЯ дуга. Прицел РАЗВЯЗАН от закрутки: целимся так, чтобы эта дуга
+				# занесла мяч в ДАЛЬНИЙ угол (на −side): при слабом заряде почти прямо в угол, при
+				# сильном — короче (aim смещён на +side на CURL_AIM_OUT), закрутка добьёт в угол.
+				var side := ShotSystem.curl_side(from, goal_center, facing)
+				var far_corner_x: float = goal_center.x - side * half_w
+				aim.x = far_corner_x + side * FootballConstants.CURL_AIM_OUT * charge_ratio
+				launch_vel = ShotSystem.ballistic_to(from, aim, power, g)
+				var strength := lerpf(FootballConstants.CURL_STRENGTH_MIN, FootballConstants.CURL_STRENGTH_MAX, charge_ratio)
+				curl = ShotSystem.curl_vector(side, strength, FootballConstants.CURL_LIFT)
+			else:
+				launch_vel = ShotSystem.ballistic_to(from, aim, power, g)
+
+	# Commit-action: импульс по action_contact, launch-путь (сентинел _action_power = -1).
+	_action_player = player
+	_action_dir = launch_vel
+	_action_power = -1.0
+	_kick_action_active = true
+	_pending_launch = launch_vel
+	_pending_curl = curl
+	var visual := _player_visual(player)
+	if visual != null and visual.trigger("kick"):
+		return  # ждём action_contact
+	# Фолбэк без анимации: бьём сразу
+	if curl.length_squared() > 0.0001 and ball.has_method(&"launch_curl"):
+		ball.launch_curl(launch_vel, curl)
+	else:
+		ball.launch(launch_vel)
+	_action_player = null
+	_kick_action_active = false
 
 func _cancel_charge() -> void:
 	_charge_action = ChargeAction.NONE
 	_charge_time = 0.0
 	_charge_player = null
 	power_bar.visible = false
+
+## Сбросить очередь «в одно касание» (перехват/аут/таймаут/смена игрока/падение).
+func _clear_queue() -> void:
+	_queued_action = ChargeAction.NONE
+	_queue_player = null
+	_queue_ratio = 0.0
+	_queue_timer = 0.0
+
+## Если отложенное действие в очереди и игрок дотянулся до мяча — бьём в одно касание.
+## Прицел по facing тела игрока СЕЙЧАС (он ещё не дриблер), сила = заряд + скорость влёта мяча.
+## Возвращает true, если в этом кадре выстрелили (тогда обычный трап/дриблинг пропускаем).
+func _try_fire_queue() -> bool:
+	if not _is_queued():
+		return false
+	if _queue_player == null or not is_instance_valid(_queue_player):
+		_clear_queue()
+		return false
+	var d: float = _queue_player.global_position.distance_to(ball.global_position)
+	if d > FootballConstants.QUEUE_REACH_RADIUS:
+		return false  # ещё не дотянулся — ждём (авто-подбегание ведёт игрока к мячу)
+	# «Добрался ПЕРВЫМ»: не бьём, если соперник СТРОГО ближе к мячу (спорный мяч он выиграл или
+	# вот-вот затрапит → тогда сработает отмена taken_by_other). Так одно касание проходит только
+	# при честной победе в борьбе; иначе ждём/сбрасываемся. Соперники — группа "team_2".
+	for opp in get_tree().get_nodes_in_group("team_2"):
+		if opp is Node3D and is_instance_valid(opp) \
+				and (opp as Node3D).global_position.distance_to(ball.global_position) < d:
+			return false
+	# Дотянулся первым: диспатчим в одно касание.
+	var action := _queued_action
+	var player := _queue_player
+	var base_ratio := _queue_ratio
+	# Всё ещё держим кнопку в момент касания → бьём на ТЕКУЩЕМ заряде (не на зафиксированном).
+	if _is_charging() and _charge_player == player and _charge_action == action:
+		var is_shot: bool = action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
+		var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
+		base_ratio = clampf(_charge_time / max_time, 0.0, 1.0)
+		_cancel_charge()
+	var incoming_speed: float = ball.linear_velocity.length()
+	var eff_ratio := ShotSystem.one_touch_ratio(base_ratio, incoming_speed, FootballConstants.QUEUE_BALL_SPEED_GAIN)
+	var facing: Vector3 = _aim_dir(player)
+	_clear_queue()
+	if action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]:
+		_fire_shot(action, player, eff_ratio, facing.normalized())
+	else:
+		_fire_pass(action, player, eff_ratio, facing.normalized())
+	return true
 
 ## Собрать параметры паса по заряжаемому действию. Заряд множит базовую силу.
 func _pass_params(action: ChargeAction, charge_ratio: float) -> PassParams:
@@ -893,9 +1273,40 @@ func _ball_gravity() -> float:
 	return g * ball.gravity_scale
 
 
+## Центр чужих ворот (в которые бьёт наша команда). Гибко — через _attack_dir_z, не хардкод,
+## чтобы смена ворот во втором тайме меняла прицел ударов в одном месте.
+func _target_goal_center() -> Vector3:
+	return Vector3(0.0, 0.0, _attack_dir_z * field_length)
+
+## Направление прицела удара/паса: СТИК (камеро-относительный), если реально наклонён — человек
+## явно указывает, куда бить/пасовать, даже если тело движется/повёрнуто иначе. Facing тела для
+## этого не годится: PlayerMotor разворачивает тело по направлению ДВИЖЕНИЯ, так что facing может
+## не совпадать с намерением (напр. бежит вперёд, а пас хочет вбок; или авто-бег к мячу в очереди
+## крутит facing). Стик отпущен → фолбэк на facing тела. Общий для пасов (_fire_pass) и очереди
+## «в одно касание» (_try_fire_queue).
+func _aim_dir(player_node: CharacterBody3D) -> Vector3:
+	var input_vec := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
+	if input_vec.length() > 0.2:
+		var cam_basis := camera_pivot.global_transform.basis
+		var cam_forward := -cam_basis.z
+		cam_forward.y = 0.0
+		cam_forward = cam_forward.normalized()
+		var cam_right := cam_basis.x
+		cam_right.y = 0.0
+		cam_right = cam_right.normalized()
+		var d := (cam_forward * -input_vec.y + cam_right * input_vec.x)
+		if d.length() > 0.01:
+			return d.normalized()
+	var facing := -player_node.global_transform.basis.z
+	facing.y = 0.0
+	if facing.length_squared() > 0.0001:
+		return facing.normalized()
+	return Vector3.FORWARD
+
+
 ## Выполнить пас: выбрать цель по прицелу, посчитать траекторию, применить импульс через
 ## commit-action (как удар), передать управление принимающему сразу.
-func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: float) -> void:
+func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: float, facing_override: Vector3 = Vector3.ZERO) -> void:
 	if not ball.has_method(&"launch"):
 		return
 	var params := _pass_params(action, charge_ratio)
@@ -903,7 +1314,9 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	var mate_pos: PackedVector3Array = mates["pos"]
 	var mate_vel: PackedVector3Array = mates["vel"]
 	var mate_nodes: Array = mates["nodes"]
-	var aim: Vector3 = ball.get_dribble_direction()
+	# Направление паса — по СТИКУ (а не facing тела): куда целишься, туда и пас. Стик отпущен →
+	# фолбэк на facing (внутри _aim_dir). facing_override — путь очереди (там стик уже посчитан).
+	var aim: Vector3 = facing_override if facing_override.length_squared() > 0.0001 else _aim_dir(player)
 	var idx := PassSystem.select_target(player.global_position, aim, mate_pos, mate_vel,
 		FootballConstants.PASS_LEAD_GAIN, FootballConstants.PASS_DOT_BIAS, FootballConstants.PASS_MAX_RANGE)
 	# Точка прицела: в ноги (короткий/навес) или на ход (through). Нет цели → по направлению прицела.
@@ -920,13 +1333,27 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	else:
 		var flat := Vector3(aim.x, 0.0, aim.z).normalized()
 		aim_point = from + flat * 12.0
-	# Разброс точности.
-	var flat_dir := (aim_point - from)
-	flat_dir.y = 0.0
-	var spread := PassSystem.scatter_degrees(FootballConstants.PASS_SPREAD_BASE, FootballConstants.PASS_ASSIST,
-		flat_dir.length(), FootballConstants.PASS_SPREAD_DIST_REF)
-	flat_dir = PassSystem.apply_scatter(flat_dir, spread, _pass_rng)
-	aim_point = from + flat_dir + Vector3(0.0, aim_point.y - from.y, 0.0)
+	# Пасы «на ход» (Y/W наземный, LB+Y верховой) — РУЧНЫЕ: направление строго по СТИКУ, дальность/
+	# сила по ЗАРЯДУ (наземный до ~35 м, верховой до ~пол поля), БЕЗ автонаводки на цель и БЕЗ
+	# разброса (ниже). Хендофф + receive-assist СОХРАНЕНЫ — принимающий выходит на мяч (бег на мяч);
+	# управление уходит бегущему, поэтому нажатие удара на бегу ставит очередь (одно касание), а не
+	# подкат. Разница типов — только высота траектории (наземный/верховой) и диапазон дальности.
+	if action in [ChargeAction.PASS_THROUGH, ChargeAction.PASS_THROUGH_AIR]:
+		var aim_flat := Vector3(aim.x, 0.0, aim.z)
+		if aim_flat.length() < 0.001:
+			aim_flat = Vector3(0.0, 0.0, _attack_dir_z)
+		var is_air_through := action == ChargeAction.PASS_THROUGH_AIR
+		var space_min: float = FootballConstants.PASS_THROUGH_AIR_SPACE_MIN if is_air_through else FootballConstants.PASS_THROUGH_SPACE_MIN
+		var space_max: float = FootballConstants.PASS_THROUGH_AIR_SPACE_MAX if is_air_through else FootballConstants.PASS_THROUGH_SPACE_MAX
+		aim_point = from + aim_flat.normalized() * lerpf(space_min, space_max, charge_ratio)
+	# Разброс точности — КРОМЕ ручных «на ход» (летят точно по стику).
+	if not (action in [ChargeAction.PASS_THROUGH, ChargeAction.PASS_THROUGH_AIR]):
+		var flat_dir := (aim_point - from)
+		flat_dir.y = 0.0
+		var spread := PassSystem.scatter_degrees(FootballConstants.PASS_SPREAD_BASE, FootballConstants.PASS_ASSIST,
+			flat_dir.length(), FootballConstants.PASS_SPREAD_DIST_REF)
+		flat_dir = PassSystem.apply_scatter(flat_dir, spread, _pass_rng)
+		aim_point = from + flat_dir + Vector3(0.0, aim_point.y - from.y, 0.0)
 	# Баллистика.
 	var launch_vel: Vector3
 	if params.is_air:
@@ -937,7 +1364,7 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		var ground_speed := PassSystem.ground_pass_speed(ground_dist, charge_ratio,
 			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
 			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
-		launch_vel = PassSystem.launch_ground(from, aim_point, ground_speed)
+		launch_vel = PassSystem.launch_ground(from, aim_point, ground_speed, FootballConstants.PASS_GROUND_LIFT)
 	_maybe_flag_interceptor(from, aim_point, launch_vel)
 	# Commit-action: импульс по action_contact, без блокировки мотора (как kick).
 	_action_player = player
@@ -945,6 +1372,7 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	_action_power = -1.0       # маркер «это launch, а не kick»
 	_kick_action_active = true
 	_pending_launch = launch_vel
+	_pending_curl = Vector3.ZERO  # пас не крутится (сброс остаточного curl от прошлого кручёного удара)
 	# Передать управление принимающему сразу.
 	if receiver != null:
 		controlled_player = receiver
@@ -1006,8 +1434,24 @@ func _start_ball_action(player_node: CharacterBody3D, dir: Vector3, power: float
 func _on_action_contact(_action: String, player: Node) -> void:
 	if player != _action_player:
 		return
+	# Удар/пас отложены до сигнала анимации; с подвижным дриблингом игрок за это время может
+	# повернуть и пробежать МИМО мяча (мяч сзади). Если в момент контакта мяч за спиной —
+	# не бьём (промах вхолостую), иначе мяч «сам улетает» из позиции за спиной. Полноценный
+	# fire-on-reach (удар в момент, когда игрок дотянулся до мяча) даст Фаза 2 (очередь).
+	if player is Node3D:
+		var p3 := player as Node3D
+		var to_ball: Vector3 = ball.global_position - p3.global_position
+		to_ball.y = 0.0
+		var facing: Vector3 = -p3.global_transform.basis.z
+		facing.y = 0.0
+		if to_ball.length() > 0.05 and facing.length() > 0.01 \
+				and facing.normalized().dot(to_ball.normalized()) < -0.2:
+			return  # мяч за спиной — удар/пас не производим
 	if _action_power < 0.0 and ball.has_method(&"launch"):
-		ball.launch(_pending_launch)
+		if _pending_curl.length_squared() > 0.0001 and ball.has_method(&"launch_curl"):
+			ball.launch_curl(_pending_launch, _pending_curl)
+		else:
+			ball.launch(_pending_launch)
 	elif ball.has_method(&"kick"):
 		ball.kick(_action_dir, _action_power)
 
@@ -1310,6 +1754,8 @@ func _finish_fall() -> void:
 		var motor := _player_motor(_fall_player)
 		if motor != null:
 			motor.set_control_locked(false)
+	if _queue_player == _fall_player:
+		_clear_queue()
 	_fall_player = null
 	_fall_visual = null
 	_fall_state = FallState.NONE
@@ -1444,7 +1890,11 @@ func _same_team(a: Node, b: Node) -> bool:
 
 
 func _on_ball_collision(body: Node) -> void:
-	pass
+	# Блок: летящий мяч коснулся игрока (защитник на пути / попал в своего). Гасим и роняем
+	# мяч в OPEN (без мгновенной передачи владения — дальше обычная борьба за подбор).
+	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
+			and ball.has_method(&"is_flight") and ball.is_flight() and ball.has_method(&"block_in_flight"):
+		ball.block_in_flight()
 
 
 func _reset_ball() -> void:
