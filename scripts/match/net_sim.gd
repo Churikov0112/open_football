@@ -6,7 +6,7 @@ extends Object
 # узлов закреплено (лежит на пруте каркаса), интерьер свободен и колышется.
 # Чистая функция: НЕ читает FootballConstants.
 static func build_box_net(width: float, height: float, depth: float,
-		w_div: int, h_div: int, d_div: int) -> Dictionary:
+		w_div: int, h_div: int, d_div: int, slack: float = 1.0) -> Dictionary:
 	var net := {
 		"pos": PackedVector3Array(),
 		"rest": PackedVector3Array(),
@@ -33,6 +33,15 @@ static func build_box_net(width: float, height: float, depth: float,
 	_add_panel(net, d_div, h_div, Vector3(1, 0, 0),
 		func(su: float, sv: float) -> Vector3:
 			return Vector3(hw, lerpf(0.0, height, sv), lerpf(0.0, depth, su)))
+	# Слабина (slack): rest-длина рёбер короче фактического шага сетки, поэтому у
+	# полотна есть запас материала и оно провисает/колышется, а не стоит барабаном.
+	# rest-позиции остаются натянутыми (idle-вид ровный); slack влияет только на
+	# целевую длину рёбер, к которой тянут constraints во время симуляции.
+	if slack != 1.0:
+		var rl: PackedFloat32Array = net["rest_len"]
+		for i in range(rl.size()):
+			rl[i] = rl[i] * slack
+		net["rest_len"] = rl
 	return net
 
 # Добавляет одну панель-решётку (u_div×v_div ячеек) в net. point(su,sv) даёт

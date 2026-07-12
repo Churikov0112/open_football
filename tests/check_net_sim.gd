@@ -46,6 +46,20 @@ func _test_topology() -> void:
 			bad += 1
 	_expect(bad == 0, "rest_len == actual edge length")
 
+	# Slack: rest-длина рёбер = фактический шаг сетки × slack (запас материала).
+	var nets := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2, 0.8)
+	var sa: int = nets["edges"][0]
+	var sb: int = nets["edges"][1]
+	var span: float = nets["pos"][sa].distance_to(nets["pos"][sb])
+	_expect(absf(nets["rest_len"][0] - span * 0.8) < 0.0001,
+		"slack 0.8 shortens rest_len to 0.8x node spacing")
+	# Контроль: без slack (по умолчанию) rest_len == фактическому шагу.
+	var nett := NetSim.build_box_net(7.32, 2.44, 1.5, 4, 3, 2)
+	var ta: int = nett["edges"][0]
+	var tb: int = nett["edges"][1]
+	_expect(absf(nett["rest_len"][0] - nett["pos"][ta].distance_to(nett["pos"][tb])) < 0.0001,
+		"default slack 1.0 leaves rest_len == node spacing")
+
 func _first_free(net: Dictionary) -> int:
 	for i in range(net["pinned"].size()):
 		if net["pinned"][i] == 0:

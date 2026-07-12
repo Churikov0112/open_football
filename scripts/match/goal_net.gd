@@ -17,7 +17,7 @@ func initialize(ball_ref: RigidBody3D) -> void:
 	ball = ball_ref
 	var C := FootballConstants
 	_net = NetSim.build_box_net(C.GOAL_WIDTH, C.GOAL_HEIGHT, C.NET_DEPTH,
-		C.NET_WIDTH_DIV, C.NET_HEIGHT_DIV, C.NET_DEPTH_DIV)
+		C.NET_WIDTH_DIV, C.NET_HEIGHT_DIV, C.NET_DEPTH_DIV, C.NET_SLACK)
 	_params = {
 		"gravity": C.NET_GRAVITY,
 		"damping": C.NET_DAMPING,
