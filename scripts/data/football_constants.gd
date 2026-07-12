@@ -326,6 +326,7 @@ const QUEUE_CONSIDER_RADIUS := 8.0    # ничейный/летящий мяч �
 const CAMERA_FOLLOW_SPEED := 3.0
 const CAMERA_HEIGHT := 25.0
 const CAMERA_Z_OFFSET := 3.0
+const CAMERA_TILT := -55.0         # градусов
 
 
 # ═══════════════════════════════════════════
@@ -349,4 +350,3 @@ const NET_BALL_FORCE := 120.0      # базовая сила толчка мяч
 const NET_BOUNCE := 0.15           # упругость коллайдеров-стопперов сетки
 const NET_FRICTION := 1.0          # трение стопперов (гасит мяч в сетке)
 const NET_CELEBRATION_TIME := 5.0  # пауза празднования до сброса мяча (с)
-const CAMERA_TILT := -55.0         # градусов
