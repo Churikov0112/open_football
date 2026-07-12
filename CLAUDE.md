@@ -179,6 +179,7 @@ Five pass types plus the shot share one charge system, all fired from `match_man
 - `docs/superpowers/plans/2026-07-09-living-locomotion.md` — the executed implementation plan for `PlayerMotor`.
 - `docs/superpowers/specs/2026-07-10-pass-system-design.md` — the design spec behind the pass system: five pass types, `PassSystem`'s pure-function decomposition, auto-aim/lead/scatter rationale, receive-assist, give-and-go, honest interception. See *Passing* above for the as-built reference.
 - `docs/superpowers/plans/2026-07-10-pass-system.md` — the executed 19-task implementation plan for the pass system (this task, Task 19, is the last one).
+- `docs/debug-tools.md` — the temporary debug scaffolding kept for manual feature-testing: `DEBUG_BALL_TRAIL` (ball trajectory trail, on by default), `DEBUG_DISABLE_OPPONENT` (standing opponent + wall dummies), `DEBUG_MARK_TEAMMATE` (opponent marks the AI teammate). Flags in `football_constants.gd`; battle behavior = all at their default off values.
 - `ASSET_CREDITS.md` — asset provenance/licenses (Mixamo, future CC0).
 - `AGENTS.md` — concise agent guide; kept accurate and current.
 - `OPENCODE.md` — broader design doc, now updated with kick-charge, deferred-impulse, commit-action system, and fixed capsule/stale references. Still use the source for fine-grained details.
