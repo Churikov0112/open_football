@@ -49,6 +49,8 @@ scenes/player_visual.tscn       — rigged model + team-tint wrapper (child of e
 scripts/match/match_manager.gd  — all game logic
 scripts/match/pass_system.gd    — PassSystem: 8 pure static pass-math functions (headless-tested)
 scripts/match/pass_params.gd    — PassParams: plain data holder for a pass's power/height/lead
+scripts/match/net_sim.gd        — NetSim: pure static goal-net math (box-net builder + Verlet/PBD step, headless-tested)
+scripts/match/goal_net.gd       — GoalNet: per-goal net component (procedural mesh, sim, ImmediateMesh line render)
 scripts/ai/simple_ai.gd         — opponent AI (red, chases target/ball, shoots, honest interception)
 scripts/ai/teammate_ai.gd       — teammate AI (blue, positions for pass / chases ball / receives / give-and-go run)
 scripts/player/player_visual.gd — PlayerVisual: idle/run/sprint AnimationTree + action/fall one-shots + apply_appearance tint + set_lean
@@ -66,6 +68,11 @@ tests/                          — headless CHECK scripts (godot --headless -s 
 - Players are **rigged Mixamo models**, not procedural capsules. Raw FBX in `assets/models/mixamo_src/` are **gitignored** (public repo — ship only the `.glb`).
 - Rebuild the model with Blender 5.1 headless: `tools/merge_mixamo.py` merges the character + every FBX in `assets/models/mixamo_src/` into `assets/models/footballer.glb`; then run Godot `--headless --import`.
 - Provenance/licenses in `ASSET_CREDITS.md`. Full design in `docs/superpowers/specs/2026-07-08-3d-assets-pipeline-design.md`.
+
+## Goal net
+- Volumetric box goals (front+back frame) with a procedural Verlet cloth net that wobbles on a goal; ball settles in the net, 5s celebration, then reset. Full detail in `CLAUDE.md`'s *Goal net* section; design/plan in `docs/superpowers/{specs/2026-07-12-goal-net-physics-design.md,plans/2026-07-12-goal-net-physics.md}`.
+- Math is pure/headless-tested in `net_sim.gd` (`NetSim`, never reads constants); `goal_net.gd` (`GoalNet`) drives+renders it; ball-stop colliders + celebration flow live in `match_manager.gd:_setup_goals()`.
+- Tuning: `FootballConstants` `NET_*` section — primary feel dial is `NET_STIFFNESS` (free↔rigid), then `NET_DAMPING`/`NET_SLACK`/`NET_SHAPE_RETURN`/`NET_CONSTRAINT_ITERATIONS`. Test: `tests/check_net_sim.gd`.
 
 ## Locomotion
 - Full design in `docs/superpowers/specs/2026-07-09-living-locomotion-design.md`; executed plan in `docs/superpowers/plans/2026-07-09-living-locomotion.md`.

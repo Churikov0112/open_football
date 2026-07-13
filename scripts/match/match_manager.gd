@@ -18,6 +18,8 @@ var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var _attack_dir_z: float = -1.0
 var _controlled_marker: Polygon2D
 var _match_camera: Camera3D
+var _goal_nets: Dictionary = {}
+var _celebrating: bool = false
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -402,6 +404,34 @@ func _setup_goals() -> void:
 		var crossbar := _make_crossbar(0, 2.44, 0)
 		goal_group.add_child(crossbar)
 
+		# Объёмный box: задний каркас на глубине NET_DEPTH за линией ворот.
+		var ds: float = -1.0 if g.side == "Home" else 1.0
+		var net_z: float = ds * FootballConstants.NET_DEPTH
+		var post_left_back := _make_post(-3.66, 0, net_z)
+		goal_group.add_child(post_left_back)
+		var post_right_back := _make_post(3.66, 0, net_z)
+		goal_group.add_child(post_right_back)
+		var crossbar_back := _make_crossbar(0, 2.44, net_z)
+		goal_group.add_child(crossbar_back)
+
+		# Сетка-колыхание (компонент GoalNet) на этих воротах.
+		var goal_net = preload("res://scripts/match/goal_net.gd").new()
+		goal_net.name = "GoalNet"
+		goal_group.add_child(goal_net)
+		goal_net.rotation.y = PI if g.side == "Home" else 0.0
+		goal_net.initialize(ball)
+		_goal_nets[g.side] = goal_net
+
+		# Стопперы: мяч влетает в открытый перёд, тормозит о заднюю/боковые/верхнюю сетку.
+		var w := FootballConstants.GOAL_WIDTH
+		var h := FootballConstants.GOAL_HEIGHT
+		var nd := FootballConstants.NET_DEPTH
+		var t := 0.1
+		goal_group.add_child(_make_net_collider(Vector3(0, h * 0.5, ds * nd), Vector3(w, h, t)))          # задняя
+		goal_group.add_child(_make_net_collider(Vector3(0, h, ds * nd * 0.5), Vector3(w, t, nd)))          # верх
+		goal_group.add_child(_make_net_collider(Vector3(-w * 0.5, h * 0.5, ds * nd * 0.5), Vector3(t, h, nd)))  # лево
+		goal_group.add_child(_make_net_collider(Vector3(w * 0.5, h * 0.5, ds * nd * 0.5), Vector3(t, h, nd)))   # право
+
 		var area := Area3D.new()
 		area.name = "GoalArea"
 		area.add_to_group("goal")
@@ -414,13 +444,17 @@ func _setup_goals() -> void:
 		area.global_position = g.pos + Vector3(0, 1.22, -0.25 if g.side == "Home" else 0.25)
 
 		area.body_entered.connect(func(body: Node):
-			if body == ball:
+			if body == ball and not _celebrating:
+				_celebrating = true
 				if g.side == "Home":
 					away_score += 1
 				else:
 					home_score += 1
 				score_label.text = "%d : %d" % [home_score, away_score]
-				_reset_ball()
+				var net = _goal_nets.get(g.side)
+				if net:
+					net.start_sim()
+				_celebrate_then_reset(net)
 		)
 
 
@@ -451,6 +485,23 @@ func _make_crossbar(x: float, y: float, z: float) -> MeshInstance3D:
 	mi.position = Vector3(x, y, z)
 	mi.rotation.z = deg_to_rad(90)
 	return mi
+
+
+func _make_net_collider(local_pos: Vector3, size: Vector3) -> StaticBody3D:
+	var body := StaticBody3D.new()
+	body.collision_layer = FootballConstants.BOUNDARY_COLLISION_LAYER
+	body.collision_mask = 0
+	var pm := PhysicsMaterial.new()
+	pm.bounce = FootballConstants.NET_BOUNCE
+	pm.friction = FootballConstants.NET_FRICTION
+	body.physics_material_override = pm
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	col.shape = shape
+	body.add_child(col)
+	body.position = local_pos
+	return body
 
 
 func _setup_boundaries() -> void:
@@ -1915,6 +1966,17 @@ func _reset_ball() -> void:
 
 	controlled_player = player_home
 	_sync_ai_controllers()
+
+
+## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через
+## NET_CELEBRATION_TIME сброс мяча и остановка симуляции. Не await-им игроков —
+## по решению ничего не замораживаем. Не await-ит вызывающий (fire-and-forget).
+func _celebrate_then_reset(net) -> void:
+	await get_tree().create_timer(FootballConstants.NET_CELEBRATION_TIME).timeout
+	_reset_ball()
+	if net and is_instance_valid(net):
+		net.stop_sim()
+	_celebrating = false
 
 
 func _poll_ai_tackles() -> void:
