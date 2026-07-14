@@ -34,6 +34,10 @@ func _process(_delta: float) -> bool:
 	if not _inst.has_action("pass"):
 		print("CHECK FAIL: has_action('pass') == false после перестройки дерева")
 		ok = false
+	# KEEPER-локомоция: стейт keeper_sidestep создан (клип есть в glb).
+	if not _inst.has_loco_state(PlayerVisual.LOCO_KEEPER_SIDE):
+		print("CHECK FAIL: нет стейта локомоции keeper_sidestep")
+		ok = false
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
 	return true

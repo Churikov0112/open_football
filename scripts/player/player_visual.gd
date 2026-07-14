@@ -15,6 +15,11 @@ const BLEND_SMOOTH := 10.0
 const LOCOMOTION := &"loco_idle"
 const LOCO_RUN := &"loco_run"
 const LOCO_SPRINT := &"loco_sprint"
+## Боковой стейт локомоции вратаря (приставные шаги вместо бега).
+const LOCO_KEEPER_SIDE := &"loco_keeper_side"
+## Стиль локомоции: NORMAL (idle/run/sprint) или KEEPER (idle/keeper_sidestep, без спринта).
+const LOCO_STYLE_NORMAL := 0
+const LOCO_STYLE_KEEPER := 1
 ## Семантическое действие (trigger) → имя клипа в glb. Стейт создаётся, только если клип есть.
 const ACTION_CLIPS := {
 	"kick": "pass",
@@ -59,6 +64,7 @@ var _action_contact_at: float = 0.0
 var _action_lock_at: float = 0.0
 var _action_contact_done: bool = false
 var _fall_lock: bool = false   # пока true — _process не выбирает стейт локомоции (ведёт fall-цепочка)
+var _loco_style: int = LOCO_STYLE_NORMAL
 
 ## Чистое отображение скорости (м/с) в позицию бленда [0..1].
 static func speed_to_blend(speed: float) -> float:
@@ -110,6 +116,12 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 	for st in [LOCO_RUN, LOCO_SPRINT]:
 		sm.add_transition(LOCOMOTION, st, _make_transition(false))
 		sm.add_transition(st, LOCOMOTION, _make_transition(false))
+	# Боковой стейт вратаря (keeper_sidestep) — отдельный стейт скорости, если клип есть.
+	if ap.has_animation(&"keeper_sidestep"):
+		ap.get_animation(&"keeper_sidestep").loop_mode = Animation.LOOP_LINEAR
+		sm.add_node(LOCO_KEEPER_SIDE, _make_speed_state(&"keeper_sidestep"), Vector2(400, 300))
+		sm.add_transition(LOCOMOTION, LOCO_KEEPER_SIDE, _make_transition(false))
+		sm.add_transition(LOCO_KEEPER_SIDE, LOCOMOTION, _make_transition(false))
 	var y := 40.0
 	for action in ACTION_CLIPS:
 		var clip: String = ACTION_CLIPS[action]
@@ -207,10 +219,14 @@ func _process(delta: float) -> void:
 	# Выбор стейта локомоции по порогам скорости (пока не идёт action).
 	if _active_action == "" and not _fall_lock and _playback != null:
 		var want := LOCOMOTION
-		if speed >= FootballConstants.LOCO_SPRINT_ANIM_SPEED:
-			want = LOCO_SPRINT
-		elif speed >= FootballConstants.LOCO_RUN_ANIM_SPEED:
-			want = LOCO_RUN
+		if _loco_style == LOCO_STYLE_KEEPER:
+			if speed >= FootballConstants.LOCO_RUN_ANIM_SPEED and _sm_has(LOCO_KEEPER_SIDE):
+				want = LOCO_KEEPER_SIDE
+		else:
+			if speed >= FootballConstants.LOCO_SPRINT_ANIM_SPEED:
+				want = LOCO_SPRINT
+			elif speed >= FootballConstants.LOCO_RUN_ANIM_SPEED:
+				want = LOCO_RUN
 		if _playback.get_current_node() != want:
 			_playback.travel(want)
 	# Анти-слайд: скорость клипов run/sprint по реальной скорости.
@@ -218,6 +234,9 @@ func _process(delta: float) -> void:
 		PlayerVisual.run_timescale(speed, FootballConstants.LOCO_TOP_SPEED, FootballConstants.LOCO_RUN_SCALE_FUDGE))
 	_anim_tree.set("parameters/sm/%s/speed/scale" % LOCO_SPRINT,
 		PlayerVisual.run_timescale(speed, FootballConstants.LOCO_SPRINT_SPEED, FootballConstants.LOCO_RUN_SCALE_FUDGE))
+	if _sm_has(LOCO_KEEPER_SIDE):
+		_anim_tree.set("parameters/sm/%s/speed/scale" % LOCO_KEEPER_SIDE,
+			PlayerVisual.run_timescale(speed, FootballConstants.LOCO_TOP_SPEED, FootballConstants.LOCO_RUN_SCALE_FUDGE))
 
 	if _active_action != "":
 		_action_elapsed += delta
@@ -233,6 +252,20 @@ func _process(delta: float) -> void:
 ## Явно задать скорость (для будущих геймплей-вызовов). Vector3.ZERO → снова авто-замер.
 func set_locomotion(velocity: Vector3) -> void:
 	_explicit_speed = Vector3(velocity.x, 0.0, velocity.z).length()
+
+## Стиль локомоции: NORMAL (idle/run/sprint) или KEEPER (idle/keeper_sidestep, без спринта).
+func set_locomotion_style(style: int) -> void:
+	_loco_style = style
+
+## Есть ли стейт локомоции с таким именем (для тестов).
+func has_loco_state(state_name: StringName) -> bool:
+	return _anim_tree != null and _anim_tree.tree_root != null and _sm_has(state_name)
+
+func _sm_has(state_name: StringName) -> bool:
+	if _anim_tree == null or _anim_tree.tree_root == null:
+		return false
+	var sm := (_anim_tree.tree_root as AnimationNodeBlendTree).get_node(&"sm") as AnimationNodeStateMachine
+	return sm != null and sm.has_node(state_name)
 
 ## Разовое действие (kick/pass/header/…): travel в one-shot стейт + запуск таймингового
 ## драйвера (сигналы action_contact/action_finished). Возвращает true, если действие
