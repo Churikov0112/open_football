@@ -66,6 +66,21 @@ IN_PLACE_CLIPS = {
     "tackle": (0, 2),
     "roll_left": (0, 1, 2),
     "roll_right": (0, 1, 2),
+    # --- Вратарь ---
+    # Оси Hips.location (Blender-local): 0=латераль, 1=вертикаль(таз), 2=вперёд.
+    # Нижние нырки/боковой шаг — морозим горизонтали (0,2), вертикаль(1) живая (таз садится клипом),
+    # как tackle: заморозка вертикали → «висит в воздухе». Верхние нырки — морозим ВСЁ (0,1,2):
+    # всю дугу (вбок+вверх) двигает физика divevel.y, поза «в прыжке» — в костях. Начальные оси
+    # для catch/catch_top/drop_kick — (0,2); подтвердить сэмпл-скриптом, при подскоке
+    # catch_top перевести в (0,1,2).
+    "keeper_body_block_l": (0, 2),
+    "keeper_body_block_r": (0, 2),
+    "keeper_diving_save_l": (0, 1, 2),
+    "keeper_diving_save_r": (0, 1, 2),
+    "keeper_catch": (0, 2),
+    "keeper_catch_top": (0, 2),
+    "keeper_sidestep": (0, 2),
+    "keeper_drop_kick": (0, 2),
 }
 
 def _action_fcurves(act):
