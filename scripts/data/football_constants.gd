@@ -175,6 +175,7 @@ const RESET_BALL_Y := 0.5
 
 const DEBUG_DISABLE_OPPONENT := true # ВРЕМЕННО: true — ИИ-соперник просто стоит + стенки болванок (тест дриблинга/ударов)
 const DEBUG_MARK_TEAMMATE := false    # ВРЕМЕННО: true → соперник маркирует ИИ-тиммейта (встаёт в линию паса) — тест пасов/перехватов/приёма под давлением
+const DEBUG_DISABLE_TEAMMATE := true  # ВРЕМЕННО: true — ИИ-тиммейт не спавнится (удобнее тестить вратаря один-в-один)
 const DEBUG_MARK_DISTANCE := 2.5      # дистанция маркировки: соперник встаёт между мячом и тиммейтом на столько метров
 const DEBUG_BALL_TRAIL := true        # ВРЕМЕННО: цветной след за мячом (виден путь удара) — для тестов траекторий
 const DEBUG_BALL_TRAIL_POINTS := 90   # длина следа в кадрах истории позиций мяча
@@ -416,3 +417,4 @@ const KEEPER_HOLD_TIME := 1.0          # пауза с мячом в руках 
 const KEEPER_CLEAR_SPEED := 66.0       # горизонтальная скорость выноса (drop kick), м/с (×3 — дальше)
 const KEEPER_CLEAR_LIFT := 18.0        # вертикальная скорость выноса, м/с (×3 — выше)
 const KEEPER_PASS_DISTANCE := 20.0     # дальность раската мяча рукой по низу (keeper_pass), м — временно в центр поля
+const KEEPER_PLACE_DRIBBLE_DIST := 10.0 # ВРЕМЕННО: сколько метров вратарь ведёт мяч после placing ball до полевого паса

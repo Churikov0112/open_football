@@ -671,6 +671,8 @@ func _make_dummy_opponent(pos: Vector3) -> void:
 
 
 func _setup_teammate() -> void:
+	if FootballConstants.DEBUG_DISABLE_TEAMMATE:
+		return   # ВРЕМЕННО: тиммейт отключён (тест вратаря) → player_teammate остаётся null
 	var new_player := CharacterBody3D.new()
 	new_player.name = "PlayerTeammate"
 	new_player.global_position = Vector3(10, 0.5, 5)
@@ -772,7 +774,8 @@ func _physics_process(delta: float) -> void:
 				_sync_ai_controllers()
 
 	# Смена игрока — только в защите (мяч не у нас). В атаке combo_modifier = модификатор паса.
-	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess():
+	# При отключённом тиммейте (player_teammate == null) свапать некуда — пропускаем.
+	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess() and player_teammate != null:
 		controlled_player = player_teammate if controlled_player == player_home else player_home
 		_sync_ai_controllers()
 		_manual_swap_cooldown = 10

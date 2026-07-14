@@ -9,8 +9,16 @@ var save_area: Area3D
 var hold_point: Node3D   # узел-«руки»: пойманный мяч приклеивается сюда
 var manager: Node   # match_manager — для проверки празднования гола
 
-enum State { POSITION, DIVE, CATCHING, HOLD, DISTRIBUTE }
+enum State { POSITION, DIVE, CATCHING, HOLD, DISTRIBUTE, PLACING, CARRY, FIELD_PASS }
 var _state: int = State.POSITION
+# ВРЕМЕННЫЙ хардкод-сценарий раздачи «placing ball» (для теста полевой логики вратаря):
+# HOLD → PLACING (ставит мяч рукой на газон) → CARRY (дриблинг 5м как полевой) → FIELD_PASS
+# (пас 20м к центру как полевой) → POSITION. Заменяет keeper_pass/раскат (тот код сохранён).
+var _place_fired: bool = false
+var _carry_start: Vector3 = Vector3.ZERO
+var _carry_wait: float = 0.0   # доигрываем клип опускания мяча перед стартом движения
+var _field_pass_vel: Vector3 = Vector3.ZERO
+var _field_pass_fired: bool = false
 var _wired: bool = false
 var _pass_through: bool = false   # true → идёт miss_top: мяч НЕ ловим (пропускаем в ворота)
 
@@ -73,11 +81,11 @@ func _physics_process(delta: float) -> void:
 		if _state == State.DIVE:
 			_dive(delta)   # доигрываем нырок, idle придёт по завершении клипа
 			return
-		if _state == State.HOLD or _state == State.DISTRIBUTE:
-			# Страховка: не уносить пойманный мяч в стойку приклеенным к руке — отпустить.
-			if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == self:
+		if _state in [State.HOLD, State.DISTRIBUTE, State.PLACING, State.CARRY, State.FIELD_PASS]:
+			# Страховка: не уносить пойманный/ведомый мяч в стойку — отпустить и в POSITION.
+			if ball.dribbler == self:
 				ball.release_dribble()
-			_finish_dive()   # мяч во время празднования не выбиваем — в стойку
+			_finish_dive()   # мяч во время празднования не трогаем — в стойку
 		var mm := _motor()
 		if mm != null:
 			mm.set_move_intent(Vector3.ZERO)
@@ -95,6 +103,12 @@ func _physics_process(delta: float) -> void:
 			_hold(delta)
 		State.DISTRIBUTE:
 			_distribute(delta)
+		State.PLACING:
+			_placing(delta)
+		State.CARRY:
+			_carry(delta)
+		State.FIELD_PASS:
+			_field_pass(delta)
 
 
 ## Держим линию: X за мячом, лицом к мячу, лёгкий выход под угол. При ударе в створ —
@@ -365,7 +379,136 @@ func _to_hold() -> void:
 func _hold(delta: float) -> void:
 	_state_timer -= delta
 	if _state_timer <= 0.0:
-		_to_distribute()
+		_to_placing()   # ВРЕМЕННО: placing ball вместо раската (_to_distribute сохранён)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ВРЕМЕННЫЙ хардкод-сценарий «placing ball» → полевой дриблинг → полевой пас.
+# Не боевая механика вратаря, а тест переиспользования полевой логики. Направление —
+# прямо в поле (+into), только для проверки.
+# ─────────────────────────────────────────────────────────────────────────────
+
+## Постановка мяча рукой на газон: играем keeper_placing_ball, мяч ОСТАЁТСЯ приклеен к руке
+## (CAUGHT) — клип сам опускает руку и ставит мяч к ногам. На contact (0.95с) передаём в дриблинг.
+func _to_placing() -> void:
+	print("[KEEPER] PLACING (placing ball)")
+	_state = State.PLACING
+	_place_fired = false
+	_state_timer = 1.6   # страховка > длины клипа (1.17с) и контакта (0.95с)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(true)   # стоит на месте, ставит мяч
+	var vis := _visual()
+	if vis != null:
+		vis.recover()                 # выйти из idle_ball one-shot в локомоцию-хаб
+		vis.trigger("keeper_placing_ball")
+
+
+func _placing(delta: float) -> void:
+	_state_timer -= delta
+	# Страховка: contact не пришёл — всё равно передаём мяч в дриблинг.
+	if not _place_fired and _state_timer <= 0.0:
+		print("[KEEPER] PLACING fallback trap (no action_contact)")
+		_begin_carry()
+
+
+## Мяч поставлен на газон (contact keeper_placing_ball) → передаём из рук в дриблинг у ног.
+## Движение НЕ начинаем сразу: держим паузу _carry_wait, пока клип опускания мяча доиграет
+## до конца (иначе вратарь трогается с места ещё в анимации постановки).
+func _begin_carry() -> void:
+	if _place_fired:
+		return
+	_place_fired = true
+	# Из рук (CAUGHT) прямо в дриблинг (TRAPPED), force=true — мимо кулдаунов; мяч уже у ног.
+	ball.set_dribbler(self, true)
+	_state = State.CARRY
+	_carry_wait = 0.25   # остаток клипа keeper_placing_ball после contact (0.95с) до lock (1.17с)
+	print("[KEEPER] CARRY wait (ball placed, finishing anim)")
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(true)          # ещё стоим — анимация постановки доигрывает
+	var vis := _visual()
+	if vis != null:
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)   # обычный бег, не вратарский
+
+
+## Дриблинг 1:1 как полевой: motor ведёт корпус, ball_controller ведёт мяч lead-follow.
+## Фаза 1 — стоим, пока доигрывает клип опускания мяча; фаза 2 — движение до KEEPER_PLACE_DRIBBLE_DIST.
+func _carry(delta: float) -> void:
+	var m := _motor()
+	# Фаза 1: анимация опускания ещё доигрывает — стоим на месте.
+	if _carry_wait > 0.0:
+		_carry_wait -= delta
+		if m != null:
+			m.set_move_intent(Vector3.ZERO)
+		if _carry_wait <= 0.0:
+			if m != null:
+				m.set_control_locked(false)   # клип кончился — свободен, стартуем движение
+			_carry_start = global_position    # отсчёт дистанции от точки старта движения
+			print("[KEEPER] CARRY move (start=", _carry_start, ")")
+		return
+	# Фаза 2: движение вперёд + дриблинг.
+	var into := signf(-goal_line_z)   # от ворот в поле (к центру)
+	var dir := Vector3(0.0, 0.0, into)
+	if m != null:
+		m.set_face_direction(Vector3.ZERO)   # полевой режим: корпус смотрит по движению
+		m.set_move_intent(dir, 1.0)
+	# Мяч потерян (отобрали/улетел) — не зависаем, назад в стойку.
+	if ball.dribbler != self:
+		_finish_dive()
+		return
+	if global_position.distance_to(_carry_start) >= FootballConstants.KEEPER_PLACE_DRIBBLE_DIST:
+		_begin_field_pass()
+
+
+## Пас 1:1 как полевой: считаем вектор (PassSystem), играем клип «pass» и выпускаем мяч ПО КОНТАКТУ
+## анимации (как commit-action полевого), а не мгновенно. Мяч ждёт у ног (suppress), корпус стоит.
+func _begin_field_pass() -> void:
+	_state = State.FIELD_PASS
+	_field_pass_fired = false
+	_state_timer = 1.1   # страховка > contact (0.6с) кастомного тайминга keeper_field_pass
+	var into := signf(-goal_line_z)
+	var from := ball.global_position
+	var to := from + Vector3(0.0, 0.0, into) * FootballConstants.KEEPER_PASS_DISTANCE
+	var speed := PassSystem.ground_pass_speed(
+		from.distance_to(to), 0.7,
+		FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+		FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
+	_field_pass_vel = PassSystem.launch_ground(from, to, speed)
+	print("[KEEPER] FIELD PASS windup speed=", speed, " to=", to)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(true)                       # стоим, играем пас
+		m.set_move_intent(Vector3.ZERO)
+		m.set_face_direction(Vector3(0.0, 0.0, into))    # лицом по направлению паса
+	if ball.has_method(&"set_dribble_suppressed"):
+		ball.set_dribble_suppressed(true)                # мяч ждёт у ног — одно касание = пас
+	var vis := _visual()
+	if vis == null or not vis.trigger("keeper_field_pass"):
+		_do_field_pass_launch()                          # фолбэк без анимации
+
+
+func _field_pass(delta: float) -> void:
+	_state_timer -= delta
+	if not _field_pass_fired and _state_timer <= 0.0:
+		print("[KEEPER] FIELD PASS fallback launch (no action_contact)")
+		_do_field_pass_launch()
+
+
+## Контакт анимации паса → выпускаем мяч заготовленным вектором, затем свободен → POSITION.
+func _do_field_pass_launch() -> void:
+	if _field_pass_fired:
+		return
+	_field_pass_fired = true
+	if ball.dribbler == self:
+		print("[KEEPER] FIELD PASS launch vel=", _field_pass_vel)
+		ball.launch(_field_pass_vel)
+	var into := signf(-goal_line_z)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)
+		m.set_face_direction(Vector3(0.0, 0.0, into))   # снова вратарский режим (лицом в поле)
+	_state = State.POSITION
 
 
 func _to_distribute() -> void:
@@ -392,11 +535,17 @@ func _distribute(delta: float) -> void:
 		_state = State.POSITION
 
 
-## Момент отклейки мяча от руки в keeper_pass (0.8с) → раскат по низу в сторону центра поля.
+## Момент касания в раздаче: placing_ball (ставит мяч → дриблинг) — активный путь;
+## keeper_pass (раскат) сохранён, но сейчас не подключён.
 func _on_visual_contact(action: String) -> void:
-	if action != "keeper_pass" or _state != State.DISTRIBUTE or _distribute_fired:
+	if action == "keeper_placing_ball" and _state == State.PLACING and not _place_fired:
+		_begin_carry()
 		return
-	_do_pass_roll()
+	if action == "keeper_field_pass" and _state == State.FIELD_PASS and not _field_pass_fired:
+		_do_field_pass_launch()
+		return
+	if action == "keeper_pass" and _state == State.DISTRIBUTE and not _distribute_fired:
+		_do_pass_roll()
 
 
 ## Раскат мяча рукой по низу: отклеиваем от руки, роняем на газон под текущей позицией мяча

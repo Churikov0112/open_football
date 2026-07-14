@@ -30,6 +30,8 @@ const ACTION_CLIPS := {
 	"throw_in": "throw_in",
 	"keeper_drop_kick": "keeper_drop_kick",
 	"keeper_pass": "keeper_pass",
+	"keeper_placing_ball": "keeper_placing_ball",
+	"keeper_field_pass": "pass",   # полевой пас вратаря: тот же клип, свой тайминг (медленнее, виден)
 }
 ## Клипы, которые нужно зациклить; остальные one-shot доигрывают и авто-возвращаются.
 const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
@@ -51,6 +53,12 @@ const ACTION_TIMING := {
 	"keeper_drop_kick": {"contact": 1.4, "lock": 1.6, "speed": 1.0},
 	# Раскат рукой (1.4с): мяч приклеен к руке первые 0.8с, затем отклеивается и катится низом.
 	"keeper_pass": {"contact": 0.8, "lock": 1.4, "speed": 1.0},
+	# Постановка мяча рукой (1.17с): мяч приклеен к руке, к концу клипа рука ставит его на газон;
+	# на contact (0.95с) передаём мяч в дриблинг (трап у ног).
+	"keeper_placing_ball": {"contact": 0.95, "lock": 1.17, "speed": 1.0},
+	# Полевой пас вратаря: клип pass (0.43с) на нормальной скорости 1.0×, contact в момент касания
+	# мяча (≈0.3с клипа, как у полевого при 1.5×).
+	"keeper_field_pass": {"contact": 0.3, "lock": 0.43, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0
