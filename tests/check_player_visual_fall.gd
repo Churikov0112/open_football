@@ -23,7 +23,9 @@ func _process(_delta: float) -> bool:
 		return false  # ждём, пока отработает _ready
 	var ok := true
 	# One-shot стейты цепочки падения (подкат/лежит/перекаты/вставание) должны быть зарегистрированы.
-	var want := ["tackle", "fallen_idle", "roll_left", "roll_right", "standing_up"]
+	var want := ["tackle", "fallen_idle", "roll_left", "roll_right", "standing_up",
+			"keeper_body_block_l", "keeper_body_block_r", "keeper_diving_save_l", "keeper_diving_save_r",
+			"keeper_catch", "keeper_catch_top", "keeper_idle_ball", "keeper_drop_kick"]
 	for a in want:
 		if not _inst.has_action(a):
 			print("CHECK FAIL: нет one-shot стейта под клип '%s'" % a)

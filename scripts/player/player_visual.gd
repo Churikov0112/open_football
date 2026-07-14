@@ -21,6 +21,7 @@ const ACTION_CLIPS := {
 	"pass": "pass",
 	"penalty": "penalty_kick",
 	"throw_in": "throw_in",
+	"keeper_drop_kick": "keeper_drop_kick",
 }
 ## Клипы, которые нужно зациклить; остальные one-shot доигрывают и авто-возвращаются.
 const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
@@ -28,7 +29,9 @@ const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
 ## Дополнительные one-shot стейты (подкат/падение/перекаты/вставание): travel-only, без
 ## авто-возврата — цепочку падения ведёт match_manager. fallen_idle зациклен (LOOP_CLIPS)
 ## и служит удерживаемой позой «лежит» в фазе knockdown.
-const ONESHOT_CLIPS := [&"tackle", &"fallen_idle", &"roll_left", &"roll_right", &"standing_up"]
+const ONESHOT_CLIPS := [&"tackle", &"fallen_idle", &"roll_left", &"roll_right", &"standing_up",
+	&"keeper_body_block_l", &"keeper_body_block_r", &"keeper_diving_save_l", &"keeper_diving_save_r",
+	&"keeper_catch", &"keeper_catch_top", &"keeper_idle_ball"]
 
 ## Тайминг действия (реальные секунды): contact — до касания; lock — общая длительность
 ## до action_finished; speed — множитель скорости проигрывания (сжать замах, сохранив синхрон).
@@ -36,6 +39,7 @@ const ONESHOT_CLIPS := [&"tackle", &"fallen_idle", &"roll_left", &"roll_right", 
 const ACTION_TIMING := {
 	"kick": {"contact": 0.35, "lock": 0.5, "speed": 1.0},
 	"pass": {"contact": 0.2, "lock": 0.4, "speed": 1.5},
+	"keeper_drop_kick": {"contact": 0.5, "lock": 1.0, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0
