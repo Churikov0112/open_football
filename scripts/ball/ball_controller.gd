@@ -150,6 +150,23 @@ func block_in_flight() -> void:
 	_set_player_collision(false)
 
 
+## Вратарский отбой: гасит скорость ×damp, перенаправляет мяч НАРУЖУ (по direction, чуть
+## вверх), роняет в OPEN, коллизию с игроками выключает. В отличие от block_in_flight()
+## (просто гасит на месте) — задаёт направление отскока от ворот.
+func parry(direction: Vector3, damp: float) -> void:
+	var speed := linear_velocity.length() * damp
+	_curl = Vector3.ZERO
+	state = BallState.OPEN
+	_set_player_collision(false)
+	var out := direction
+	out.y = 0.0
+	if out.length() < 0.001:
+		out = Vector3(0, 0, 1)
+	out = out.normalized()
+	out.y = 0.5   # немного вверх, чтобы отбитый мяч читался
+	linear_velocity = out.normalized() * speed
+
+
 ## Слой игроков в маске мяча — ВКЛючаем только в полёте (блок/перехват), иначе капсула игрока
 ## толкала бы мяч на дриблинге/подборе (ломает близкий контроль, подскок). Bit2 = PLAYER.
 func _set_player_collision(on: bool) -> void:
