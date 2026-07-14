@@ -41,3 +41,31 @@ static func save_decision(intercept: Vector3, keeper_pos: Vector3, reach_radius:
 			return {"action": SaveAction.DIVE_HIGH_L if dx < 0.0 else SaveAction.DIVE_HIGH_R, "target": intercept}
 		return {"action": SaveAction.DIVE_LOW_L if dx < 0.0 else SaveAction.DIVE_LOW_R, "target": intercept}
 	return {"action": SaveAction.NONE, "target": intercept}
+
+## Сколько мячу лететь до точки пересечения (по его скорости). Стоящий мяч → INF.
+static func time_to_intercept(ball_pos: Vector3, ball_vel: Vector3, intercept: Vector3) -> float:
+	var speed := ball_vel.length()
+	if speed < 0.001:
+		return INF
+	return ball_pos.distance_to(intercept) / speed
+
+## Пора ли стартовать нырок: мячу до точки лететь не дольше, чем нырку до неё доехать
+## (расстояние/скорость) + запас на раскрытие позы. Раньше — ждём/подшагиваем.
+static func should_commit_dive(t_to_intercept: float, keeper_pos: Vector3, target: Vector3, dive_speed: float, lead_margin: float) -> bool:
+	if dive_speed <= 0.0:
+		return true
+	var dive_time := keeper_pos.distance_to(target) / dive_speed
+	return t_to_intercept <= dive_time + lead_margin
+
+## Ловить или отбивать. Центр — всегда ловля; верхний угол — всегда отбой; нижний угол —
+## ловля медленного, отбой быстрого. (Диктуется имеющимися анимациями.)
+static func resolve_save(action: int, ball_speed: float, catch_max_speed: float) -> bool:
+	match action:
+		SaveAction.CATCH, SaveAction.CATCH_TOP:
+			return true
+		SaveAction.DIVE_HIGH_L, SaveAction.DIVE_HIGH_R:
+			return false
+		SaveAction.DIVE_LOW_L, SaveAction.DIVE_LOW_R:
+			return ball_speed <= catch_max_speed
+		_:
+			return false

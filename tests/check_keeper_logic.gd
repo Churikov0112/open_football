@@ -56,5 +56,34 @@ func _initialize() -> void:
 	if d5.action != KeeperLogic.SaveAction.NONE:
 		print("CHECK FAIL: decision NONE → ", d5.action); ok = false
 
+	# time_to_intercept: расстояние/скорость.
+	# мяч (0,0,40)→(0,0,52.5) при скорости 25 м/с → t=12.5/25=0.5
+	var tti := KeeperLogic.time_to_intercept(Vector3(0, 0, 40), Vector3(0, 0, 25), Vector3(0, 0, 52.5))
+	if not is_equal_approx(tti, 0.5):
+		print("CHECK FAIL: time_to_intercept → ", tti); ok = false
+	if KeeperLogic.time_to_intercept(Vector3(0,0,40), Vector3.ZERO, Vector3(0,0,52.5)) != INF:
+		print("CHECK FAIL: time_to_intercept still"); ok = false
+
+	# should_commit_dive: рано (мяч далеко по времени) — не прыгаем; в окне — прыгаем.
+	# нырок к цели на 3 м при dive_speed=14 → dive_time≈0.214; lead=0.08 → окно≈0.294
+	var far := KeeperLogic.should_commit_dive(0.6, Vector3(0,0,52), Vector3(3,0.5,52.5), 14.0, 0.08)
+	if far:
+		print("CHECK FAIL: commit too early"); ok = false
+	var now := KeeperLogic.should_commit_dive(0.25, Vector3(0,0,52), Vector3(3,0.5,52.5), 14.0, 0.08)
+	if not now:
+		print("CHECK FAIL: commit in window"); ok = false
+
+	# resolve_save: центр всегда ловля, верх-угол всегда отбой, низ-угол по скорости.
+	if not KeeperLogic.resolve_save(KeeperLogic.SaveAction.CATCH, 40.0, 18.0):
+		print("CHECK FAIL: resolve CATCH always"); ok = false
+	if not KeeperLogic.resolve_save(KeeperLogic.SaveAction.CATCH_TOP, 40.0, 18.0):
+		print("CHECK FAIL: resolve CATCH_TOP always"); ok = false
+	if KeeperLogic.resolve_save(KeeperLogic.SaveAction.DIVE_HIGH_L, 5.0, 18.0):
+		print("CHECK FAIL: resolve HIGH always parry"); ok = false
+	if not KeeperLogic.resolve_save(KeeperLogic.SaveAction.DIVE_LOW_R, 10.0, 18.0):
+		print("CHECK FAIL: resolve LOW slow catch"); ok = false
+	if KeeperLogic.resolve_save(KeeperLogic.SaveAction.DIVE_LOW_R, 25.0, 18.0):
+		print("CHECK FAIL: resolve LOW fast parry"); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
