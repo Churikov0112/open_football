@@ -79,6 +79,14 @@ static func should_commit_dive(t_to_intercept: float, keeper_pos: Vector3, targe
 	var dive_time := keeper_pos.distance_to(target) / dive_speed
 	return t_to_intercept <= dive_time + lead_margin
 
+## Начальная скорость наземного раската рукой, чтобы мяч прокатился distance метров под драгом
+## drag_per_frame (множитель горизонтальной скорости за физкадр, ball.drag_factor). Мяч теряет
+## скорость геометрически: путь = v0*dt*Σ drag^n = v0*dt/(1-drag) → v0 = distance*(1-drag)/dt.
+static func roll_speed(distance: float, drag_per_frame: float, dt: float) -> float:
+	if dt <= 0.0 or drag_per_frame >= 1.0 or drag_per_frame < 0.0:
+		return 0.0
+	return distance * (1.0 - drag_per_frame) / dt
+
 ## Ловить или отбивать. Центр — всегда ловля; верхний угол — всегда отбой; нижний угол —
 ## ловля медленного, отбой быстрого. (Диктуется имеющимися анимациями.)
 static func resolve_save(action: int, ball_speed: float, catch_max_speed: float) -> bool:

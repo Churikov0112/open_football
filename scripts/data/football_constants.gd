@@ -415,3 +415,4 @@ const KEEPER_PARRY_DAMP := 0.3         # доля скорости мяча по
 const KEEPER_HOLD_TIME := 1.0          # пауза с мячом в руках до выноса, с
 const KEEPER_CLEAR_SPEED := 66.0       # горизонтальная скорость выноса (drop kick), м/с (×3 — дальше)
 const KEEPER_CLEAR_LIFT := 18.0        # вертикальная скорость выноса, м/с (×3 — выше)
+const KEEPER_PASS_DISTANCE := 20.0     # дальность раската мяча рукой по низу (keeper_pass), м — временно в центр поля

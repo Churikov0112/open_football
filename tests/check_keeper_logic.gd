@@ -103,5 +103,14 @@ func _initialize() -> void:
 	if KeeperLogic.resolve_save(KeeperLogic.SaveAction.DIVE_LOW_R, 25.0, 18.0):
 		print("CHECK FAIL: resolve LOW fast parry"); ok = false
 
+	# roll_speed: путь = v0*dt/(1-drag) → v0 = distance*(1-drag)/dt.
+	# distance=20, drag=0.985, dt=1/60 → 20*0.015*60 = 18.0.
+	var rs := KeeperLogic.roll_speed(20.0, 0.985, 1.0 / 60.0)
+	if not is_equal_approx(rs, 18.0):
+		print("CHECK FAIL: roll_speed → ", rs); ok = false
+	# Вырожденные входы → 0 (без деления на ноль / отрицательных).
+	if KeeperLogic.roll_speed(20.0, 1.0, 1.0 / 60.0) != 0.0 or KeeperLogic.roll_speed(20.0, 0.985, 0.0) != 0.0:
+		print("CHECK FAIL: roll_speed degenerate"); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)

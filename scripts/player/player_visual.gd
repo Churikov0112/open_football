@@ -29,6 +29,7 @@ const ACTION_CLIPS := {
 	"penalty": "penalty_kick",
 	"throw_in": "throw_in",
 	"keeper_drop_kick": "keeper_drop_kick",
+	"keeper_pass": "keeper_pass",
 }
 ## Клипы, которые нужно зациклить; остальные one-shot доигрывают и авто-возвращаются.
 const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
@@ -48,6 +49,8 @@ const ACTION_TIMING := {
 	"pass": {"contact": 0.2, "lock": 0.4, "speed": 1.5},
 	# Клип 1.6с: замах длинный, нога встречает мяч в самом КОНЦЕ (contact 1.45с), не на середине.
 	"keeper_drop_kick": {"contact": 1.4, "lock": 1.6, "speed": 1.0},
+	# Раскат рукой (1.4с): мяч приклеен к руке первые 0.8с, затем отклеивается и катится низом.
+	"keeper_pass": {"contact": 0.8, "lock": 1.4, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0

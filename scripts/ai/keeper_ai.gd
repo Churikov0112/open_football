@@ -369,36 +369,58 @@ func _hold(delta: float) -> void:
 
 
 func _to_distribute() -> void:
-	print("[KEEPER] DISTRIBUTE (drop kick)")
+	print("[KEEPER] DISTRIBUTE (pass roll)")
 	_state = State.DISTRIBUTE
 	_distribute_fired = false
-	_state_timer = 1.9   # страховка > длины клипа (1.6с) и контакта (1.25с): выбьем принудительно,
+	_state_timer = 1.9   # страховка > длины клипа (1.4с) и контакта (0.8с): раскатим принудительно,
 	                     # только если action_contact реально не пришёл
 	var vis := _visual()
 	if vis != null:
 		vis.recover()                 # выйти из idle_ball one-shot в локомоцию-хаб
-		vis.trigger("keeper_drop_kick")
+		# ВРЕМЕННО: раздача пасом-раскатом вместо выноса ногой (drop_kick-код сохранён — _do_clear).
+		vis.trigger("keeper_pass")
 
 
 func _distribute(delta: float) -> void:
 	_state_timer -= delta
-	# Страховка от зависания: сигнал касания не пришёл вовремя — выбиваем принудительно.
+	# Страховка от зависания: сигнал касания не пришёл вовремя — раскатываем принудительно.
 	if not _distribute_fired and _state_timer <= 0.0:
-		print("[KEEPER] DISTRIBUTE fallback clear (no action_contact)")
-		_do_clear()
+		print("[KEEPER] DISTRIBUTE fallback roll (no action_contact)")
+		_do_pass_roll()
 	if _distribute_fired and ball.dribbler != self:
 		print("[KEEPER] -> back to POSITION (cleared)")
 		_state = State.POSITION
 
 
-## Момент касания мяча ногой в drop kick → вынос в сторону центра поля.
+## Момент отклейки мяча от руки в keeper_pass (0.8с) → раскат по низу в сторону центра поля.
 func _on_visual_contact(action: String) -> void:
-	if action != "keeper_drop_kick" or _state != State.DISTRIBUTE or _distribute_fired:
+	if action != "keeper_pass" or _state != State.DISTRIBUTE or _distribute_fired:
 		return
-	_do_clear()
+	_do_pass_roll()
 
 
-## Выброс мяча в сторону центра поля (drop kick).
+## Раскат мяча рукой по низу: отклеиваем от руки, роняем на газон под текущей позицией мяча
+## и катим в сторону центра поля на KEEPER_PASS_DISTANCE (скорость выведена из драга мяча,
+## flat=true — катится низом, без подскока).
+func _do_pass_roll() -> void:
+	_distribute_fired = true
+	if ball.dribbler == self or ball.is_caught():
+		var into := signf(-goal_line_z)   # от ворот в поле (к центру)
+		var dir := Vector3(0.0, 0.0, into)
+		var dt := 1.0 / float(Engine.physics_ticks_per_second)
+		var speed := KeeperLogic.roll_speed(FootballConstants.KEEPER_PASS_DISTANCE, ball.drag_factor, dt)
+		var bp := ball.global_position
+		ball.global_position = Vector3(bp.x, FootballConstants.BALL_RADIUS + 0.02, bp.z)  # был на руке → на газон
+		print("[KEEPER] pass roll! speed=", speed, " dir=", dir)
+		ball.launch(dir * speed, true)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)   # снова свободен — назад на линию
+	_state = State.POSITION
+
+
+## Выброс мяча в сторону центра поля (drop kick). ВРЕМЕННО не используется — раздача идёт
+## через _do_pass_roll (keeper_pass). Оставлено для возврата к выносу ногой.
 func _do_clear() -> void:
 	_distribute_fired = true
 	var out_z := signf(-goal_line_z)   # от ворот к центру поля
