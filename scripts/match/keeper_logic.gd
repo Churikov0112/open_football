@@ -14,15 +14,37 @@ static func line_position(ball_pos: Vector3, goal_line_z: float, goal_half_width
 	return Vector3(x, 0.0, goal_line_z + into_field * off)
 
 ## Точка пересечения траектории удара с плоскостью линии ворот (z=goal_line_z).
-## Если мяч не движется к линии впереди — возвращает позицию мяча (нет пересечения).
-static func shot_intercept(ball_pos: Vector3, ball_vel: Vector3, goal_line_z: float) -> Vector3:
-	var vz := ball_vel.z
-	if absf(vz) < 0.001:
+## ЧИСЛЕННО, тем же интегратором, что и настоящий мяч: гравитация по Y + драг
+## (drag_xz/drag_y — множители скорости ЗА ФИЗКАДР dt, как в ball_controller).
+## Драг критичен: при drag_xz=0.985 мяч теряет ~60% горизонтальной скорости в секунду,
+## реальный полёт дольше наивного t=dz/vz, и мяч опускается на 0.3–0.5 м НИЖЕ чистой
+## баллистики. Наивный расчёт завышал высоту → вратарь «пропускал над перекладиной»
+## мячи, реально летящие под неё. drag=1.0 (по умолчанию) → чистая баллистика.
+## Если мяч не движется к линии впереди (или затухает, не долетев) — возвращает позицию мяча.
+static func shot_intercept(ball_pos: Vector3, ball_vel: Vector3, goal_line_z: float, gravity: float, drag_xz: float = 1.0, drag_y: float = 1.0, dt: float = 1.0 / 60.0) -> Vector3:
+	if absf(ball_vel.z) < 0.001:
 		return ball_pos
-	var t := (goal_line_z - ball_pos.z) / vz
-	if t < 0.0:
-		return ball_pos
-	return ball_pos + ball_vel * t
+	if (goal_line_z - ball_pos.z) / ball_vel.z < 0.0:
+		return ball_pos  # летит ОТ линии
+	var pos := ball_pos
+	var vel := ball_vel
+	var t := 0.0
+	while t < 3.0:
+		var prev := pos
+		# Полушаг гравитации до и после сдвига (leapfrog): при drag=1 парабола точная.
+		vel.y -= 0.5 * gravity * dt
+		pos += vel * dt
+		vel.y -= 0.5 * gravity * dt
+		vel.x *= drag_xz
+		vel.z *= drag_xz
+		vel.y *= drag_y
+		t += dt
+		if (goal_line_z - prev.z) * (goal_line_z - pos.z) <= 0.0:
+			var seg := pos.z - prev.z
+			var f := clampf((goal_line_z - prev.z) / seg, 0.0, 1.0) if absf(seg) > 0.000001 else 0.0
+			var hit := prev.lerp(pos, f)
+			return Vector3(hit.x, maxf(hit.y, 0.0), goal_line_z)
+	return ball_pos  # затух в драге, до линии не долетает
 
 ## Попадает ли точка пересечения в створ (по |x| и по высоте).
 static func is_on_target(intercept: Vector3, goal_half_width: float, goal_height: float) -> bool:

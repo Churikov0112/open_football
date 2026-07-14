@@ -67,6 +67,7 @@ const KICK_CHARGE_MAX_TIME: float = 0.5
 var _pass_rng := RandomNumberGenerator.new()
 var _pending_launch: Vector3 = Vector3.ZERO
 var _pending_curl: Vector3 = Vector3.ZERO
+var _pending_flat: bool = false   # true → настильный удар низом (мяч катится без подскока)
 
 # DEBUG: цветной след за мячом (траектория удара)
 var _trail: MeshInstance3D
@@ -382,7 +383,6 @@ func _setup_camera() -> void:
 	var cam: Camera3D = $CameraPivot/Camera3D
 	var cam_script = preload("res://scripts/camera/match_camera.gd")
 	cam.set_script(cam_script)
-	cam.target = ball
 	_match_camera = cam
 
 
@@ -446,6 +446,10 @@ func _setup_goals() -> void:
 		area.global_position = g.pos + Vector3(0, 1.22, -0.25 if g.side == "Home" else 0.25)
 
 		area.body_entered.connect(func(body: Node):
+			# Мяч В РУКАХ вратаря — не гол: во время анимаций удержания/выноса кисть (и
+			# приклеенный к ней мяч) может качнуться за линию — это не взятие ворот.
+			if body == ball and ball.has_method(&"is_caught") and ball.is_caught():
+				return
 			if body == ball and not _celebrating:
 				_celebrating = true
 				if g.side == "Home":
@@ -540,12 +544,18 @@ func _give_ai_to_player_home() -> void:
 	player_home.teammate_home_goal = $GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null
 
 
+## Идёт ли празднование гола (вратарь на это время не сейвит/не выбивает мяч).
+func is_celebrating() -> bool:
+	return _celebrating
+
+
 ## Вратарь соперника в атакуемых человеком воротах (Away, +field_length).
 func _setup_keeper() -> void:
 	var k := CharacterBody3D.new()
 	k.name = "Keeper"
-	var goal_line_z := field_length   # ворота Away на +field_length
-	k.global_position = Vector3(0, 0.5, goal_line_z - 0.5)  # чуть в поле от линии
+	var goal_line_z := -field_length   # ворота Home на -field_length
+	var into_field := 1.0 if goal_line_z < 0.0 else -1.0
+	k.global_position = Vector3(0, 0.5, goal_line_z + into_field * 0.5)  # чуть в поле от линии
 	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
 	k.add_child(visual)
 	k.add_child(PlayerMotor.new())
@@ -558,16 +568,22 @@ func _setup_keeper() -> void:
 	col.shape = shape
 	col.position = Vector3(0, 0.25, 0)
 	k.add_child(col)
-	# Сейв-зона: реагирует на мяч (слой 1); keeper_ai решает поймать/отбить.
+	# Сейв-зона: сфера на высоте груди (накрывает низ и верх), реагирует на мяч (слой 1).
 	var save_area := Area3D.new()
 	save_area.name = "SaveArea"
 	var sacol := CollisionShape3D.new()
 	var sashape := SphereShape3D.new()
 	sashape.radius = FootballConstants.KEEPER_REACH
 	sacol.shape = sashape
+	sacol.position = Vector3(0, FootballConstants.KEEPER_SAVE_AREA_Y, 0)
 	save_area.add_child(sacol)
 	save_area.collision_mask = 1   # только мяч (слой 1)
 	k.add_child(save_area)
+	# Точка «рук»: сюда приклеивается пойманный мяч (грудь, чуть вперёд в поле).
+	var hold_point := Node3D.new()
+	hold_point.name = "HoldPoint"
+	hold_point.position = Vector3(0, 1.0, -0.45)
+	k.add_child(hold_point)
 	add_child(k)
 	k.add_to_group("team_2")
 	k.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
@@ -577,6 +593,8 @@ func _setup_keeper() -> void:
 	k.ball = ball
 	k.goal_line_z = goal_line_z
 	k.save_area = save_area
+	k.hold_point = hold_point
+	k.manager = self
 	_keeper = k
 
 
@@ -687,11 +705,18 @@ func _setup_teammate() -> void:
 
 func _process(delta: float) -> void:
 	var ball_pos := ball.global_position
-	camera_pivot.global_position = camera_pivot.global_position.lerp(
-		Vector3(-40, camera_pivot.position.y, ball_pos.z),
-		3.0 * delta
-	)
-	camera_pivot.look_at(Vector3(0, 0, ball_pos.z), Vector3.UP)
+	# Камера от 3-го лица: пивот встаёт ПОЗАДИ управляемого игрока (по его facing) и смотрит
+	# вперёд него. -pivot.basis.z тогда = «вперёд игрока» → камера-относительный ввод корректен.
+	var cam_target: Node3D = controlled_player if (controlled_player and is_instance_valid(controlled_player)) else null
+	if cam_target != null:
+		var fwd := -cam_target.global_transform.basis.z
+		fwd.y = 0.0
+		if fwd.length() < 0.01:
+			fwd = Vector3(0, 0, -1)
+		fwd = fwd.normalized()
+		var eye := cam_target.global_position - fwd * FootballConstants.CAMERA_TP_DISTANCE + Vector3.UP * FootballConstants.CAMERA_TP_HEIGHT
+		camera_pivot.global_position = camera_pivot.global_position.lerp(eye, clampf(FootballConstants.CAMERA_TP_FOLLOW * delta, 0.0, 1.0))
+		camera_pivot.look_at(cam_target.global_position + fwd * FootballConstants.CAMERA_TP_LOOK_AHEAD + Vector3.UP, Vector3.UP)
 
 	if _trail != null:
 		_update_ball_trail(ball_pos)
@@ -1159,6 +1184,17 @@ func _fire_charge() -> void:
 
 ## Удар: контекст решает удар в ворота vs вынос; тип (прямой/кручёный/черпачок) — по action.
 ## Импульс — через commit-action (ball.launch / launch_curl по action_contact), как у паса.
+## Плоская скорость удара НИЗОМ: горизонталь к цели, без вертикали (vy=0) — мяч идёт по газону,
+## а не по баллистической дуге. from/aim берём только по X/Z.
+func _ground_launch(from: Vector3, aim: Vector3, power: float, facing: Vector3) -> Vector3:
+	var d := Vector3(aim.x - from.x, 0.0, aim.z - from.z)
+	if d.length() < 0.001:
+		d = Vector3(facing.x, 0.0, facing.z)
+	if d.length() < 0.001:
+		d = Vector3(0.0, 0.0, _attack_dir_z)
+	return d.normalized() * power
+
+
 func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: float, facing_override: Vector3 = Vector3.ZERO) -> void:
 	if not ball.has_method(&"launch"):
 		return
@@ -1170,6 +1206,7 @@ func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	var g := _ball_gravity()
 	var launch_vel: Vector3
 	var curl := Vector3.ZERO
+	var ground_shot := false   # настильный удар низом (короткий тап) — ставится в ветке удара
 
 	# На ЧУЖОЙ половине (сторона атакующих ворот) — всегда удар по воротам, без выноса.
 	# Вынос допустим только на своей половине. Половина определяется через _attack_dir_z
@@ -1184,7 +1221,7 @@ func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		# УДАР: прицел в створ (гибрид: авто-цель + смещение по facing + разброс).
 		# curl_side даёт сторону стика; прицел (прямой/черпачок) — в ДАЛЬНИЙ угол (куда стик),
 		# по тому же принципу, что и кручёный, только без Magnus. Поэтому side_bias = -curl_side.
-		var side_bias := -ShotSystem.curl_side(from, goal_center, facing)
+		var side_bias := ShotSystem.aim_bias(from, goal_center, facing, FootballConstants.SHOT_AIM_SENSITIVITY)
 		var dist := Vector3(goal_center.x - from.x, 0.0, goal_center.z - from.z).length()
 		var scatter := ShotSystem.scatter_meters(FootballConstants.SHOT_SCATTER_BASE, charge_ratio,
 			dist, FootballConstants.SHOT_SCATTER_DIST_REF)
@@ -1193,6 +1230,11 @@ func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		# Помощь при ударе: мягкий магнит прицела внутрь рамы (гасит разброс мимо ворот).
 		aim = ShotSystem.goal_assist(aim, goal_center, half_w, height,
 			FootballConstants.SHOT_ASSIST, FootballConstants.SHOT_ASSIST_MARGIN)
+		# Короткое нажатие (<10% заряда): прямой/кручёный удар НИЗОМ — плоский пуск (без дуги).
+		# Черпачок (SHOT_CHIP) не трогаем — он всегда навесной.
+		ground_shot = action != ChargeAction.SHOT_CHIP and charge_ratio < FootballConstants.SHOT_GROUND_CHARGE_MAX
+		if ground_shot:
+			aim.y = FootballConstants.SHOT_GROUND_AIM_Y
 		if action == ChargeAction.SHOT_CHIP:
 			# Черпачок: перекидывающая парабола в СТОРОНУ ворот (с учётом угла прицела), но заряд
 			# задаёт И высоту дуги, И дальность приземления. Слабый — роняет близко, сильный —
@@ -1208,19 +1250,23 @@ func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		else:
 			# Прямой и кручёный: настильная баллистика в точку прицела.
 			var power := lerpf(FootballConstants.SHOT_POWER_MIN, FootballConstants.SHOT_POWER_MAX, charge_ratio)
+			if ground_shot:
+				power = FootballConstants.SHOT_GROUND_POWER   # настильный удар — крепкий, несмотря на короткий тап
 			if action == ChargeAction.SHOT_CURL:
 				# Кручёный «в дальнюю девятку». Закрутка (curl_side) гнёт мяч в сторону −side —
 				# это ПРАВИЛЬНАЯ дуга. Прицел РАЗВЯЗАН от закрутки: целимся так, чтобы эта дуга
 				# занесла мяч в ДАЛЬНИЙ угол (на −side): при слабом заряде почти прямо в угол, при
 				# сильном — короче (aim смещён на +side на CURL_AIM_OUT), закрутка добьёт в угол.
-				var side := ShotSystem.curl_side(from, goal_center, facing)
-				var far_corner_x: float = goal_center.x - side * half_w
-				aim.x = far_corner_x + side * FootballConstants.CURL_AIM_OUT * charge_ratio
-				launch_vel = ShotSystem.ballistic_to(from, aim, power, g)
+				# Направление закрутки — по стороне наклона стика (= -sign(side_bias), как раньше).
+				var side := 1.0 if side_bias < 0.0 else -1.0
+				# aim.x уже непрерывно наведён (goal_aim_point + assist); целимся ЗА эту точку на
+				# CURL_AIM_OUT — дуга Magnus вернёт мяч в неё. Центр → почти прямой, у угла — дуга.
+				aim.x += side * FootballConstants.CURL_AIM_OUT * charge_ratio
+				launch_vel = _ground_launch(from, aim, power, facing) if ground_shot else ShotSystem.ballistic_to(from, aim, power, g)
 				var strength := lerpf(FootballConstants.CURL_STRENGTH_MIN, FootballConstants.CURL_STRENGTH_MAX, charge_ratio)
 				curl = ShotSystem.curl_vector(side, strength, FootballConstants.CURL_LIFT)
 			else:
-				launch_vel = ShotSystem.ballistic_to(from, aim, power, g)
+				launch_vel = _ground_launch(from, aim, power, facing) if ground_shot else ShotSystem.ballistic_to(from, aim, power, g)
 
 	# Commit-action: импульс по action_contact, launch-путь (сентинел _action_power = -1).
 	_action_player = player
@@ -1229,14 +1275,15 @@ func _fire_shot(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	_kick_action_active = true
 	_pending_launch = launch_vel
 	_pending_curl = curl
+	_pending_flat = ground_shot
 	var visual := _player_visual(player)
 	if visual != null and visual.trigger("kick"):
 		return  # ждём action_contact
 	# Фолбэк без анимации: бьём сразу
 	if curl.length_squared() > 0.0001 and ball.has_method(&"launch_curl"):
-		ball.launch_curl(launch_vel, curl)
+		ball.launch_curl(launch_vel, curl, ground_shot)
 	else:
-		ball.launch(launch_vel)
+		ball.launch(launch_vel, ground_shot)
 	_action_player = null
 	_kick_action_active = false
 
@@ -1466,6 +1513,7 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 	_kick_action_active = true
 	_pending_launch = launch_vel
 	_pending_curl = Vector3.ZERO  # пас не крутится (сброс остаточного curl от прошлого кручёного удара)
+	_pending_flat = false         # пас — не настильный удар (сброс флага от прошлого удара низом)
 	# Передать управление принимающему сразу.
 	if receiver != null:
 		controlled_player = receiver
@@ -1542,9 +1590,9 @@ func _on_action_contact(_action: String, player: Node) -> void:
 			return  # мяч за спиной — удар/пас не производим
 	if _action_power < 0.0 and ball.has_method(&"launch"):
 		if _pending_curl.length_squared() > 0.0001 and ball.has_method(&"launch_curl"):
-			ball.launch_curl(_pending_launch, _pending_curl)
+			ball.launch_curl(_pending_launch, _pending_curl, _pending_flat)
 		else:
-			ball.launch(_pending_launch)
+			ball.launch(_pending_launch, _pending_flat)
 	elif ball.has_method(&"kick"):
 		ball.kick(_action_dir, _action_power)
 
@@ -1983,10 +2031,17 @@ func _same_team(a: Node, b: Node) -> bool:
 
 
 func _on_ball_collision(body: Node) -> void:
+	# Мяч коснулся вратаря → ловля/отбой (а не блок): иначе block_in_flight гасит мяч, и он
+	# закатывается в ворота. Физический контакт — надёжный триггер сейва.
+	if body == _keeper and _keeper != null and is_instance_valid(_keeper) and _keeper.has_method(&"on_ball_contact"):
+		print("[MATCH] ball hit KEEPER capsule")
+		_keeper.on_ball_contact()
+		return
 	# Блок: летящий мяч коснулся игрока (защитник на пути / попал в своего). Гасим и роняем
 	# мяч в OPEN (без мгновенной передачи владения — дальше обычная борьба за подбор).
 	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
 			and ball.has_method(&"is_flight") and ball.is_flight() and ball.has_method(&"block_in_flight"):
+		print("[MATCH] block_in_flight by ", body.name, " kicker=", ball.last_kicker)
 		ball.block_in_flight()
 
 

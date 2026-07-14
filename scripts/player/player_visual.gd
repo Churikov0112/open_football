@@ -17,6 +17,8 @@ const LOCO_RUN := &"loco_run"
 const LOCO_SPRINT := &"loco_sprint"
 ## Боковой стейт локомоции вратаря (приставные шаги вместо бега).
 const LOCO_KEEPER_SIDE := &"loco_keeper_side"
+## Стойка готовности вратаря (keeper_idle) — используется вместо обычного idle в KEEPER-стиле.
+const LOCO_KEEPER_IDLE := &"loco_keeper_idle"
 ## Стиль локомоции: NORMAL (idle/run/sprint) или KEEPER (idle/keeper_sidestep, без спринта).
 const LOCO_STYLE_NORMAL := 0
 const LOCO_STYLE_KEEPER := 1
@@ -36,7 +38,7 @@ const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
 ## и служит удерживаемой позой «лежит» в фазе knockdown.
 const ONESHOT_CLIPS := [&"tackle", &"fallen_idle", &"roll_left", &"roll_right", &"standing_up",
 	&"keeper_body_block_l", &"keeper_body_block_r", &"keeper_diving_save_l", &"keeper_diving_save_r",
-	&"keeper_catch", &"keeper_catch_top", &"keeper_idle_ball"]
+	&"keeper_catch", &"keeper_catch_top", &"keeper_catch_head", &"keeper_scoop", &"keeper_miss_top", &"keeper_idle_ball"]
 
 ## Тайминг действия (реальные секунды): contact — до касания; lock — общая длительность
 ## до action_finished; speed — множитель скорости проигрывания (сжать замах, сохранив синхрон).
@@ -44,7 +46,8 @@ const ONESHOT_CLIPS := [&"tackle", &"fallen_idle", &"roll_left", &"roll_right", 
 const ACTION_TIMING := {
 	"kick": {"contact": 0.35, "lock": 0.5, "speed": 1.0},
 	"pass": {"contact": 0.2, "lock": 0.4, "speed": 1.5},
-	"keeper_drop_kick": {"contact": 0.5, "lock": 1.0, "speed": 1.0},
+	# Клип 1.6с: замах длинный, нога встречает мяч в самом КОНЦЕ (contact 1.45с), не на середине.
+	"keeper_drop_kick": {"contact": 1.4, "lock": 1.6, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0
@@ -122,6 +125,18 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 		sm.add_node(LOCO_KEEPER_SIDE, _make_speed_state(&"keeper_sidestep"), Vector2(400, 300))
 		sm.add_transition(LOCOMOTION, LOCO_KEEPER_SIDE, _make_transition(false))
 		sm.add_transition(LOCO_KEEPER_SIDE, LOCOMOTION, _make_transition(false))
+	# Стойка готовности вратаря (keeper_idle) — стоячий стейт в KEEPER-стиле.
+	if ap.has_animation(&"keeper_idle"):
+		ap.get_animation(&"keeper_idle").loop_mode = Animation.LOOP_LINEAR
+		var ki := AnimationNodeAnimation.new()
+		ki.animation = &"keeper_idle"
+		sm.add_node(LOCO_KEEPER_IDLE, ki, Vector2(600, 300))
+		sm.add_transition(LOCOMOTION, LOCO_KEEPER_IDLE, _make_transition(false))
+		sm.add_transition(LOCO_KEEPER_IDLE, LOCOMOTION, _make_transition(false))
+		# Прямые переходы стойка↔шаги (иначе travel мелькает обычным idle через хаб).
+		if ap.has_animation(&"keeper_sidestep"):
+			sm.add_transition(LOCO_KEEPER_IDLE, LOCO_KEEPER_SIDE, _make_transition(false))
+			sm.add_transition(LOCO_KEEPER_SIDE, LOCO_KEEPER_IDLE, _make_transition(false))
 	var y := 40.0
 	for action in ACTION_CLIPS:
 		var clip: String = ACTION_CLIPS[action]
@@ -222,6 +237,8 @@ func _process(delta: float) -> void:
 		if _loco_style == LOCO_STYLE_KEEPER:
 			if speed >= FootballConstants.LOCO_RUN_ANIM_SPEED and _sm_has(LOCO_KEEPER_SIDE):
 				want = LOCO_KEEPER_SIDE
+			elif _sm_has(LOCO_KEEPER_IDLE):
+				want = LOCO_KEEPER_IDLE   # стойка готовности вместо обычного idle
 		else:
 			if speed >= FootballConstants.LOCO_SPRINT_ANIM_SPEED:
 				want = LOCO_SPRINT
@@ -308,19 +325,30 @@ func cancel_action() -> void:
 
 ## Проиграть one-shot клип (подкат/падение/перекат/вставание). Возвращает длину клипа (сек);
 ## 0.0, если клипа/стейта нет. Цепочку и тайминг ведёт вызывающий (match_manager).
-func play_oneshot(clip: StringName) -> float:
+## Длина one-shot клипа в секундах (0.0, если клипа нет). Нужна, чтобы посчитать скорость
+## проигрывания ДО запуска (напр. вратарь синхронизирует пик сейва с подлётом мяча).
+func clip_length(clip: StringName) -> float:
+	if _ap != null and _ap.has_animation(clip):
+		return _ap.get_animation(clip).length
+	return 0.0
+
+
+func play_oneshot(clip: StringName, speed: float = 1.0) -> float:
 	if _playback == null or not _states.has(String(clip)):
 		return 0.0
 	_fall_lock = true
 	_active_action = ""
+	_set_action_speed(speed)   # скорость проигрывания one-shot (нырок вратаря ускоряем)
 	_playback.travel(clip)
 	if _ap != null and _ap.has_animation(clip):
 		return _ap.get_animation(clip).length
 	return 0.0
 
-## Завершить падение: вернуть idle и снять fall-lock (возобновить локомоцию).
+## Завершить падение: вернуть idle и снять fall-lock (возобновить локомоцию). Сбрасывает
+## скорость проигрывания к 1.0 (её мог поднять ускоренный one-shot).
 func recover() -> void:
 	_fall_lock = false
+	_set_action_speed(1.0)
 	if _playback != null:
 		_playback.travel(LOCOMOTION)
 
@@ -383,6 +411,46 @@ func _use_fallback(reason: String) -> void:
 	mi.name = "FallbackCapsule"
 	mi.mesh = mesh
 	add_child(mi)
+
+## Узел-«руки» на кости кисти модели (BoneAttachment3D) — сюда вратарь приклеивает мяч, и он
+## движется вместе с рукой. Ищет кость с "hand" в имени; при отсутствии скелета/кости → null.
+var _hold_attachment: Node3D = null
+func get_hold_attachment() -> Node3D:
+	if _hold_attachment != null and is_instance_valid(_hold_attachment):
+		return _hold_attachment
+	var skel := _find_skeleton(_model)
+	if skel == null:
+		return null
+	var bone_idx := -1
+	for i in range(skel.get_bone_count()):
+		var n := skel.get_bone_name(i).to_lower()
+		if n.contains("righthand") or n.contains("right_hand"):
+			bone_idx = i
+			break
+	if bone_idx < 0:
+		for i in range(skel.get_bone_count()):
+			if skel.get_bone_name(i).to_lower().contains("hand"):
+				bone_idx = i
+				break
+	if bone_idx < 0:
+		return null
+	var ba := BoneAttachment3D.new()
+	ba.name = "BallHold"
+	skel.add_child(ba)
+	ba.bone_name = skel.get_bone_name(bone_idx)
+	_hold_attachment = ba
+	return ba
+
+func _find_skeleton(n: Node) -> Skeleton3D:
+	if n == null:
+		return null
+	if n is Skeleton3D:
+		return n
+	for c in n.get_children():
+		var r := _find_skeleton(c)
+		if r != null:
+			return r
+	return null
 
 func _find_anim_player(n: Node) -> AnimationPlayer:
 	if n is AnimationPlayer:

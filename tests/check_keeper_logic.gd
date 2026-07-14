@@ -16,15 +16,33 @@ func _initialize() -> void:
 	if not is_equal_approx(lp2.x, 3.66):
 		print("CHECK FAIL: line_position x clamp → ", lp2.x); ok = false
 
-	# shot_intercept: проекция на плоскость z=goal_line_z.
-	# Мяч в (0,0.5,40), скорость (2,1,25) → t=(52.5-40)/25=0.5 → point=(1, 1.0, 52.5)
-	var si := KeeperLogic.shot_intercept(Vector3(0, 0.5, 40.0), Vector3(2, 1, 25), 52.5)
+	# shot_intercept (гравитация 0 = прямая): (0,0.5,40) скорость (2,1,25) → t=0.5 → (1, 1.0, 52.5)
+	var si := KeeperLogic.shot_intercept(Vector3(0, 0.5, 40.0), Vector3(2, 1, 25), 52.5, 0.0)
 	if not si.is_equal_approx(Vector3(1.0, 1.0, 52.5)):
 		print("CHECK FAIL: shot_intercept → ", si); ok = false
+	# Баллистика: та же геометрия, но g=20 → y = 0.5 + 1*0.5 - 0.5*20*0.25 = -1.5 → клампится к 0.
+	var sib := KeeperLogic.shot_intercept(Vector3(0, 0.5, 40.0), Vector3(2, 1, 25), 52.5, 20.0)
+	if not is_equal_approx(sib.y, 0.0) or not is_equal_approx(sib.x, 1.0):
+		print("CHECK FAIL: shot_intercept ballistic → ", sib); ok = false
+	# Навесной с большим vy: (0,0.5,40) скорость (0,5,25), g=20 → y=0.5+2.5-2.5=0.5
+	var sib2 := KeeperLogic.shot_intercept(Vector3(0, 0.5, 40.0), Vector3(0, 5, 25), 52.5, 20.0)
+	if not is_equal_approx(sib2.y, 0.5):
+		print("CHECK FAIL: shot_intercept lob → ", sib2); ok = false
 	# Мяч летит ОТ линии (vz<0) → нет пересечения впереди → возвращает позицию мяча.
-	var si2 := KeeperLogic.shot_intercept(Vector3(0, 0.5, 40.0), Vector3(0, 0, -10), 52.5)
+	var si2 := KeeperLogic.shot_intercept(Vector3(0, 0.5, 40.0), Vector3(0, 0, -10), 52.5, 20.0)
 	if not si2.is_equal_approx(Vector3(0, 0.5, 40.0)):
 		print("CHECK FAIL: shot_intercept away → ", si2); ok = false
+	# ДРАГ: горизонтальный драг удлиняет полёт → мяч пересекает линию НИЖЕ, чем без драга.
+	# (0,2.4,35) со скоростью (0,0,30), g=9.8: без драга y≈2.4-0.5*9.8*0.34≈1.83;
+	# с drag_xz=0.985/кадр полёт заметно дольше → y ощутимо ниже.
+	var y_free := KeeperLogic.shot_intercept(Vector3(0, 2.4, 35.0), Vector3(0, 0, 30), 52.5, 9.8).y
+	var y_drag := KeeperLogic.shot_intercept(Vector3(0, 2.4, 35.0), Vector3(0, 0, 30), 52.5, 9.8, 0.985).y
+	if not (y_drag < y_free - 0.15):
+		print("CHECK FAIL: shot_intercept drag drop → free=", y_free, " drag=", y_drag); ok = false
+	# Сильный драг + короткая скорость: мяч затухает, не долетев → возвращает позицию мяча.
+	var si3 := KeeperLogic.shot_intercept(Vector3(0, 1.0, 35.0), Vector3(0, 0, 5), 52.5, 0.0, 0.9)
+	if not si3.is_equal_approx(Vector3(0, 1.0, 35.0)):
+		print("CHECK FAIL: shot_intercept drag stall → ", si3); ok = false
 
 	# is_on_target: в створе / мимо по ширине и высоте.
 	if not KeeperLogic.is_on_target(Vector3(2.0, 1.5, 52.5), 3.66, 2.44):
