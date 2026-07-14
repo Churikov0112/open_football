@@ -179,9 +179,13 @@ func _position(delta: float) -> void:
 	# за CATCH_LEAD до подлёта, чтобы руки успели подняться (иначе catch_top срабатывал, когда мяч
 	# уже у рук). Захват мяча всё равно по узкому KEEPER_REACH (см. _catching) — без «пылесоса».
 	if lateral <= FootballConstants.KEEPER_REACH:
-		if is_finite(ttoi) and ttoi > FootballConstants.KEEPER_CATCH_LEAD:
+		# Тип действия решаем СРАЗУ (бросок кэшируется), чтобы выбрать своё упреждение: miss_top
+		# (прыжок вверх) стартует раньше ловли — замах дольше.
+		var will_catch := _should_catch_high(intercept.y)
+		var lead: float = FootballConstants.KEEPER_CATCH_LEAD if will_catch else FootballConstants.KEEPER_MISS_LEAD
+		if is_finite(ttoi) and ttoi > lead:
 			return
-		if _should_catch_high(intercept.y):
+		if will_catch:
 			print("[KEEPER] -> CENTRAL CATCH y=", intercept.y)
 			_begin_central_catch(intercept.y)
 		else:
