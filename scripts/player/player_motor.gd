@@ -19,6 +19,14 @@ static func integrate_velocity(current: Vector3, desired: Vector3, accel: float,
 static func smooth_yaw(current_yaw: float, target_yaw: float, turn_rot: float, delta: float) -> float:
 	return lerp_angle(current_yaw, target_yaw, clampf(turn_rot * delta, 0.0, 1.0))
 
+## Целевой yaw, чтобы смотреть в направлении face_dir (плоский). Та же конвенция, что доворот
+## по скорости: -Z → 0, +X → -PI/2. Пустой dir → 0.
+static func face_yaw(_from: Vector3, face_dir: Vector3) -> float:
+	var f := Vector3(face_dir.x, 0.0, face_dir.z)
+	if f.length() < 0.001:
+		return 0.0
+	return atan2(-f.x, -f.z)
+
 ## Крен корпуса (градусы) от нормированного бокового ускорения и разгона по скорости.
 static func lean_deg(lateral_norm: float, speed_ramp: float, max_bank_deg: float) -> float:
 	return clampf(lateral_norm, -1.0, 1.0) * max_bank_deg * clampf(speed_ramp, 0.0, 1.0)
@@ -40,6 +48,7 @@ var _body: CharacterBody3D
 var _visual: PlayerVisual
 var _lean_deg: float = 0.0
 var _vy: float = 0.0
+var _face_dir: Vector3 = Vector3.ZERO
 
 func _ready() -> void:
 	_body = get_parent() as CharacterBody3D
@@ -62,6 +71,11 @@ func set_move_intent(dir: Vector3, speed_scale: float = 1.0) -> void:
 ## Заблокировать управление (commit-действие / такл): скорость гаснет до 0, ввод игнорится.
 func set_control_locked(on: bool) -> void:
 	_locked = on
+
+## Смотреть на цель (мяч): если dir не ноль — тело доворачивается к нему вместо вектора
+## скорости, без гейта по мин. скорости (вратарь всегда лицом к мячу). ZERO → снова по скорости.
+func set_face_direction(dir: Vector3) -> void:
+	_face_dir = Vector3(dir.x, 0.0, dir.z)
 
 ## Найти дочерний PlayerMotor у произвольного узла (общая логика для AI/match_manager).
 static func find_on(node: Node) -> PlayerMotor:
@@ -90,8 +104,12 @@ func _physics_process(delta: float) -> void:
 		PlayerMotor.integrate_velocity(prev, desired, FootballConstants.LOCO_ACCEL, FootballConstants.LOCO_DECEL, delta)
 	var speed := new_vel.length()
 
-	# Доворот тела к направлению движения (тело остаётся вертикальным).
-	if speed > FootballConstants.LOCO_TURN_MIN_SPEED:
+	# Доворот тела (тело остаётся вертикальным). Если задано направление взгляда (вратарь) —
+	# к нему, всегда. Иначе — к направлению движения (гейт по мин. скорости, чтоб не крутиться на месте).
+	if _face_dir.length() > 0.001:
+		var fy := PlayerMotor.face_yaw(_body.global_position, _face_dir)
+		_body.rotation.y = PlayerMotor.smooth_yaw(_body.rotation.y, fy, FootballConstants.LOCO_TURN_ROT, delta)
+	elif speed > FootballConstants.LOCO_TURN_MIN_SPEED:
 		var target_yaw := atan2(-new_vel.x, -new_vel.z)
 		_body.rotation.y = PlayerMotor.smooth_yaw(_body.rotation.y, target_yaw, FootballConstants.LOCO_TURN_ROT, delta)
 

@@ -53,6 +53,19 @@ static func ballistic_to(from: Vector3, to: Vector3, horizontal_speed: float, gr
 	var vy := (to.y - from.y) / t + 0.5 * gravity * t
 	return flat.normalized() * hs + Vector3.UP * vy
 
+## НЕПРЕРЫВНЫЙ горизонтальный прицел [-1..1] по боковому наклону стика/бега относительно линии
+## «на ворота»: прямо на ворота → 0 (ЦЕНТР), отклонение вбок → к штанге (±1 при сильном наклоне).
+## Знак согласован с прежним side_bias (= -curl_side): целимся в сторону наклона. sensitivity —
+## насколько резко наклон переводится в угол (больше = центр «уже», угол достигается меньшим наклоном).
+static func aim_bias(shooter_pos: Vector3, goal_center: Vector3, facing: Vector3, sensitivity: float) -> float:
+	var straight := goal_center - shooter_pos
+	straight.y = 0.0
+	var f := Vector3(facing.x, 0.0, facing.z)
+	if straight.length() < 0.001 or f.length() < 0.001:
+		return 0.0
+	var cross := straight.normalized().cross(f.normalized()).y  # sin(угла facing vs «на ворота»)
+	return clampf(-cross * sensitivity, -1.0, 1.0)
+
 ## Знак НАПРАВЛЕНИЯ ЗАКРУТКИ (Magnus), задаёт форму дуги — подтверждён живьём как правильный.
 ## ВАЖНО: прицел удара НЕ должен зеркалиться этим знаком (иначе дуга уходит не туда). Прицел
 ## считается отдельно (см. _fire_shot: целимся так, чтобы ЭТА дуга занесла мяч в дальний угол).

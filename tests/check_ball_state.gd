@@ -44,6 +44,14 @@ func _initialize() -> void:
 	ok = _expect(ball.state == ball.BallState.FLIGHT, "launch_curl → FLIGHT") and ok
 	ok = _expect(ball._curl.length() > 0.01, "launch_curl задаёт _curl") and ok
 
+	# parry: гасит скорость, перенаправляет наружу, роняет в OPEN.
+	ball.state = ball.BallState.FLIGHT
+	ball.linear_velocity = Vector3(0, 0, 20)   # летит в ворота (+Z)
+	ball.parry(Vector3(0, 0, -1), 0.3)          # отбой наружу (-Z)
+	ok = _expect(ball.state == ball.BallState.OPEN, "parry → OPEN") and ok
+	ok = _expect(ball.linear_velocity.z < 0.0, "parry перенаправляет наружу") and ok
+	ok = _expect(ball.linear_velocity.length() <= 20.0 * 0.3 + 6.1, "parry гасит скорость") and ok
+
 	if ok:
 		print("CHECK PASS")
 		quit(0)

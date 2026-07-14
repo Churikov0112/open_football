@@ -3,14 +3,14 @@
 ## Dev commands
 - **Validate, menu-load only (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit`
 - **Validate match scene (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit-after 2 res://scenes/match.tscn`
-  Run **both** — plain `--quit` boots `main_menu.tscn` and never loads `match.tscn`, so it never parses `match_manager.gd`/`teammate_ai.gd`/`simple_ai.gd` at all; the scene command is the one that actually exercises those files. The scene command has a known pre-existing error baseline (33× `!is_inside_tree()`, 6× transition-duplicate, 3× `states.has`, 1× `WorldEnvironment3D` — harmless, see `CLAUDE.md`'s *Commands* section) — diff against that, don't expect zero.
+  Run **both** — plain `--quit` boots `main_menu.tscn` and never loads `match.tscn`, so it never parses `match_manager.gd`/`teammate_ai.gd`/`simple_ai.gd`/`keeper_ai.gd` at all; the scene command is the one that actually exercises those files. The scene command has a known pre-existing error baseline (`!is_inside_tree()`, `ACTION_CLIPS` transition-duplicate + `states.has`, `WorldEnvironment3D` — all harmless; counts grew when the keeper added a second `PlayerVisual`, see `CLAUDE.md`'s *Commands* section) — diff by error **category/text**, don't expect zero or exact counts.
 - **Run editor:** same exe without flags
 
 ## Architecture
 - **Autoload:** `FootballConstants` (see `project.godot` [autoload])
 - **Entry point:** `main_menu.tscn` → `_on_start` loads `match.tscn` (NOT `match.tscn` directly)
 - **All match logic** lives in `match_manager.gd` (controls input, AI, dribbling, goals, camera)
-- **Player scripts** live on the CharacterBody3D nodes: `simple_ai.gd` (opponent), `teammate_ai.gd` (our team AI)
+- **Player scripts** live on the CharacterBody3D nodes: `simple_ai.gd` (opponent), `teammate_ai.gd` (our team AI), `keeper_ai.gd` (goalkeeper in the Home goal)
 - **Player visuals** are a separate presentation layer: each field player gets a `scenes/player_visual.tscn` (`PlayerVisual`) child holding a rigged Mixamo model + AnimationTree. Gameplay (physics/AI) and presentation (model/anim) are kept decoupled.
 - **Player locomotion** is a third component: every field player also gets a `PlayerMotor` child (`player_motor.gd`), spawned AFTER `PlayerVisual` (order matters — it finds its sibling visual once in `_ready()`). It owns all movement physics; callers only call `motor.set_move_intent(dir, speed_scale)`, never write `global_position`/`rotation` directly.
 - **Ball physics** in `ball_controller.gd` — `BallState` machine (OPEN/TRAPPED/FLIGHT/CAUGHT), continuous **lead-follow** dribbling (NOT velocity-matching/spring), FLIGHT-gated ball↔player collision. See `CLAUDE.md`'s *Ball model & dribbling* section (source of truth).
@@ -24,7 +24,7 @@
 - **Collision layers are split three ways** — default layer (pitch + ball, for goal/tackle-`Area3D` detection), player layer (`PLAYER_COLLISION_MASK`, bit 2), boundary-wall layer (`BOUNDARY_COLLISION_LAYER`, bit 3). Players mask in player+boundary but NOT the ball's layer. **Ball↔player collision is FLIGHT-gated**: the ball adds the player bit to its mask only while in `FLIGHT` (shot/pass → block/intercept) and drops it on trap/loose (so a dribbled/picked-up ball is transparent to capsules — avoids the juddery-dribbling/spawn-shove bug). `continuous_cd` on the ball.
 - **Dribbling** = continuous **lead-follow** in `_integrate_forces` (ball held ahead of the dribbler, distance grows with speed; breaks away past `DRIBBLE_CHASE_DIST` → player auto-chases; stick sets lead direction; sprint adds distance + random imprecision). Full model in `CLAUDE.md`. Old velocity-matching/spring is gone.
 - **Kick/pass** = commit-action deferred impulse system. `_fire_charge()` (shot) / `_fire_pass()` (all 5 pass types) set `_action_player`/`_action_power`/`_kick_action_active=true`, trigger animation (currently `pass` clip for both), defer `ball.kick()`/`ball.launch()` to `PlayerVisual.action_contact` signal. No `set_control_locked()` during kick/pass — `_kick_action_active` flag skips the motor-lock early-return in `_handle_player_input`. See *Passing* bullet above for the pass-specific details.
-- **Shot charge:** hold `D`/gamepad-X (max 0.5s), release fires. PowerBar (green→red gradient) visible during charge. Auto-fire at max charge. Power lerp is currently a **temporary** stronger/flatter placeholder (18–34, low `dir.y`) for wall testing — the real aimed shot (goal targeting, misses, curl) is Phase 1. Passes reuse the bar with a shorter 0.6s max.
+- **Shot charge:** hold `D`/gamepad-X (max 0.5s), release fires. PowerBar (green→red gradient) visible during charge. Auto-fire at max charge. The aimed shot is in: `match_manager._fire_shot` + `ShotSystem` do **continuous horizontal aim** (centre when facing straight, near-corner as the stick tilts), a **short-tap ground shot** (`< SHOT_GROUND_CHARGE_MAX` → flat/low, no landing bounce), a **chip** (`SHOT_CHIP`, ballistic lob), and a **curl** (`SHOT_CURL`, Magnus via `ball.launch_curl`). `SHOT_*` constants in `football_constants.gd`. Passes reuse the bar with a shorter 0.6s max.
 - **Animation timing:** `PlayerVisual.ACTION_TIMING` dict — `kick`: `{contact: 0.35, lock: 0.5, speed: 1.0}`, `pass`: `{contact: 0.2, lock: 0.4, speed: 1.5}`. `action_contact` emitted at contact time, `action_finished` at lock time.
 - **Camera:** sideline broadcast style — `camera_pivot` at X=-40, Y=20, follows ball Z, `look_at(Vector3(0,0,ballZ), UP)`
 - **Movement** is arrows/left-stick, camera-relative (uses `camera_pivot.global_transform.basis`) — WASD letters are freed for pass/shot actions, see *Passing* bullet above.
@@ -53,6 +53,8 @@ scripts/match/net_sim.gd        — NetSim: pure static goal-net math (box-net b
 scripts/match/goal_net.gd       — GoalNet: per-goal net component (procedural mesh, sim, ImmediateMesh line render)
 scripts/ai/simple_ai.gd         — opponent AI (red, chases target/ball, shoots, honest interception)
 scripts/ai/teammate_ai.gd       — teammate AI (blue, positions for pass / chases ball / receives / give-and-go run)
+scripts/ai/keeper_ai.gd         — goalkeeper AI (save loop + ball-in-hands + distribution; math in keeper_logic.gd)
+scripts/match/keeper_logic.gd   — KeeperLogic: pure static keeper math (drag-aware intercept, save zones, roll/throw speeds; headless-tested)
 scripts/player/player_visual.gd — PlayerVisual: idle/run/sprint AnimationTree + action/fall one-shots + apply_appearance tint + set_lean
 scripts/player/player_motor.gd  — PlayerMotor: velocity+inertia locomotion (accel/decel/turn/lean/sprint)
 scripts/player/ragdoll_skeleton.gd — DEAD CODE (physics ragdoll, replaced by animation-driven fall in match_manager.gd; still has passing tests, nothing live calls it)
@@ -73,6 +75,14 @@ tests/                          — headless CHECK scripts (godot --headless -s 
 - Volumetric box goals (front+back frame) with a procedural Verlet cloth net that wobbles on a goal; ball settles in the net, 5s celebration, then reset. Full detail in `CLAUDE.md`'s *Goal net* section; design/plan in `docs/superpowers/{specs/2026-07-12-goal-net-physics-design.md,plans/2026-07-12-goal-net-physics.md}`.
 - Math is pure/headless-tested in `net_sim.gd` (`NetSim`, never reads constants); `goal_net.gd` (`GoalNet`) drives+renders it; ball-stop colliders + celebration flow live in `match_manager.gd:_setup_goals()`.
 - Tuning: `FootballConstants` `NET_*` section — primary feel dial is `NET_STIFFNESS` (free↔rigid), then `NET_DAMPING`/`NET_SLACK`/`NET_SHAPE_RETURN`/`NET_CONSTRAINT_ITERATIONS`. Test: `tests/check_net_sim.gd`.
+
+## Goalkeeper
+- AI keeper in the Home goal (`match_manager._setup_keeper`): line-tracking, shot save (central catch / dive to a corner / tip over the bar), ball-in-hands, distribution. `keeper_ai.gd` drives it; **all geometry/timing math is pure functions in `keeper_logic.gd`** (`class_name KeeperLogic`, never reads `FootballConstants`, headless-tested).
+- **Shot prediction is drag-aware** — `KeeperLogic.shot_intercept` integrates the ball's real drag + gravity (a naive `t=dz/vz` line over-estimated height and conceded on-target shots as "over the bar"). Central catches fire a `KEEPER_CATCH_LEAD`/`KEEPER_MISS_LEAD` before arrival (arms up in time) but only stick at the tight `KEEPER_REACH`. High central band (2.0–2.5m) is a per-shot coin-flip (`KEEPER_HIGH_CATCH_CHANCE`) catch-vs-tip.
+- Ball in hands = `BallState.CAUGHT`, pinned to the **right-hand bone** (`PlayerVisual.get_hold_attachment`); a caught ball can't score.
+- **Distribution: three variants, one wired at a time** (`_hold()`'s exit call selects) — overhand throw (**active**, arced, drag-compensated via `KeeperLogic.drag_horizontal_speed`), placing-ball→field-dribble→field-pass, and low roll / drop-kick. The rest are kept as building blocks for the real game AI.
+- Two `ball_controller.gd` fixes it needed: **pending impulse applied at the start of `_integrate_forces`** (so a standstill shot isn't declared flight-ended on frame 1) and a **`KICK_GRACE_MSEC` self-collision exception** (so a point-blank strike isn't blocked by its own striker).
+- Constants: `FootballConstants` `KEEPER_*`. Tests: `check_keeper_logic.gd`, `check_keeper_clear.gd`, `check_kick_grace.gd`. Full detail in `CLAUDE.md`'s *Goalkeeper* section. **Currently on debug scaffolding** (`DEBUG_DISABLE_OPPONENT`/`DEBUG_DISABLE_TEAMMATE`, third-person camera, file logging, `[KEEPER]` prints) — strip before merge.
 
 ## Locomotion
 - Full design in `docs/superpowers/specs/2026-07-09-living-locomotion-design.md`; executed plan in `docs/superpowers/plans/2026-07-09-living-locomotion.md`.

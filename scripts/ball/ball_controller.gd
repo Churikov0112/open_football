@@ -13,6 +13,8 @@ var _last_release_time: int = 0
 var _release_cooldown_msec: int = 500
 var _last_kick_time: int = 0
 var _kick_cooldown_msec: int = 1500
+var _kick_grace_body: PhysicsBody3D = null   # бьющий, временно исключён из коллизии (см. _begin_kick_grace)
+const KICK_GRACE_MSEC := 350   # окно после удара, пока мяч НЕ сталкивается с самим бьющим
 var _dribbler_prev_pos: Vector3 = Vector3.ZERO
 var _pending_impulse: Vector3 = Vector3.ZERO
 
@@ -27,6 +29,8 @@ var _dribble_chasing: bool = false           # true → мяч ушёл, вла�
 var _dribble_suppressed: bool = false        # true → НЕ толкать мяч (идёт зарядка/commit паса-удара) → одно касание
 var _wobble_dir_n: float = 0.0               # плавный случайный дрейф направления удержания [-1..1] (спринт-неточность)
 var _wobble_lead_n: float = 0.0              # плавный случайный дрейф дистанции удержания [-1..1]
+var _flat_flight: bool = false               # true → настильный удар: держим мяч на газоне (vy=0), без подскока
+var _hold_node: Node3D = null                # узел-«руки» вратаря: пока CAUGHT, мяч приклеен к нему
 
 
 func _ready() -> void:
@@ -120,11 +124,31 @@ func set_dribble_suppressed(on: bool) -> void:
 	_dribble_suppressed = on
 
 
+## Вратарь поймал мяч в РУКИ: мяч приклеивается к hold_node (точка рук) и висит там (CAUGHT),
+## пока не будет выброшен (launch/kick). В отличие от set_dribbler (мяч у ног, дриблинг).
+func catch(holder: Node3D, hold_node: Node3D) -> void:
+	print("[BALL] catch() at ", global_position, " hold_node=", hold_node)
+	dribbler = holder
+	_hold_node = hold_node
+	state = BallState.CAUGHT
+	_flat_flight = false
+	_curl = Vector3.ZERO
+	_set_player_collision(false)
+	linear_velocity = Vector3.ZERO
+	angular_velocity = Vector3.ZERO
+
+
+## Мяч сейчас в руках вратаря (приклеен)?
+func is_caught() -> bool:
+	return state == BallState.CAUGHT
+
+
 func release_dribble() -> void:
 	if dribbler:
 		dribbler = null
 		_last_release_time = Time.get_ticks_msec()
 	_dribbler_prev_pos = Vector3.ZERO
+	_hold_node = null
 	state = BallState.OPEN
 	_set_player_collision(false)
 
@@ -146,8 +170,27 @@ func block_in_flight() -> void:
 	linear_velocity *= 0.25
 	angular_velocity = Vector3.ZERO
 	_curl = Vector3.ZERO
+	_flat_flight = false
 	state = BallState.OPEN
 	_set_player_collision(false)
+
+
+## Вратарский отбой: гасит скорость ×damp, перенаправляет мяч НАРУЖУ (по direction, чуть
+## вверх), роняет в OPEN, коллизию с игроками выключает. В отличие от block_in_flight()
+## (просто гасит на месте) — задаёт направление отскока от ворот.
+func parry(direction: Vector3, damp: float) -> void:
+	var speed := linear_velocity.length() * damp
+	_curl = Vector3.ZERO
+	_flat_flight = false
+	state = BallState.OPEN
+	_set_player_collision(false)
+	var out := direction
+	out.y = 0.0
+	if out.length() < 0.001:
+		out = Vector3(0, 0, 1)
+	out = out.normalized()
+	out.y = 0.5   # немного вверх, чтобы отбитый мяч читался
+	linear_velocity = out.normalized() * speed
 
 
 ## Слой игроков в маске мяча — ВКЛючаем только в полёте (блок/перехват), иначе капсула игрока
@@ -158,6 +201,29 @@ func _set_player_collision(on: bool) -> void:
 		collision_mask |= pbit
 	else:
 		collision_mask &= ~pbit
+		_end_kick_grace()   # полёт кончился — персональное исключение бьющего больше не нужно
+
+
+## Грейс от САМОБЛОКА: удар с места стартует у самых ног (после авто-добегания к мячу игрок
+## может стоять вплотную/поверх мяча — вне полёта мяч прозрачен для капсул). Включение
+## коллизии мяч↔игроки в launch()/kick() давало мгновенный контакт с САМИМ бьющим →
+## _on_ball_collision → block_in_flight() тихо гасил собственный удар в OPEN — вратарь такого
+## «удара» не видел вовсе (is_flight()=false). Исключаем бьющего из коллизии мяча на первые
+## KICK_GRACE_MSEC полёта; снятие — отложенно (см. _end_kick_grace) и по концу полёта.
+func _begin_kick_grace(kicker: Node) -> void:
+	_end_kick_grace()
+	var body := kicker as PhysicsBody3D
+	if body != null and is_instance_valid(body):
+		_kick_grace_body = body
+		add_collision_exception_with(body)
+
+
+## Снять грейс. Само remove — отложенно: зовётся и из физических коллбеков
+## (_integrate_forces / body_entered), где менять исключения сразу нельзя.
+func _end_kick_grace() -> void:
+	if _kick_grace_body != null and is_instance_valid(_kick_grace_body):
+		call_deferred(&"remove_collision_exception_with", _kick_grace_body)
+	_kick_grace_body = null
 
 
 func clear_last_kicker() -> void:
@@ -198,38 +264,63 @@ func kick(direction: Vector3, power: float) -> void:
 	release_dribble()
 	state = BallState.FLIGHT
 	_curl = Vector3.ZERO         # прямой удар не крутится
+	_flat_flight = false
 	_set_player_collision(true)  # в полёте мяч сталкивается с игроками (блок/перехват)
+	_begin_kick_grace(last_kicker)   # но НЕ с самим бьющим (анти-самоблок)
 	_pending_impulse = direction * power
 
 
 ## Задать мячу готовую стартовую скорость (в отличие от kick(), где power — импульс, а dir
 ## не нормализован). velocity — уже посчитанная баллистика (PassSystem.launch_ground/launch_lob).
 ## Импульс = velocity*mass, т.к. _integrate_forces применяет vel += _pending_impulse/mass.
-func launch(velocity: Vector3) -> void:
+func launch(velocity: Vector3, flat: bool = false) -> void:
 	last_kicker = dribbler
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
 	_curl = Vector3.ZERO         # низовой/навесной пас не крутится (кручёный — через launch_curl)
+	_flat_flight = flat          # настильный удар: держим на газоне, без подскока
 	_set_player_collision(true)  # в полёте мяч сталкивается с игроками (блок/перехват)
+	_begin_kick_grace(last_kicker)   # но НЕ с самим бьющим (анти-самоблок)
 	_pending_impulse = velocity * mass
 
 
 ## Запуск с кручением: как launch(), но задаёт вектор _curl (Magnus в _integrate_forces).
 ## curl.z — боковая составляющая (через left = vel×UP), curl.y — подъём (для дуги). Для
 ## кручёного удара Фазы 1; ShotSystem посчитает velocity и curl.
-func launch_curl(velocity: Vector3, curl: Vector3) -> void:
+func launch_curl(velocity: Vector3, curl: Vector3, flat: bool = false) -> void:
 	last_kicker = dribbler
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
 	_curl = curl
+	_flat_flight = flat          # настильный кручёный: держим на газоне, без подскока
 	_set_player_collision(true)
+	_begin_kick_grace(last_kicker)   # но НЕ с самим бьющим (анти-самоблок)
 	_pending_impulse = velocity * mass
 
 
 func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 	var vel := state_body.linear_velocity
+
+	# Отложенный импульс (kick/launch) применяется В НАЧАЛЕ интеграции, ДО веток состояний.
+	# Раньше он применялся в самом конце — и на первом кадре после удара С МЕСТА ветка FLIGHT
+	# видела ещё нулевую скорость мяча → «полёт кончился» (< FLIGHT_END_SPEED) → мяч тихо падал
+	# в OPEN, а импульс прилетал уже ПОСЛЕ: мяч летел в ворота на полной скорости, но НЕ в
+	# FLIGHT — вратарь такого удара не видел вовсе. С разбега мяч уже движется со скоростью
+	# дриблинга (> порога), поэтому баг проявлялся только на ударах с места.
+	if _pending_impulse.length_squared() > 0:
+		vel += _pending_impulse / mass
+		_pending_impulse = Vector3.ZERO
+
+	# Пойман в руки: приклеиваем мяч к точке рук вратаря, скорость держим в нуле.
+	if state == BallState.CAUGHT:
+		if _hold_node != null and is_instance_valid(_hold_node):
+			var t := state_body.transform
+			t.origin = _hold_node.global_position
+			state_body.transform = t
+		state_body.linear_velocity = Vector3.ZERO
+		return
 
 	if state == BallState.TRAPPED and dribbler and is_instance_valid(dribbler):
 		var player_pos := dribbler.global_position
@@ -303,24 +394,27 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 			# затухании (_curl держится долго) мяч «крутит» катясь по полю.
 			var horiz := Vector3(vel.x, 0.0, vel.z)
 			var airborne := state_body.transform.origin.y > FootballConstants.BALL_RADIUS + 0.15
-			if airborne and _curl.length_squared() > 0.0001 and horiz.length() > 0.5:
+			if (airborne or _flat_flight) and _curl.length_squared() > 0.0001 and horiz.length() > 0.5:
 				var left := horiz.normalized().cross(Vector3.UP)
 				vel += (left * _curl.z + Vector3.UP * _curl.y) * state_body.step * FootballConstants.MAGNUS_FORCE
 				_curl *= FootballConstants.MAGNUS_DECAY
 			# Полёт закончился, когда мяч почти остановился — снова OPEN, коллизия с игроками
 			# выключается (чтобы капсула подбирающего не сбивала/подкидывала мяч). Порог низкий,
 			# чтобы быстрый летящий мяч блокировался стенкой, а не выпадал из FLIGHT рано.
+			# Грейс от самоблока истёк — мяч уже отлетел от бьющего, коллизия с ним снова нужна
+			# (напр., отскок от штанги обратно в него).
+			if _kick_grace_body != null and Time.get_ticks_msec() - _last_kick_time > KICK_GRACE_MSEC:
+				_end_kick_grace()
+			if _flat_flight:
+				vel.y = 0.0   # настильный удар катится по газону, без подскока
 			if Vector3(vel.x, 0.0, vel.z).length() < FootballConstants.FLIGHT_END_SPEED:
 				state = BallState.OPEN
 				_curl = Vector3.ZERO
+				_flat_flight = false
 				_set_player_collision(false)
 		vel.x *= drag_factor
 		vel.z *= drag_factor
 		vel.y *= air_resistance
-
-	if _pending_impulse.length_squared() > 0:
-		vel += _pending_impulse / mass
-		_pending_impulse = Vector3.ZERO
 
 	state_body.linear_velocity = vel
 
