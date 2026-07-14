@@ -418,3 +418,5 @@ const KEEPER_CLEAR_SPEED := 66.0       # горизонтальная скоро
 const KEEPER_CLEAR_LIFT := 18.0        # вертикальная скорость выноса, м/с (×3 — выше)
 const KEEPER_PASS_DISTANCE := 20.0     # дальность раската мяча рукой по низу (keeper_pass), м — временно в центр поля
 const KEEPER_PLACE_DRIBBLE_DIST := 10.0 # ВРЕМЕННО: сколько метров вратарь ведёт мяч после placing ball до полевого паса
+const KEEPER_THROW_DISTANCE := 25.0    # дальность броска верхом рукой (keeper_overhand_throw), м — к центру поля
+const KEEPER_THROW_PEAK := 6.0         # высота дуги броска верхом, м

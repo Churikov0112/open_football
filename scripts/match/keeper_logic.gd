@@ -87,6 +87,18 @@ static func roll_speed(distance: float, drag_per_frame: float, dt: float) -> flo
 		return 0.0
 	return distance * (1.0 - drag_per_frame) / dt
 
+## Горизонтальная скорость навеса (броска верхом) с учётом драга, чтобы пролететь distance за
+## flight_time секунд. Путь под драгом за N=flight_time/dt кадров = v0*dt*(1-drag^N)/(1-drag).
+## Решаем относительно v0. Без этого навес недолетает (драг гасит горизонталь за ~1.8с полёта).
+static func drag_horizontal_speed(distance: float, flight_time: float, drag_per_frame: float, dt: float) -> float:
+	if dt <= 0.0 or flight_time <= 0.0 or drag_per_frame >= 1.0 or drag_per_frame < 0.0:
+		return 0.0
+	var n := flight_time / dt
+	var denom := dt * (1.0 - pow(drag_per_frame, n))
+	if denom <= 0.00001:
+		return 0.0
+	return distance * (1.0 - drag_per_frame) / denom
+
 ## Ловить или отбивать. Центр — всегда ловля; верхний угол — всегда отбой; нижний угол —
 ## ловля медленного, отбой быстрого. (Диктуется имеющимися анимациями.)
 static func resolve_save(action: int, ball_speed: float, catch_max_speed: float) -> bool:

@@ -21,7 +21,7 @@ func _initialize() -> void:
 				"keeper_diving_save_l", "keeper_diving_save_r", "keeper_catch", "keeper_catch_top",
 				"keeper_catch_head",
 				"keeper_idle_ball", "keeper_drop_kick", "keeper_pass", "keeper_placing_ball",
-				"keeper_scoop", "keeper_miss_top"]:
+				"keeper_overhand_throw", "keeper_scoop", "keeper_miss_top"]:
 			if not ap.has_animation(want):
 				print("CHECK FAIL: нет анимации '" + want + "'")
 				ok = false

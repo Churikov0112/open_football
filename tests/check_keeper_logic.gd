@@ -112,5 +112,13 @@ func _initialize() -> void:
 	if KeeperLogic.roll_speed(20.0, 1.0, 1.0 / 60.0) != 0.0 or KeeperLogic.roll_speed(20.0, 0.985, 0.0) != 0.0:
 		print("CHECK FAIL: roll_speed degenerate"); ok = false
 
+	# drag_horizontal_speed: навес 25м за 1.8с под драгом 0.985 → v0 ≈ 28 м/с (компенсация драга).
+	var ths := KeeperLogic.drag_horizontal_speed(25.0, 1.8, 0.985, 1.0 / 60.0)
+	if not (ths > 26.0 and ths < 30.0):
+		print("CHECK FAIL: drag_horizontal_speed → ", ths); ok = false
+	if KeeperLogic.drag_horizontal_speed(25.0, 1.8, 1.0, 1.0/60.0) != 0.0 \
+			or KeeperLogic.drag_horizontal_speed(25.0, 0.0, 0.985, 1.0/60.0) != 0.0:
+		print("CHECK FAIL: drag_horizontal_speed degenerate"); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)

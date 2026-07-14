@@ -9,7 +9,7 @@ var save_area: Area3D
 var hold_point: Node3D   # узел-«руки»: пойманный мяч приклеивается сюда
 var manager: Node   # match_manager — для проверки празднования гола
 
-enum State { POSITION, DIVE, CATCHING, HOLD, DISTRIBUTE, PLACING, CARRY, FIELD_PASS }
+enum State { POSITION, DIVE, CATCHING, HOLD, DISTRIBUTE, PLACING, CARRY, FIELD_PASS, THROWING }
 var _state: int = State.POSITION
 # ВРЕМЕННЫЙ хардкод-сценарий раздачи «placing ball» (для теста полевой логики вратаря):
 # HOLD → PLACING (ставит мяч рукой на газон) → CARRY (дриблинг 5м как полевой) → FIELD_PASS
@@ -81,7 +81,7 @@ func _physics_process(delta: float) -> void:
 		if _state == State.DIVE:
 			_dive(delta)   # доигрываем нырок, idle придёт по завершении клипа
 			return
-		if _state in [State.HOLD, State.DISTRIBUTE, State.PLACING, State.CARRY, State.FIELD_PASS]:
+		if _state in [State.HOLD, State.DISTRIBUTE, State.PLACING, State.CARRY, State.FIELD_PASS, State.THROWING]:
 			# Страховка: не уносить пойманный/ведомый мяч в стойку — отпустить и в POSITION.
 			if ball.dribbler == self:
 				ball.release_dribble()
@@ -109,6 +109,8 @@ func _physics_process(delta: float) -> void:
 			_carry(delta)
 		State.FIELD_PASS:
 			_field_pass(delta)
+		State.THROWING:
+			_throwing(delta)
 
 
 ## Держим линию: X за мячом, лицом к мячу, лёгкий выход под угол. При ударе в створ —
@@ -379,7 +381,62 @@ func _to_hold() -> void:
 func _hold(delta: float) -> void:
 	_state_timer -= delta
 	if _state_timer <= 0.0:
-		_to_placing()   # ВРЕМЕННО: placing ball вместо раската (_to_distribute сохранён)
+		# ВРЕМЕННО активна раздача БРОСКОМ ВЕРХОМ (_to_overhand_throw). Сценарии placing-ball
+		# (_to_placing) и раскат низом (_to_distribute) сохранены, но не вызываются.
+		_to_overhand_throw()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# АКТИВНАЯ раздача: бросок мяча ВЕРХОМ правой рукой (по аналогии с раскатом низом keeper_pass,
+# но по дуге). Мяч приклеен к руке до выпуска на замахе, затем летит навесом к центру поля.
+# ─────────────────────────────────────────────────────────────────────────────
+
+## Бросок верхом: играем keeper_overhand_throw, мяч ОСТАЁТСЯ приклеен к правой руке (CAUGHT),
+## на contact (~0.65с) выпускается по дуге к центру поля.
+func _to_overhand_throw() -> void:
+	print("[KEEPER] THROWING (overhand throw)")
+	_state = State.THROWING
+	_distribute_fired = false
+	_state_timer = 1.3   # страховка > длины клипа (0.97с) и контакта (0.65с)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(true)   # стоит на месте, бросает
+	var vis := _visual()
+	if vis != null:
+		vis.recover()                 # выйти из idle_ball one-shot в локомоцию-хаб
+		vis.trigger("keeper_overhand_throw")
+
+
+func _throwing(delta: float) -> void:
+	_state_timer -= delta
+	# Страховка: contact не пришёл — всё равно бросаем.
+	if not _distribute_fired and _state_timer <= 0.0:
+		print("[KEEPER] THROWING fallback (no action_contact)")
+		_do_overhand_throw()
+
+
+## Выпуск мяча из руки по дуге (contact keeper_overhand_throw): навес к центру поля через
+## PassSystem.launch_lob (та же математика, что у полевого лоба). Затем свободен → POSITION.
+func _do_overhand_throw() -> void:
+	if _distribute_fired:
+		return
+	_distribute_fired = true
+	if ball.dribbler == self or ball.is_caught():
+		var into := signf(-goal_line_z)   # от ворот в поле (к центру)
+		var g := _ball_gravity()
+		# Дуга: vy из высоты пика; время полёта T до возврата на ту же высоту.
+		var vy := sqrt(2.0 * g * FootballConstants.KEEPER_THROW_PEAK)
+		var flight_t := 2.0 * vy / g
+		# Горизонталь с поправкой на драг мяча, чтобы навес реально долетел до дистанции.
+		var dt := 1.0 / float(Engine.physics_ticks_per_second)
+		var hspeed := KeeperLogic.drag_horizontal_speed(FootballConstants.KEEPER_THROW_DISTANCE, flight_t, ball.drag_factor, dt)
+		var vel := Vector3(0.0, 0.0, into) * hspeed + Vector3.UP * vy
+		print("[KEEPER] throw! vel=", vel, " hspeed=", hspeed, " vy=", vy)
+		ball.launch(vel)   # дуга (flat=false) — навес
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)   # снова свободен — назад на линию
+	_state = State.POSITION
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -540,6 +597,9 @@ func _distribute(delta: float) -> void:
 func _on_visual_contact(action: String) -> void:
 	if action == "keeper_placing_ball" and _state == State.PLACING and not _place_fired:
 		_begin_carry()
+		return
+	if action == "keeper_overhand_throw" and _state == State.THROWING and not _distribute_fired:
+		_do_overhand_throw()
 		return
 	if action == "keeper_field_pass" and _state == State.FIELD_PASS and not _field_pass_fired:
 		_do_field_pass_launch()

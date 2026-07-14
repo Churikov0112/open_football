@@ -1,8 +1,7 @@
 extends SceneTree
-## Полный цикл вратаря (ВРЕМЕННЫЙ placing-сценарий): ловля → HOLD → PLACING (ставит мяч рукой)
-## → CARRY (полевой дриблинг 5м) → FIELD_PASS (полевой пас к центру) → мяч УЛЕТАЕТ в поле,
-## вратарь снова в POSITION. Ловит петлю «ловля→раздача→мгновенная повторная ловля своей же
-## раздачи» (собственный пас не должен считаться ударом — гейт _heading_at_goal).
+## Полный цикл вратаря (АКТИВНАЯ раздача — бросок верхом): ловля → HOLD → THROWING → мяч УЛЕТАЕТ
+## навесом в поле, вратарь снова в POSITION. Ловит петлю «ловля→раздача→мгновенная повторная
+## ловля своей же раздачи» (собственный бросок не должен считаться ударом — гейт _heading_at_goal).
 
 var _frames := 0
 var _match_root: Node = null
@@ -34,9 +33,9 @@ func _tick() -> void:
 		var kst = keeper.get(&"_state") if keeper != null else -1
 		print("[T] f=", _frames, " keeper_state=", kst, " ball_state=", ball.state,
 			" celebrating=", _match_root.is_celebrating(), " ball=", ball.global_position)
-	# Через ~9 секунд весь сценарий (ловля ~0.5с + HOLD 1с + PLACING ~1.2с + дриблинг 5м ~2с +
-	# пас + полёт) обязан завершиться: мяч не в руках/не ведётся и унесён пасом от ворот в поле.
-	if _frames >= 10 + 540:
+	# Через ~6 секунд весь сценарий (ловля ~0.5с + HOLD 1с + THROWING ~1с + полёт навеса) обязан
+	# завершиться: мяч не в руках/не ведётся и унесён броском от ворот в поле.
+	if _frames >= 10 + 360:
 		var keeper := _match_root.get_node_or_null("Keeper")
 		var kst = keeper.get(&"_state") if keeper != null else -1
 		if not _caught_seen:
