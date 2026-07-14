@@ -46,5 +46,11 @@ func _initialize() -> void:
 	if not is_equal_approx(PlayerMotor.gravity_step(-5.0, true, 20.0, 0.1), 0.0):
 		print("CHECK FAIL: gravity_step grounded → ", PlayerMotor.gravity_step(-5.0, true, 20.0, 0.1)); ok = false
 
+	# face_yaw: смотрит на -Z → yaw 0; на +X → yaw -PI/2 (та же формула, что доворот по скорости).
+	if not is_equal_approx(PlayerMotor.face_yaw(Vector3.ZERO, Vector3(0, 0, -1)), 0.0):
+		print("CHECK FAIL: face_yaw -Z → ", PlayerMotor.face_yaw(Vector3.ZERO, Vector3(0, 0, -1))); ok = false
+	if not is_equal_approx(PlayerMotor.face_yaw(Vector3.ZERO, Vector3(1, 0, 0)), -PI / 2.0):
+		print("CHECK FAIL: face_yaw +X → ", PlayerMotor.face_yaw(Vector3.ZERO, Vector3(1, 0, 0))); ok = false
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
