@@ -32,6 +32,7 @@ var _tackle_clean: bool = true
 var _hit_processed: bool = false
 var _tackle_recovery_timer: float = 0.0
 var _tackle_area: Area3D
+var _keeper: CharacterBody3D
 var _tackle_foul_position: Vector3 = Vector3.ZERO
 var _tackle_fouled_player: Node3D
 
@@ -116,6 +117,7 @@ func _ready() -> void:
 	home_visual.action_contact.connect(_on_action_contact.bind(player_home))
 	home_visual.action_finished.connect(_on_action_finished.bind(player_home))
 	_setup_teammate()
+	_setup_keeper()
 	_setup_boundaries()
 	_give_ai_to_player_home()
 	_setup_controlled_indicator()
@@ -536,6 +538,46 @@ func _give_ai_to_player_home() -> void:
 	player_home.controlled_player = controlled_player
 	player_home.speed = 7.0
 	player_home.teammate_home_goal = $GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null
+
+
+## Вратарь соперника в атакуемых человеком воротах (Away, +field_length).
+func _setup_keeper() -> void:
+	var k := CharacterBody3D.new()
+	k.name = "Keeper"
+	var goal_line_z := field_length   # ворота Away на +field_length
+	k.global_position = Vector3(0, 0.5, goal_line_z - 0.5)  # чуть в поле от линии
+	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
+	k.add_child(visual)
+	k.add_child(PlayerMotor.new())
+	visual.apply_appearance({"kit_color": Color(0.15, 0.7, 0.15)})  # вратарь — зелёный
+	visual.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+	var col := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.height = 1.5
+	shape.radius = 0.3
+	col.shape = shape
+	col.position = Vector3(0, 0.25, 0)
+	k.add_child(col)
+	# Сейв-зона: реагирует на мяч (слой 1); keeper_ai решает поймать/отбить.
+	var save_area := Area3D.new()
+	save_area.name = "SaveArea"
+	var sacol := CollisionShape3D.new()
+	var sashape := SphereShape3D.new()
+	sashape.radius = FootballConstants.KEEPER_REACH
+	sacol.shape = sashape
+	save_area.add_child(sacol)
+	save_area.collision_mask = 1   # только мяч (слой 1)
+	k.add_child(save_area)
+	add_child(k)
+	k.add_to_group("team_2")
+	k.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
+	k.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
+	k.set_script(preload("res://scripts/ai/keeper_ai.gd"))
+	k.set_physics_process(true)
+	k.ball = ball
+	k.goal_line_z = goal_line_z
+	k.save_area = save_area
+	_keeper = k
 
 
 func _setup_away_player() -> void:
