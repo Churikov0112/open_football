@@ -65,10 +65,11 @@ const ACTION_TIMING := {
 	# Бросок верхом рукой (0.97с): мяч приклеен к правой руке до выпуска на замахе (~0.65с), затем
 	# летит по дуге.
 	"keeper_overhand_throw": {"contact": 0.65, "lock": 0.97, "speed": 1.0},
-	# Пенальти с разбегом (root motion, клип ~1.53с). contact — момент удара ногой (нога достаёт
-	# мяч чуть раньше конца разбега); lock — общая длительность. Синхронно с PEN_RUNUP_DIST/PEN_CONTACT_TIME.
-	"penalty_l": {"contact": 1.0, "lock": 1.55, "speed": 1.0},
-	"penalty_r": {"contact": 1.0, "lock": 1.55, "speed": 1.0},
+	# Пенальти с разбегом (root motion, клип ~1.53с). contact — момент удара ногой (нога достаёт мяч
+	# чуть раньше конца разбега); post_speed — ускорение «хвоста» (замах→idle) после пуска мяча;
+	# lock — когда хвост при post_speed доигран (0.53с/1.8 ≈ 0.29 → 1.0+0.29). Разбег до контакта — 1.0×.
+	"penalty_l": {"contact": 1.0, "lock": 1.3, "speed": 1.0, "post_speed": 1.8},
+	"penalty_r": {"contact": 1.0, "lock": 1.3, "speed": 1.0, "post_speed": 1.8},
 }
 
 @export var model_y_offset: float = 0.0
@@ -87,6 +88,7 @@ var _action_elapsed: float = 0.0  # прошло реальных секунд �
 var _action_contact_at: float = 0.0
 var _action_lock_at: float = 0.0
 var _action_contact_done: bool = false
+var _action_post_speed: float = -1.0  # TimeScale после контакта (ускорить «хвост»); <0 = не менять
 var _fall_lock: bool = false   # пока true — _process не выбирает стейт локомоции (ведёт fall-цепочка)
 var _loco_style: int = LOCO_STYLE_NORMAL
 
@@ -315,6 +317,9 @@ func _process(delta: float) -> void:
 		if not _action_contact_done and _action_elapsed >= _action_contact_at:
 			_action_contact_done = true
 			action_contact.emit(_active_action)
+			# Ускорить «хвост» действия после контакта (замах/сход в idle), если задано post_speed.
+			if _action_post_speed > 0.0:
+				_set_action_speed(_action_post_speed)
 		if _action_elapsed >= _action_lock_at:
 			var done := _active_action
 			_active_action = ""
@@ -371,11 +376,13 @@ func trigger(action: String) -> bool:
 	var contact := 0.0
 	var lock := action_length(action)
 	var speed := 1.0
+	var post_speed := -1.0
 	if ACTION_TIMING.has(action):
 		var t: Dictionary = ACTION_TIMING[action]
 		contact = float(t.get("contact", 0.0))
 		lock = float(t.get("lock", lock))
 		speed = float(t.get("speed", 1.0))
+		post_speed = float(t.get("post_speed", -1.0))
 	if lock <= 0.0:
 		lock = 0.5
 	_set_action_speed(speed)
@@ -384,6 +391,7 @@ func trigger(action: String) -> bool:
 	_action_contact_at = contact
 	_action_lock_at = lock
 	_action_contact_done = false
+	_action_post_speed = post_speed
 	return true
 
 ## Отменить текущее действие без сигнала касания (напр., игрока сбили на замахе).
