@@ -17,6 +17,7 @@ func _initialize() -> void:
 		var anims := ap.get_animation_list()
 		print("CHECK: анимации в glb = ", anims)
 		for want in ["idle", "run", "roll_left", "roll_right",
+				"penalty_kick_l", "penalty_kick_r",
 				"keeper_idle", "keeper_sidestep", "keeper_body_block_l", "keeper_body_block_r",
 				"keeper_diving_save_l", "keeper_diving_save_r", "keeper_catch", "keeper_catch_top",
 				"keeper_catch_head",
