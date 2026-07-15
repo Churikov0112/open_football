@@ -78,8 +78,11 @@ func _setup() -> void:
 	_kicker.look_at(_kicker.global_position + _forward, Vector3.UP)
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
-		km.set_control_locked(false)
+		# Лочим (гасит остаточную скорость бега сразу — иначе тело дрейфует и мотор доворачивает
+		# корпус по вектору движения) и жёстко смотрим на ворота через set_face_direction.
+		km.set_control_locked(true)
 		km.set_move_intent(Vector3.ZERO)
+		km.set_face_direction(_forward)
 	# Вратарь: пенальти-режим (центр, keeper_idle, реактивный сейв off).
 	if _keeper != null and _keeper.has_method(&"set_penalty_mode"):
 		_keeper.set_penalty_mode(true)
@@ -176,6 +179,7 @@ func _on_kicker_contact(_action: String) -> void:
 func _release() -> void:
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
+		km.set_face_direction(Vector3.ZERO)   # снова доворот по вектору движения (обычная игра)
 		km.set_control_locked(false)
 	_manager.set_field_ai_active(true)
 	_manager.set_penalty_active(false)
