@@ -319,9 +319,17 @@ func _process(delta: float) -> void:
 			var done := _active_action
 			_active_action = ""
 			_set_action_speed(1.0)
-			if _anim_tree != null:
-				_anim_tree.root_motion_track = NodePath()  # снять после клипа удара пенальти
 			action_finished.emit(done)
+	# root_motion_track снимаем ПОСЛЕ завершения кроссфейда в локомоцию, а НЕ на lock: если снять
+	# посреди фейда, выдвинутая вперёд поза удара (Hips применяются) блендится в idle → тело «съезжает
+	# назад». Пока фейд идёт (get_fading_from_node != "") — держим извлечение (обе позы в rest).
+	if _anim_tree != null and _active_action == "" and _playback != null \
+			and _anim_tree.root_motion_track != NodePath():
+		var cur := _playback.get_current_node()
+		var in_loco := cur == LOCOMOTION or cur == LOCO_RUN or cur == LOCO_SPRINT \
+			or cur == LOCO_KEEPER_IDLE or cur == LOCO_KEEPER_SIDE
+		if in_loco and _playback.get_fading_from_node() == StringName():
+			_anim_tree.root_motion_track = NodePath()
 
 ## Явно задать скорость (для будущих геймплей-вызовов). Vector3.ZERO → снова авто-замер.
 func set_locomotion(velocity: Vector3) -> void:
