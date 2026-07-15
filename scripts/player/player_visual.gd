@@ -67,8 +67,8 @@ const ACTION_TIMING := {
 	"keeper_overhand_throw": {"contact": 0.65, "lock": 0.97, "speed": 1.0},
 	# Пенальти с разбегом (root motion, клип ~1.53с). contact — момент удара ногой (нога достаёт
 	# мяч чуть раньше конца разбега); lock — общая длительность. Синхронно с PEN_RUNUP_DIST/PEN_CONTACT_TIME.
-	"penalty_l": {"contact": 1.15, "lock": 1.55, "speed": 1.0},
-	"penalty_r": {"contact": 1.15, "lock": 1.55, "speed": 1.0},
+	"penalty_l": {"contact": 1.0, "lock": 1.55, "speed": 1.0},
+	"penalty_r": {"contact": 1.0, "lock": 1.55, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0
