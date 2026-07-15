@@ -20,7 +20,7 @@ func _process(_delta: float) -> bool:
 		return false  # ждём, пока отработает _ready
 	var ok := true
 	# Действия, для которых у нас есть клипы в footballer.glb.
-	var want := ["kick", "pass", "penalty", "throw_in"]
+	var want := ["kick", "pass", "penalty_l", "penalty_r", "throw_in"]
 	for a in want:
 		if not _inst.has_action(a):
 			print("CHECK FAIL: нет one-shot стейта под действие '%s'" % a)
@@ -30,6 +30,13 @@ func _process(_delta: float) -> bool:
 	if _inst.has_action("no_such_action"):
 		print("CHECK FAIL: has_action вернул true для несуществующего действия")
 		ok = false
+	# consume_root_motion в покое (без активного клипа удара) не падает и возвращает 0.
+	var rm: float = _inst.consume_root_motion()
+	if rm != 0.0:
+		print("CHECK FAIL: consume_root_motion в покое = %f, ожидалось 0" % rm)
+		ok = false
+	else:
+		print("CHECK: consume_root_motion в покое = 0")
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
 	return true

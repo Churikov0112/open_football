@@ -27,6 +27,8 @@ const ACTION_CLIPS := {
 	"kick": "pass",
 	"pass": "pass",
 	"penalty": "penalty_kick",
+	"penalty_l": "penalty_kick_l",
+	"penalty_r": "penalty_kick_r",
 	"throw_in": "throw_in",
 	"keeper_drop_kick": "keeper_drop_kick",
 	"keeper_pass": "keeper_pass",
@@ -63,6 +65,10 @@ const ACTION_TIMING := {
 	# Бросок верхом рукой (0.97с): мяч приклеен к правой руке до выпуска на замахе (~0.65с), затем
 	# летит по дуге.
 	"keeper_overhand_throw": {"contact": 0.65, "lock": 0.97, "speed": 1.0},
+	# Пенальти с разбегом (root motion, клип ~1.53с). contact — момент удара ногой (нога встречает
+	# мяч в конце разбега); lock — общая длительность. Уточняется ручной приёмкой (Task 9).
+	"penalty_l": {"contact": 1.35, "lock": 1.55, "speed": 1.0},
+	"penalty_r": {"contact": 1.35, "lock": 1.55, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0
@@ -206,9 +212,44 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 	_anim_tree.anim_player = _anim_tree.get_path_to(ap)
 	_anim_tree.active = true
 	_anim_tree.set(&"parameters/TimeScale/scale", 1.0)
+	# Root motion: клипы удара пенальти (penalty_kick_l/_r) НЕ заморожены «на месте» — их разбег
+	# извлекаем через root_motion_track (кость Hips) и применяем к телу (см. consume_root_motion).
+	# У прочих (замороженных) клипов сдвиг корня ~0, поэтому единый трек безвреден.
+	var rm := _find_root_motion_path()
+	if rm != NodePath():
+		_anim_tree.root_motion_track = rm
 	_playback = _anim_tree.get(&"parameters/sm/playback")
 	if _playback != null:
 		_playback.start(LOCOMOTION)
+
+## Путь POSITION_3D-трека корневой кости (Hips) для root motion. При заданном anim_player дерево
+## берёт root_node = корень модели (../Model), а треки в клипе хранятся относительно него — поэтому
+## берём путь трека ПРЯМО из анимации penalty_* (напр. "Armature/Skeleton3D:mixamorig_Hips"),
+## без построения пути от self (иначе лишний префикс "Model/" не резолвится → root motion = 0).
+func _find_root_motion_path() -> NodePath:
+	if _ap == null:
+		return NodePath()
+	for clip in [&"penalty_kick_r", &"penalty_kick_l"]:
+		if not _ap.has_animation(clip):
+			continue
+		var anim := _ap.get_animation(clip)
+		for ti in range(anim.get_track_count()):
+			if anim.track_get_type(ti) != Animation.TYPE_POSITION_3D:
+				continue
+			if String(anim.track_get_path(ti)).to_lower().contains("hips"):
+				return anim.track_get_path(ti)
+	return NodePath()
+
+## Горизонтальное продвижение корня за прошедший кадр (игровые метры). Знак игнорируем — разбег
+## прямой, контроллер двигает тело вперёд (к воротам) на эту величину. 0, если трека нет.
+func consume_root_motion() -> float:
+	if _anim_tree == null or _anim_tree.root_motion_track == NodePath():
+		return 0.0
+	var d: Vector3 = _anim_tree.get_root_motion_position()
+	# POSITION-трек Hips в этом glb хранится в «сырых» единицах (импорт не проставил motion_scale),
+	# поэтому get_root_motion_position() ≈ ×27 от игровых метров. PEN_ROOT_SCALE калибрует raw→метры
+	# (замерено tools/measure_penalty_runup.gd: raw-путь до контакта ↔ реальный разбег Hips ~3м).
+	return Vector2(d.x, d.z).length() * FootballConstants.PEN_ROOT_SCALE
 
 ## Стейт локомоции со скоростью клипа: Animation("clip") → TimeScale("speed") → output.
 func _make_speed_state(clip: StringName) -> AnimationNodeBlendTree:
