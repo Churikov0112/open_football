@@ -143,13 +143,16 @@ func _fire(ratio: float) -> void:
 	var g := _ball_gravity()
 	if _chip:
 		var peak := lerpf(FootballConstants.PEN_CHIP_PEAK_MIN, FootballConstants.PEN_CHIP_PEAK_MAX, ratio)
+		# Приземление НЕ на линии, а ЗА ней (в сетке) на уровне газона — тогда на плоскости ворот мяч
+		# ещё в воздухе с ходом (уверенно залетает, а не падает у линии и закатывается). X — по прицелу.
+		var land := Vector3(target.x, FootballConstants.BALL_RADIUS, _goal_line_z - _into * FootballConstants.PEN_CHIP_OVERSHOOT)
 		# Баллистика launch_lob не учитывает драг мяча — за ~1.4с высокой дуги он съедает горизонталь
 		# и черпачок не долетает. Берём вертикаль из launch_lob, а горизонталь считаем с поправкой на
-		# драг (как вратарский навес), чтобы дуга реально доставала до точки прицела.
-		var lob := PassSystem.launch_lob(from, target, peak, g)
+		# драг (как вратарский навес), чтобы дуга реально доставала до точки приземления.
+		var lob := PassSystem.launch_lob(from, land, peak, g)
 		var vy: float = lob.y
 		var flight_t: float = (2.0 * vy / g) if g > 0.01 else 0.0
-		var flat := Vector2(target.x - from.x, target.z - from.z)
+		var flat := Vector2(land.x - from.x, land.z - from.z)
 		var dt := 1.0 / float(Engine.physics_ticks_per_second)
 		var hspeed := KeeperLogic.drag_horizontal_speed(flat.length(), flight_t, _ball.drag_factor, dt)
 		var hdir := Vector3(flat.x, 0.0, flat.y).normalized() if flat.length() > 0.001 else _forward
