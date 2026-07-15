@@ -143,7 +143,17 @@ func _fire(ratio: float) -> void:
 	var g := _ball_gravity()
 	if _chip:
 		var peak := lerpf(FootballConstants.PEN_CHIP_PEAK_MIN, FootballConstants.PEN_CHIP_PEAK_MAX, ratio)
-		_pending_launch = PassSystem.launch_lob(from, target, peak, g)
+		# Баллистика launch_lob не учитывает драг мяча — за ~1.4с высокой дуги он съедает горизонталь
+		# и черпачок не долетает. Берём вертикаль из launch_lob, а горизонталь считаем с поправкой на
+		# драг (как вратарский навес), чтобы дуга реально доставала до точки прицела.
+		var lob := PassSystem.launch_lob(from, target, peak, g)
+		var vy: float = lob.y
+		var flight_t: float = (2.0 * vy / g) if g > 0.01 else 0.0
+		var flat := Vector2(target.x - from.x, target.z - from.z)
+		var dt := 1.0 / float(Engine.physics_ticks_per_second)
+		var hspeed := KeeperLogic.drag_horizontal_speed(flat.length(), flight_t, _ball.drag_factor, dt)
+		var hdir := Vector3(flat.x, 0.0, flat.y).normalized() if flat.length() > 0.001 else _forward
+		_pending_launch = hdir * hspeed + Vector3.UP * vy
 	else:
 		var speed := PenaltyLogic.power_speed(ratio, FootballConstants.PEN_POWER_MIN_SPEED, FootballConstants.PEN_POWER_MAX_SPEED)
 		_pending_launch = ShotSystem.ballistic_to(from, target, speed, g)
