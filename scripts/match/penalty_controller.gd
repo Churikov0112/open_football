@@ -109,8 +109,13 @@ func _aim_update(delta: float) -> void:
 	var aim_stick := Vector2(
 		Input.get_axis(&"move_left", &"move_right"),
 		-Input.get_axis(&"move_forward", &"move_back"))
-	_aim = PenaltyLogic.move_reticle(_aim, aim_stick, FootballConstants.PEN_RETICLE_SPEED, delta,
-		FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_HEIGHT, FootballConstants.PEN_AIM_OVERHANG)
+	if aim_stick.length() > 0.15:
+		_aim = PenaltyLogic.move_reticle(_aim, aim_stick, FootballConstants.PEN_RETICLE_SPEED, delta,
+			FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_HEIGHT, FootballConstants.PEN_AIM_OVERHANG)
+	else:
+		# Нет ввода — метка плавно, но быстро возвращается в центр створа.
+		var center := Vector2(0.0, FootballConstants.PEN_RETICLE_START_Y)
+		_aim = _aim.lerp(center, clampf(FootballConstants.PEN_RETICLE_RETURN * delta, 0.0, 1.0))
 	# Заряд силы: удержание kick; черпачок — combo_modifier + kick.
 	if Input.is_action_just_pressed(&"kick"):
 		_charging = true
