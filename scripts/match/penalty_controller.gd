@@ -4,7 +4,7 @@ extends Node
 
 signal struck
 
-enum Phase { IDLE, SETUP, AIM, STRIKE }
+enum Phase { IDLE, SETUP, AIM, STRIKE, WATCH }
 
 var release_after_strike: bool = true
 
@@ -33,6 +33,7 @@ var _reticle: MeshInstance3D
 var _pending_launch: Vector3 = Vector3.ZERO
 var _struck_zone: int = -1
 var _contact_connected := false
+var _watch_timer: float = 0.0
 
 func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
 	_manager = manager
@@ -101,6 +102,11 @@ func update(delta: float) -> void:
 			_aim_update(delta)
 		Phase.STRIKE:
 			_strike_update(delta)
+		Phase.WATCH:
+			# Держим пенальти-вид ещё PEN_WATCH_TIME после удара (смотрим исход), затем возвращаем игру.
+			_watch_timer -= delta
+			if _watch_timer <= 0.0:
+				_release()
 	_update_reticle()
 	_update_camera_pose()
 
@@ -193,7 +199,13 @@ func _on_kicker_contact(_action: String) -> void:
 		_keeper.begin_penalty_dive(_struck_zone)
 	struck.emit()
 	if release_after_strike:
-		_release()
+		# Не переключаем камеру сразу (иначе рывок на самом ударе) — держим пенальти-вид PEN_WATCH_TIME,
+		# затем _release. Разбег/root motion уже не двигаем: тело разлочим, чтоб не стояло вкопанным.
+		var km := PlayerMotor.find_on(_kicker)
+		if km != null:
+			km.set_control_locked(false)
+		_phase = Phase.WATCH
+		_watch_timer = FootballConstants.PEN_WATCH_TIME
 
 ## Отдать управление в обычную игру: снять пенальти-режим, вернуть камеру/ИИ, разлочить бьющего.
 func _release() -> void:
