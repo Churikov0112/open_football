@@ -21,6 +21,7 @@ var _into: float = 1.0
 var _forward: Vector3 = Vector3.FORWARD   # горизонталь от точки к воротам
 var _spot: Vector3 = Vector3.ZERO
 
+var _foot: String = "penalty_r"            # нога удара (ключ ACTION_CLIPS)
 var _aim: Vector2 = Vector2.ZERO            # точка прицела на плоскости ворот (x от центра, y высота)
 var _charge: float = 0.0
 var _charging: bool = false
@@ -49,6 +50,7 @@ func start_single(kicker: CharacterBody3D, goal_line_z: float) -> void:
 	_kicker = kicker
 	_goal_line_z = goal_line_z
 	_into = -1.0 if goal_line_z > 0.0 else 1.0
+	_foot = FootballConstants.PEN_DEFAULT_FOOT
 	release_after_strike = true
 	_setup()
 
@@ -68,7 +70,11 @@ func _setup() -> void:
 	_ball.angular_velocity = Vector3.ZERO
 	_ball.global_position = _spot
 	# Бьющий за мячом (в сторону от ворот) на длину разбега, лицом к воротам; в обычном idle.
-	_kicker.global_position = _spot - _forward * FootballConstants.PEN_RUNUP_DIST + Vector3(0.0, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
+	# Латеральный сдвиг под опорную ногу: правая нога → чуть ЛЕВЕЕ (от камеры), левая → зеркально.
+	# «Лево» игрока при взгляде на ворота = -_into по X.
+	var side := -_into if _foot == "penalty_r" else _into
+	_kicker.global_position = _spot - _forward * FootballConstants.PEN_RUNUP_DIST \
+		+ Vector3(side * FootballConstants.PEN_FOOT_LATERAL, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
 	_kicker.look_at(_kicker.global_position + _forward, Vector3.UP)
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
@@ -144,7 +150,7 @@ func _fire(ratio: float) -> void:
 	if vis != null and not _contact_connected:
 		vis.action_contact.connect(_on_kicker_contact, CONNECT_ONE_SHOT)
 		_contact_connected = true
-	if vis == null or not vis.trigger(FootballConstants.PEN_DEFAULT_FOOT):
+	if vis == null or not vis.trigger(_foot):
 		_on_kicker_contact("penalty")  # фолбэк без анимации — бьём сразу
 
 func _strike_update(_delta: float) -> void:

@@ -24,7 +24,13 @@ func _process(delta: float) -> bool:
 		return false
 	_raw += _visual.call("consume_root_motion")
 	_elapsed += delta
-	if _elapsed >= 1.35:
-		print("RAW_PATH_TO_CONTACT=", _raw, "  → PEN_ROOT_SCALE=", 3.0 / _raw if _raw > 0.01 else 0.0)
+	for cp in _checkpoints:
+		if not _printed.has(cp) and _elapsed >= cp:
+			_printed[cp] = true
+			print("CUMULATIVE_RUNUP_AT ", cp, "s = ", _raw)
+	if _elapsed >= 1.55:
 		return true
 	return false
+
+var _checkpoints := [0.9, 1.0, 1.1, 1.2, 1.35, 1.5]
+var _printed := {}

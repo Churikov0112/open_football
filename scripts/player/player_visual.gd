@@ -65,10 +65,10 @@ const ACTION_TIMING := {
 	# Бросок верхом рукой (0.97с): мяч приклеен к правой руке до выпуска на замахе (~0.65с), затем
 	# летит по дуге.
 	"keeper_overhand_throw": {"contact": 0.65, "lock": 0.97, "speed": 1.0},
-	# Пенальти с разбегом (root motion, клип ~1.53с). contact — момент удара ногой (нога встречает
-	# мяч в конце разбега); lock — общая длительность. Уточняется ручной приёмкой (Task 9).
-	"penalty_l": {"contact": 1.35, "lock": 1.55, "speed": 1.0},
-	"penalty_r": {"contact": 1.35, "lock": 1.55, "speed": 1.0},
+	# Пенальти с разбегом (root motion, клип ~1.53с). contact — момент удара ногой (нога достаёт
+	# мяч чуть раньше конца разбега); lock — общая длительность. Синхронно с PEN_RUNUP_DIST/PEN_CONTACT_TIME.
+	"penalty_l": {"contact": 1.15, "lock": 1.55, "speed": 1.0},
+	"penalty_r": {"contact": 1.15, "lock": 1.55, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0
@@ -212,12 +212,8 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 	_anim_tree.anim_player = _anim_tree.get_path_to(ap)
 	_anim_tree.active = true
 	_anim_tree.set(&"parameters/TimeScale/scale", 1.0)
-	# Root motion: клипы удара пенальти (penalty_kick_l/_r) НЕ заморожены «на месте» — их разбег
-	# извлекаем через root_motion_track (кость Hips) и применяем к телу (см. consume_root_motion).
-	# У прочих (замороженных) клипов сдвиг корня ~0, поэтому единый трек безвреден.
-	var rm := _find_root_motion_path()
-	if rm != NodePath():
-		_anim_tree.root_motion_track = rm
+	# root_motion_track ставим ТОЛЬКО на время клипа удара пенальти (см. trigger) — иначе извлечение
+	# движения Hips ломает вертикаль ВСЕХ клипов (вратарский idle «висит», нырки не прыгают).
 	_playback = _anim_tree.get(&"parameters/sm/playback")
 	if _playback != null:
 		_playback.start(LOCOMOTION)
@@ -320,6 +316,8 @@ func _process(delta: float) -> void:
 			var done := _active_action
 			_active_action = ""
 			_set_action_speed(1.0)
+			if _anim_tree != null:
+				_anim_tree.root_motion_track = NodePath()  # снять после клипа удара пенальти
 			action_finished.emit(done)
 
 ## Явно задать скорость (для будущих геймплей-вызовов). Vector3.ZERO → снова авто-замер.
@@ -352,6 +350,13 @@ func trigger(action: String) -> bool:
 		push_warning("PlayerVisual.trigger('%s'): нет клипа под это действие" % action)
 		return false
 	_playback.travel(StringName(state))
+	# root motion — только для клипов удара пенальти (разбег), у остальных трек снят (иначе
+	# извлечение Hips ломает вертикаль их поз).
+	if _anim_tree != null:
+		if action == "penalty_l" or action == "penalty_r":
+			_anim_tree.root_motion_track = _find_root_motion_path()
+		else:
+			_anim_tree.root_motion_track = NodePath()
 	var contact := 0.0
 	var lock := action_length(action)
 	var speed := 1.0
