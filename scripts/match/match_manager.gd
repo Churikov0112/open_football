@@ -20,6 +20,9 @@ var _controlled_marker: Polygon2D
 var _match_camera: Camera3D
 var _goal_nets: Dictionary = {}
 var _celebrating: bool = false
+var _penalty_active: bool = false
+var _penalty                                   # PenaltyController
+var _penalty_cam_pose: Transform3D = Transform3D.IDENTITY
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -125,6 +128,10 @@ func _ready() -> void:
 	_setup_tackle_area()
 	_setup_power_bar()
 	_setup_ball_trail()
+	_penalty = preload("res://scripts/match/penalty_controller.gd").new()
+	_penalty.name = "PenaltyController"
+	add_child(_penalty)
+	_penalty.setup(self, ball, camera_pivot, power_bar, _keeper)
 
 
 ## DEBUG: линия-след за мячом. MeshInstance3D + ImmediateMesh, перестраивается каждый кадр
@@ -203,6 +210,7 @@ func _setup_inputs() -> void:
 		&"combo_modifier":  {"keys": [KEY_Q],     "buttons": [JOY_BUTTON_LEFT_SHOULDER], "axes": []},
 		&"combo_curl":      {"keys": [KEY_E],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
+		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
 	}
 	for action in actions:
 		if InputMap.has_action(action):
@@ -549,6 +557,26 @@ func is_celebrating() -> bool:
 	return _celebrating
 
 
+## Идёт ли розыгрыш пенальти (обычный ввод/ИИ/следящая камера на это время заглушены).
+func is_penalty_active() -> bool:
+	return _penalty_active
+
+
+func set_penalty_active(on: bool) -> void:
+	_penalty_active = on
+
+
+func set_penalty_cam_pose(pose: Transform3D) -> void:
+	_penalty_cam_pose = pose
+
+
+## Глушим/возвращаем полевой ИИ на время пенальти (вратаря НЕ трогаем — он должен нырять).
+func set_field_ai_active(on: bool) -> void:
+	for p in [player_away, player_teammate]:
+		if p != null and is_instance_valid(p):
+			p.set_physics_process(on)
+
+
 ## Вратарь соперника в атакуемых человеком воротах (Away, +field_length).
 func _setup_keeper() -> void:
 	var k := CharacterBody3D.new()
@@ -709,16 +737,19 @@ func _process(delta: float) -> void:
 	var ball_pos := ball.global_position
 	# Камера от 3-го лица: пивот встаёт ПОЗАДИ управляемого игрока (по его facing) и смотрит
 	# вперёд него. -pivot.basis.z тогда = «вперёд игрока» → камера-относительный ввод корректен.
-	var cam_target: Node3D = controlled_player if (controlled_player and is_instance_valid(controlled_player)) else null
-	if cam_target != null:
-		var fwd := -cam_target.global_transform.basis.z
-		fwd.y = 0.0
-		if fwd.length() < 0.01:
-			fwd = Vector3(0, 0, -1)
-		fwd = fwd.normalized()
-		var eye := cam_target.global_position - fwd * FootballConstants.CAMERA_TP_DISTANCE + Vector3.UP * FootballConstants.CAMERA_TP_HEIGHT
-		camera_pivot.global_position = camera_pivot.global_position.lerp(eye, clampf(FootballConstants.CAMERA_TP_FOLLOW * delta, 0.0, 1.0))
-		camera_pivot.look_at(cam_target.global_position + fwd * FootballConstants.CAMERA_TP_LOOK_AHEAD + Vector3.UP, Vector3.UP)
+	if _penalty_active:
+		camera_pivot.global_transform = _penalty_cam_pose
+	else:
+		var cam_target: Node3D = controlled_player if (controlled_player and is_instance_valid(controlled_player)) else null
+		if cam_target != null:
+			var fwd := -cam_target.global_transform.basis.z
+			fwd.y = 0.0
+			if fwd.length() < 0.01:
+				fwd = Vector3(0, 0, -1)
+			fwd = fwd.normalized()
+			var eye := cam_target.global_position - fwd * FootballConstants.CAMERA_TP_DISTANCE + Vector3.UP * FootballConstants.CAMERA_TP_HEIGHT
+			camera_pivot.global_position = camera_pivot.global_position.lerp(eye, clampf(FootballConstants.CAMERA_TP_FOLLOW * delta, 0.0, 1.0))
+			camera_pivot.look_at(cam_target.global_position + fwd * FootballConstants.CAMERA_TP_LOOK_AHEAD + Vector3.UP, Vector3.UP)
 
 	if _trail != null:
 		_update_ball_trail(ball_pos)
@@ -756,6 +787,13 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	# Пенальти-режим: всё ведёт контроллер, обычные системы заглушены.
+	if _penalty_active:
+		_penalty.update(delta)
+		return
+	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null:
+		_penalty.start_single(controlled_player, _keeper.goal_line_z)
+		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():
 		_handle_player_input(delta)
