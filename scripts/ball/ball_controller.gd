@@ -17,6 +17,7 @@ var _kick_grace_body: PhysicsBody3D = null   # бьющий, временно и
 const KICK_GRACE_MSEC := 350   # окно после удара, пока мяч НЕ сталкивается с самим бьющим
 var _dribbler_prev_pos: Vector3 = Vector3.ZERO
 var _pending_impulse: Vector3 = Vector3.ZERO
+var _prev_vy: float = 0.0   # вертикальная скорость, отданная солверу в прошлом кадре (для ручного отскока)
 
 enum BallState { OPEN, TRAPPED, FLIGHT, CAUGHT }
 var state: BallState = BallState.OPEN
@@ -37,7 +38,8 @@ func _ready() -> void:
 	_football_texture()
 	var phys_mat := PhysicsMaterial.new()
 	phys_mat.friction = 0.4
-	phys_mat.bounce = 0.35
+	phys_mat.bounce = 0.0   # отскок делаем ВРУЧНУЮ в _integrate_forces (см. _prev_vy/BALL_BOUNCE),
+							# т.к. солвер vs. WorldBoundary-пол без материала гасил вертикаль в ноль
 	physics_material_override = phys_mat
 	continuous_cd = true           # быстрый удар не должен туннелировать сквозь игрока/штангу
 	max_contacts_reported = 2
@@ -320,6 +322,7 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 			t.origin = _hold_node.global_position
 			state_body.transform = t
 		state_body.linear_velocity = Vector3.ZERO
+		_prev_vy = 0.0
 		return
 
 	if state == BallState.TRAPPED and dribbler and is_instance_valid(dribbler):
@@ -412,10 +415,24 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 				_curl = Vector3.ZERO
 				_flat_flight = false
 				_set_player_collision(false)
+		# Ручной отскок от газона. Солвер (bounce=0 vs. WorldBoundary-пол) гасит вертикаль в ноль,
+		# поэтому отражаем ВРУЧНУЮ по скорости снижения из прошлого кадра (_prev_vy): мяч на земле
+		# и в прошлом кадре падал → подкидываем вверх с restitution, горизонталь чуть гасим, чтобы
+		# катился дальше с затуханием, а не «падал в лужу». Настильный удар (_flat_flight) не трогаем.
+		if not _flat_flight:
+			var on_ground := state_body.transform.origin.y <= FootballConstants.BALL_RADIUS + FootballConstants.BALL_GROUND_EPS
+			var descent := -_prev_vy   # >0, если в прошлом кадре мяч снижался
+			# vel.y <= descent*0.25 — солвер уже погасил вертикаль (реальный контакт), а не мяч,
+			# уже летящий вверх после предыдущего отскока.
+			if on_ground and descent > FootballConstants.BALL_BOUNCE_MIN_SPEED and vel.y <= descent * 0.25:
+				vel.y = descent * FootballConstants.BALL_BOUNCE
+				vel.x *= FootballConstants.BALL_BOUNCE_FRICTION
+				vel.z *= FootballConstants.BALL_BOUNCE_FRICTION
 		vel.x *= drag_factor
 		vel.z *= drag_factor
 		vel.y *= air_resistance
 
+	_prev_vy = vel.y
 	state_body.linear_velocity = vel
 
 
