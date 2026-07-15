@@ -791,7 +791,9 @@ func _physics_process(delta: float) -> void:
 	if _penalty_active:
 		_penalty.update(delta)
 		return
-	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null:
+	# Пенальти по P — только из чистого состояния: во время празднования гола ждёт отложенный
+	# _reset_ball() (телепорт игроков/мяча), запуск пенальти в это окно ломает расстановку.
+	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null and not _celebrating:
 		_penalty.start_single(controlled_player, _keeper.goal_line_z)
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.

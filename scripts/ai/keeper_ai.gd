@@ -238,14 +238,25 @@ func _position(delta: float) -> void:
 func set_penalty_mode(on: bool) -> void:
 	_penalty_mode = on
 	if on:
+		# Чистый сброс из ЛЮБОГО состояния (нырок/ловля/раздача/вне линии): иначе при старте
+		# пенальти из середины другого действия вратарь стоит криво / вне линии / держит мяч.
 		_pen_struck = false
 		_reacting = false
+		_pass_through = false
+		_current_action = KeeperLogic.SaveAction.NONE
 		_state = State.POSITION
+		if ball != null and is_instance_valid(ball) and ball.dribbler == self:
+			ball.release_dribble()
+		# На линию по центру створа (как в _setup_keeper).
+		var into := 1.0 if goal_line_z < 0.0 else -1.0
+		global_position = Vector3(0.0, _ground_y, goal_line_z + into * 0.5)
 		var m := _motor()
 		if m != null:
 			m.set_control_locked(false)
+			m.set_move_intent(Vector3.ZERO)
 		var vis := _visual()
 		if vis != null:
+			vis.recover()   # выйти из любого one-shot (нырок/idle_ball) в локомоцию-хаб
 			vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
 
 
