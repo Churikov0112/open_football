@@ -259,13 +259,14 @@ func _make_speed_state(clip: StringName) -> AnimationNodeBlendTree:
 	bt.connect_node(&"output", 0, &"speed")
 	return bt
 
-## Переход StateMachine. auto_return=true → авто-возврат в конце клипа (AT_END/AUTO);
-## иначе — переход только по travel() (ENABLED, без авто-срабатывания), с кроссфейдом.
+## Переход StateMachine. auto_return=true → авто-возврат в конце клипа (AT_END/AUTO) с кроссфейдом
+## (иначе поза удара щёлкает в idle резко); иначе — переход только по travel() (ENABLED), с кроссфейдом.
 func _make_transition(auto_return: bool) -> AnimationNodeStateMachineTransition:
 	var t := AnimationNodeStateMachineTransition.new()
 	if auto_return:
 		t.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_AT_END
 		t.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO
+		t.xfade_time = 0.25   # плавный сход клипа удара в локомоцию (без этого — резкий щелчок)
 	else:
 		t.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_IMMEDIATE
 		t.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_ENABLED
