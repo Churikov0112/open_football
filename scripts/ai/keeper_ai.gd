@@ -33,6 +33,10 @@ var _distribute_fired: bool = false
 var _ground_y: float = 0.5   # уровень газона (высота тела в стойке), для приземления после нырка
 var _high_roll: int = -1   # бросок «взять/пропустить» высокий центр (зона 2.0..2.5): -1=нет, 0=пропуск, 1=ловля
 
+# Пенальти-подрежим (Фаза A): держим центр, реактивный боковой сейв off; нырок — по команде.
+var _penalty_mode: bool = false
+var _pen_struck: bool = false
+
 
 func _motor() -> PlayerMotor:
 	return PlayerMotor.find_on(self)
@@ -118,6 +122,9 @@ func _physics_process(delta: float) -> void:
 func _position(delta: float) -> void:
 	var m := _motor()
 	if m == null:
+		return
+	if _penalty_mode:
+		_penalty_hold(delta, m)
 		return
 	# Режим «тревоги» по дистанции мяча: близко → стойка готовности + приставные шаги (KEEPER),
 	# далеко → обычный расслабленный idle/бег (NORMAL).
@@ -223,6 +230,91 @@ func _position(delta: float) -> void:
 	if dec.action == KeeperLogic.SaveAction.NONE:
 		return  # совсем далеко — гол
 	_begin_save(dec, ball.linear_velocity.length(), ttoi)
+
+
+## Пенальти-подрежим: держим центр линии, лицом в поле, боковой РЕАКТИВНЫЙ сейв ВЫКЛ. Рефлекс
+## центрального мяча (ловля/промах по высоте прилёта) остаётся — им решается центральный удар,
+## если вратарь остался в центре.
+func set_penalty_mode(on: bool) -> void:
+	_penalty_mode = on
+	if on:
+		# Чистый сброс из ЛЮБОГО состояния (нырок/ловля/раздача/вне линии): иначе при старте
+		# пенальти из середины другого действия вратарь стоит криво / вне линии / держит мяч.
+		_pen_struck = false
+		_reacting = false
+		_pass_through = false
+		_current_action = KeeperLogic.SaveAction.NONE
+		_state = State.POSITION
+		if ball != null and is_instance_valid(ball) and ball.dribbler == self:
+			ball.release_dribble()
+		# На линию по центру створа (как в _setup_keeper).
+		var into := 1.0 if goal_line_z < 0.0 else -1.0
+		global_position = Vector3(0.0, _ground_y, goal_line_z + into * 0.5)
+		var m := _motor()
+		if m != null:
+			m.set_control_locked(false)
+			m.set_move_intent(Vector3.ZERO)
+		var vis := _visual()
+		if vis != null:
+			vis.recover()   # выйти из любого one-shot (нырок/idle_ball) в локомоцию-хаб
+			vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+
+
+## Слепой нырок пенальти по выбранной зоне. Угловые — существующий _begin_save (клип/контакт/отбой
+## как с игры); CENTER — остаёмся в центре, центральный рефлекс в _penalty_hold решит по высоте.
+func begin_penalty_dive(zone: int) -> void:
+	_pen_struck = true
+	if zone == PenaltyLogic.Zone.CENTER:
+		return  # остаёмся по центру; исход решит рефлекс, затем авто-сброс _penalty_mode
+	_penalty_mode = false
+	var action := _pen_zone_to_action(zone)
+	if action == KeeperLogic.SaveAction.NONE:
+		return
+	var target := PenaltyLogic.zone_target(zone, 0.0, FootballConstants.GOAL_WIDTH * 0.5,
+		FootballConstants.PEN_KEEPER_DIVE_LOW_Y, FootballConstants.PEN_KEEPER_DIVE_HIGH_Y,
+		FootballConstants.PEN_KEEPER_DIVE_LATERAL, goal_line_z)
+	# Слепой нырок — реальной ttoi нет (INF): _begin_save держит нырок по длине клипа.
+	_begin_save({"action": action, "target": target}, ball.linear_velocity.length(), INF)
+
+
+func _pen_zone_to_action(zone: int) -> int:
+	match zone:
+		PenaltyLogic.Zone.LOW_L:
+			return KeeperLogic.SaveAction.DIVE_LOW_L
+		PenaltyLogic.Zone.LOW_R:
+			return KeeperLogic.SaveAction.DIVE_LOW_R
+		PenaltyLogic.Zone.HIGH_L:
+			return KeeperLogic.SaveAction.DIVE_HIGH_L
+		PenaltyLogic.Zone.HIGH_R:
+			return KeeperLogic.SaveAction.DIVE_HIGH_R
+	return KeeperLogic.SaveAction.NONE
+
+
+## Держим центр линии лицом в поле; боковой реактивный сейв не запускаем. Рефлекс центрального
+## мяча решает ловлю/промах по высоте прилёта (как в обычном _position). После удара, когда угроза
+## миновала (пойман/за линией/улетел), авто-снимаем пенальти-режим → обычная игра.
+func _penalty_hold(delta: float, m: PlayerMotor) -> void:
+	var into := -1.0 if goal_line_z > 0.0 else 1.0
+	m.set_face_direction(Vector3(ball.global_position.x - global_position.x, 0.0, into * 4.0))
+	var to := Vector3(-global_position.x, 0.0, 0.0)  # к центру створа (x=0)
+	if to.length() > 0.15:
+		m.set_move_intent(to.normalized(), 1.0)
+	else:
+		m.set_move_intent(Vector3.ZERO)
+	# Рефлекс центрального мяча: по высоте прилёта — scoop/catch/catch_head/catch_top / miss_top.
+	if ball.is_flight() and _heading_at_goal() and _catch_radius_hit():
+		var by := ball.global_position.y
+		if _should_catch_high(by):
+			ball.catch(self, hold_point)
+			_begin_central_catch(by)
+		else:
+			_begin_miss_top()
+		return
+	# Авто-сброс режима после удара, когда мяч уже не угроза.
+	if _pen_struck:
+		var crossed := (ball.global_position.z - goal_line_z) * into < 0.0
+		if ball.is_caught() or crossed or (ball.is_flight() and not _heading_at_goal()):
+			_penalty_mode = false
 
 
 ## Старт сейва: центр (CATCH/CATCH_TOP) — на месте (dive_vel≈0); угол — бросок к цели.

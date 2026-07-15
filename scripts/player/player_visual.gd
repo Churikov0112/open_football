@@ -27,6 +27,8 @@ const ACTION_CLIPS := {
 	"kick": "pass",
 	"pass": "pass",
 	"penalty": "penalty_kick",
+	"penalty_l": "penalty_kick_l",
+	"penalty_r": "penalty_kick_r",
 	"throw_in": "throw_in",
 	"keeper_drop_kick": "keeper_drop_kick",
 	"keeper_pass": "keeper_pass",
@@ -63,6 +65,11 @@ const ACTION_TIMING := {
 	# Бросок верхом рукой (0.97с): мяч приклеен к правой руке до выпуска на замахе (~0.65с), затем
 	# летит по дуге.
 	"keeper_overhand_throw": {"contact": 0.65, "lock": 0.97, "speed": 1.0},
+	# Пенальти с разбегом (root motion, клип ~1.53с). contact — момент удара ногой (нога достаёт мяч
+	# чуть раньше конца разбега); post_speed — ускорение «хвоста» (замах→idle) после пуска мяча;
+	# lock — когда хвост при post_speed доигран (0.53с/1.8 ≈ 0.29 → 1.0+0.29). Разбег до контакта — 1.0×.
+	"penalty_l": {"contact": 1.0, "lock": 1.2, "speed": 1.0, "post_speed": 2.8},
+	"penalty_r": {"contact": 1.0, "lock": 1.2, "speed": 1.0, "post_speed": 2.8},
 }
 
 @export var model_y_offset: float = 0.0
@@ -81,6 +88,7 @@ var _action_elapsed: float = 0.0  # прошло реальных секунд �
 var _action_contact_at: float = 0.0
 var _action_lock_at: float = 0.0
 var _action_contact_done: bool = false
+var _action_post_speed: float = -1.0  # TimeScale после контакта (ускорить «хвост»); <0 = не менять
 var _fall_lock: bool = false   # пока true — _process не выбирает стейт локомоции (ведёт fall-цепочка)
 var _loco_style: int = LOCO_STYLE_NORMAL
 
@@ -162,7 +170,10 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 		sm.add_node(clip, node, Vector2(120, y))
 		y += 80.0
 		sm.add_transition(LOCOMOTION, clip, _make_transition(false))
-		sm.add_transition(clip, LOCOMOTION, _make_transition(true))
+		# Обратный переход — обычный кроссфейд (IMMEDIATE+xfade), а НЕ AT_END: авто-возврат по
+		# концу клипа щёлкал в idle (AT_END+xfade не блендит, а держит последний кадр и снапает).
+		# Возврат инициирует _process (travel в локомоцию, когда _active_action очищается на lock).
+		sm.add_transition(clip, LOCOMOTION, _make_transition(false))
 		_states[clip] = true
 
 	var oneshot_added: Array[String] = []
@@ -206,9 +217,40 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 	_anim_tree.anim_player = _anim_tree.get_path_to(ap)
 	_anim_tree.active = true
 	_anim_tree.set(&"parameters/TimeScale/scale", 1.0)
+	# root_motion_track ставим ТОЛЬКО на время клипа удара пенальти (см. trigger) — иначе извлечение
+	# движения Hips ломает вертикаль ВСЕХ клипов (вратарский idle «висит», нырки не прыгают).
 	_playback = _anim_tree.get(&"parameters/sm/playback")
 	if _playback != null:
 		_playback.start(LOCOMOTION)
+
+## Путь POSITION_3D-трека корневой кости (Hips) для root motion. При заданном anim_player дерево
+## берёт root_node = корень модели (../Model), а треки в клипе хранятся относительно него — поэтому
+## берём путь трека ПРЯМО из анимации penalty_* (напр. "Armature/Skeleton3D:mixamorig_Hips"),
+## без построения пути от self (иначе лишний префикс "Model/" не резолвится → root motion = 0).
+func _find_root_motion_path() -> NodePath:
+	if _ap == null:
+		return NodePath()
+	for clip in [&"penalty_kick_r", &"penalty_kick_l"]:
+		if not _ap.has_animation(clip):
+			continue
+		var anim := _ap.get_animation(clip)
+		for ti in range(anim.get_track_count()):
+			if anim.track_get_type(ti) != Animation.TYPE_POSITION_3D:
+				continue
+			if String(anim.track_get_path(ti)).to_lower().contains("hips"):
+				return anim.track_get_path(ti)
+	return NodePath()
+
+## Горизонтальное продвижение корня за прошедший кадр (игровые метры). Знак игнорируем — разбег
+## прямой, контроллер двигает тело вперёд (к воротам) на эту величину. 0, если трека нет.
+func consume_root_motion() -> float:
+	if _anim_tree == null or _anim_tree.root_motion_track == NodePath():
+		return 0.0
+	var d: Vector3 = _anim_tree.get_root_motion_position()
+	# POSITION-трек Hips в этом glb хранится в «сырых» единицах (импорт не проставил motion_scale),
+	# поэтому get_root_motion_position() ≈ ×27 от игровых метров. PEN_ROOT_SCALE калибрует raw→метры
+	# (замерено tools/measure_penalty_runup.gd: raw-путь до контакта ↔ реальный разбег Hips ~3м).
+	return Vector2(d.x, d.z).length() * FootballConstants.PEN_ROOT_SCALE
 
 ## Стейт локомоции со скоростью клипа: Animation("clip") → TimeScale("speed") → output.
 func _make_speed_state(clip: StringName) -> AnimationNodeBlendTree:
@@ -222,8 +264,8 @@ func _make_speed_state(clip: StringName) -> AnimationNodeBlendTree:
 	bt.connect_node(&"output", 0, &"speed")
 	return bt
 
-## Переход StateMachine. auto_return=true → авто-возврат в конце клипа (AT_END/AUTO);
-## иначе — переход только по travel() (ENABLED, без авто-срабатывания), с кроссфейдом.
+## Переход StateMachine. auto_return=true → авто-возврат в конце клипа (AT_END/AUTO, без кроссфейда;
+## сейчас не используется — ACTION-возврат делает IMMEDIATE+xfade); иначе — переход по travel() с кроссфейдом.
 func _make_transition(auto_return: bool) -> AnimationNodeStateMachineTransition:
 	var t := AnimationNodeStateMachineTransition.new()
 	if auto_return:
@@ -275,11 +317,24 @@ func _process(delta: float) -> void:
 		if not _action_contact_done and _action_elapsed >= _action_contact_at:
 			_action_contact_done = true
 			action_contact.emit(_active_action)
+			# Ускорить «хвост» действия после контакта (замах/сход в idle), если задано post_speed.
+			if _action_post_speed > 0.0:
+				_set_action_speed(_action_post_speed)
 		if _action_elapsed >= _action_lock_at:
 			var done := _active_action
 			_active_action = ""
 			_set_action_speed(1.0)
 			action_finished.emit(done)
+	# root_motion_track снимаем ПОСЛЕ завершения кроссфейда в локомоцию, а НЕ на lock: если снять
+	# посреди фейда, выдвинутая вперёд поза удара (Hips применяются) блендится в idle → тело «съезжает
+	# назад». Пока фейд идёт (get_fading_from_node != "") — держим извлечение (обе позы в rest).
+	if _anim_tree != null and _active_action == "" and _playback != null \
+			and _anim_tree.root_motion_track != NodePath():
+		var cur := _playback.get_current_node()
+		var in_loco := cur == LOCOMOTION or cur == LOCO_RUN or cur == LOCO_SPRINT \
+			or cur == LOCO_KEEPER_IDLE or cur == LOCO_KEEPER_SIDE
+		if in_loco and _playback.get_fading_from_node() == StringName():
+			_anim_tree.root_motion_track = NodePath()
 
 ## Явно задать скорость (для будущих геймплей-вызовов). Vector3.ZERO → снова авто-замер.
 func set_locomotion(velocity: Vector3) -> void:
@@ -311,14 +366,23 @@ func trigger(action: String) -> bool:
 		push_warning("PlayerVisual.trigger('%s'): нет клипа под это действие" % action)
 		return false
 	_playback.travel(StringName(state))
+	# root motion — только для клипов удара пенальти (разбег), у остальных трек снят (иначе
+	# извлечение Hips ломает вертикаль их поз).
+	if _anim_tree != null:
+		if action == "penalty_l" or action == "penalty_r":
+			_anim_tree.root_motion_track = _find_root_motion_path()
+		else:
+			_anim_tree.root_motion_track = NodePath()
 	var contact := 0.0
 	var lock := action_length(action)
 	var speed := 1.0
+	var post_speed := -1.0
 	if ACTION_TIMING.has(action):
 		var t: Dictionary = ACTION_TIMING[action]
 		contact = float(t.get("contact", 0.0))
 		lock = float(t.get("lock", lock))
 		speed = float(t.get("speed", 1.0))
+		post_speed = float(t.get("post_speed", -1.0))
 	if lock <= 0.0:
 		lock = 0.5
 	_set_action_speed(speed)
@@ -327,6 +391,7 @@ func trigger(action: String) -> bool:
 	_action_contact_at = contact
 	_action_lock_at = lock
 	_action_contact_done = false
+	_action_post_speed = post_speed
 	return true
 
 ## Отменить текущее действие без сигнала касания (напр., игрока сбили на замахе).
