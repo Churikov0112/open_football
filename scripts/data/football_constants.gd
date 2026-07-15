@@ -426,10 +426,11 @@ const KEEPER_THROW_PEAK := 6.0         # высота дуги броска ве
 #  PENALTY (Фаза A)
 # ═══════════════════════════════════════════
 
-# Разбег/анимация (PEN_RUNUP_DIST и PEN_CONTACT_TIME уточняются Task 4 — measure_penalty_runup.gd).
-const PEN_RUNUP_DIST := 2.0            # длина разбега (root motion) — предварительно, замерить
-const PEN_CONTACT_TIME := 0.9          # кадр контакта клипа penalty_kick_* (сек) — предварительно
-const PEN_CLIP_LOCK := 1.3             # общая длительность клипа удара до action_finished (сек)
+# Разбег/анимация (замерено tools/measure_penalty_runup.gd на клипе penalty_kick_*).
+const PEN_RUNUP_DIST := 3.0            # длина разбега до контакта (мировые метры), кладём бьющего на неё назад
+const PEN_ROOT_SCALE := 0.0367        # raw get_root_motion_position → игровые метры (Hips-трек в сырых единицах)
+const PEN_CONTACT_TIME := 1.35         # кадр контакта клипа penalty_kick_* (сек), клип ~1.53с
+const PEN_CLIP_LOCK := 1.55            # общая длительность клипа удара до action_finished (сек)
 const PEN_DEFAULT_FOOT := "penalty_r"  # нога по умолчанию (ключ ACTION_CLIPS)
 
 # Прицел / разброс.
