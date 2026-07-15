@@ -142,13 +142,15 @@ func _fire(ratio: float) -> void:
 	var target := PenaltyLogic.plane_point_to_world(sampled, 0.0, _goal_line_z)
 	var g := _ball_gravity()
 	if _chip:
+		# Сила задаёт дальность приземления (недолёт/в ворота/перелёт → промахнуться можно). Направление
+		# по прицелу (target на линии), точка приземления — вдоль него на chip_dist от мяча, на газоне.
 		var peak := lerpf(FootballConstants.PEN_CHIP_PEAK_MIN, FootballConstants.PEN_CHIP_PEAK_MAX, ratio)
-		# Приземление НЕ на линии, а ЗА ней (в сетке) на уровне газона — тогда на плоскости ворот мяч
-		# ещё в воздухе с ходом (уверенно залетает, а не падает у линии и закатывается). X — по прицелу.
-		var land := Vector3(target.x, FootballConstants.BALL_RADIUS, _goal_line_z - _into * FootballConstants.PEN_CHIP_OVERSHOOT)
-		# Баллистика launch_lob не учитывает драг мяча — за ~1.4с высокой дуги он съедает горизонталь
-		# и черпачок не долетает. Берём вертикаль из launch_lob, а горизонталь считаем с поправкой на
-		# драг (как вратарский навес), чтобы дуга реально доставала до точки приземления.
+		var chip_dist := lerpf(FootballConstants.PEN_CHIP_DIST_MIN, FootballConstants.PEN_CHIP_DIST_MAX, ratio)
+		var chip_dir := Vector3(target.x - from.x, 0.0, target.z - from.z)
+		chip_dir = chip_dir.normalized() if chip_dir.length() > 0.001 else _forward
+		var land := from + chip_dir * chip_dist
+		land.y = FootballConstants.BALL_RADIUS
+		# launch_lob не учитывает драг мяча — берём из неё вертикаль, а горизонталь с поправкой на драг.
 		var lob := PassSystem.launch_lob(from, land, peak, g)
 		var vy: float = lob.y
 		var flight_t: float = (2.0 * vy / g) if g > 0.01 else 0.0
