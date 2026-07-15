@@ -68,8 +68,8 @@ const ACTION_TIMING := {
 	# Пенальти с разбегом (root motion, клип ~1.53с). contact — момент удара ногой (нога достаёт мяч
 	# чуть раньше конца разбега); post_speed — ускорение «хвоста» (замах→idle) после пуска мяча;
 	# lock — когда хвост при post_speed доигран (0.53с/1.8 ≈ 0.29 → 1.0+0.29). Разбег до контакта — 1.0×.
-	"penalty_l": {"contact": 1.0, "lock": 1.3, "speed": 1.0, "post_speed": 1.8},
-	"penalty_r": {"contact": 1.0, "lock": 1.3, "speed": 1.0, "post_speed": 1.8},
+	"penalty_l": {"contact": 1.0, "lock": 1.2, "speed": 1.0, "post_speed": 2.8},
+	"penalty_r": {"contact": 1.0, "lock": 1.2, "speed": 1.0, "post_speed": 2.8},
 }
 
 @export var model_y_offset: float = 0.0
