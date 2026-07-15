@@ -168,7 +168,10 @@ func _build_anim_tree(ap: AnimationPlayer) -> void:
 		sm.add_node(clip, node, Vector2(120, y))
 		y += 80.0
 		sm.add_transition(LOCOMOTION, clip, _make_transition(false))
-		sm.add_transition(clip, LOCOMOTION, _make_transition(true))
+		# Обратный переход — обычный кроссфейд (IMMEDIATE+xfade), а НЕ AT_END: авто-возврат по
+		# концу клипа щёлкал в idle (AT_END+xfade не блендит, а держит последний кадр и снапает).
+		# Возврат инициирует _process (travel в локомоцию, когда _active_action очищается на lock).
+		sm.add_transition(clip, LOCOMOTION, _make_transition(false))
 		_states[clip] = true
 
 	var oneshot_added: Array[String] = []
@@ -259,14 +262,13 @@ func _make_speed_state(clip: StringName) -> AnimationNodeBlendTree:
 	bt.connect_node(&"output", 0, &"speed")
 	return bt
 
-## Переход StateMachine. auto_return=true → авто-возврат в конце клипа (AT_END/AUTO) с кроссфейдом
-## (иначе поза удара щёлкает в idle резко); иначе — переход только по travel() (ENABLED), с кроссфейдом.
+## Переход StateMachine. auto_return=true → авто-возврат в конце клипа (AT_END/AUTO, без кроссфейда;
+## сейчас не используется — ACTION-возврат делает IMMEDIATE+xfade); иначе — переход по travel() с кроссфейдом.
 func _make_transition(auto_return: bool) -> AnimationNodeStateMachineTransition:
 	var t := AnimationNodeStateMachineTransition.new()
 	if auto_return:
 		t.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_AT_END
 		t.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO
-		t.xfade_time = 0.25   # плавный сход клипа удара в локомоцию (без этого — резкий щелчок)
 	else:
 		t.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_IMMEDIATE
 		t.advance_mode = AnimationNodeStateMachineTransition.ADVANCE_MODE_ENABLED
