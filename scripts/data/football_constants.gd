@@ -420,3 +420,40 @@ const KEEPER_PASS_DISTANCE := 20.0     # дальность раската мя�
 const KEEPER_PLACE_DRIBBLE_DIST := 10.0 # ВРЕМЕННО: сколько метров вратарь ведёт мяч после placing ball до полевого паса
 const KEEPER_THROW_DISTANCE := 25.0    # дальность броска верхом рукой (keeper_overhand_throw), м — к центру поля
 const KEEPER_THROW_PEAK := 6.0         # высота дуги броска верхом, м
+
+
+# ═══════════════════════════════════════════
+#  PENALTY (Фаза A)
+# ═══════════════════════════════════════════
+
+# Разбег/анимация (PEN_RUNUP_DIST и PEN_CONTACT_TIME уточняются Task 4 — measure_penalty_runup.gd).
+const PEN_RUNUP_DIST := 2.0            # длина разбега (root motion) — предварительно, замерить
+const PEN_CONTACT_TIME := 0.9          # кадр контакта клипа penalty_kick_* (сек) — предварительно
+const PEN_CLIP_LOCK := 1.3             # общая длительность клипа удара до action_finished (сек)
+const PEN_DEFAULT_FOOT := "penalty_r"  # нога по умолчанию (ключ ACTION_CLIPS)
+
+# Прицел / разброс.
+const PEN_RETICLE_SPEED := 6.0         # скорость движения маркера по плоскости ворот, м/с
+const PEN_RETICLE_START_Y := 1.2       # стартовая высота маркера (центр створа), м
+const PEN_AIM_OVERHANG := 0.6          # овершут прицела за штангу/перекладину, м
+const PEN_SPREAD_MIN_R := 0.15         # радиус круга разброса при мин. силе, м
+const PEN_SPREAD_MAX_R := 1.6          # радиус круга при полной силе, м
+
+# Сила удара.
+const PEN_POWER_MIN_SPEED := 18.0      # скорость мяча при мин. заряде, м/с
+const PEN_POWER_MAX_SPEED := 34.0      # при полном заряде, м/с
+const PEN_CHARGE_MAX_TIME := 0.9       # макс. время заряда силы, с (чуть дольше обычного удара — прицельно)
+
+# Черпачок.
+const PEN_CHIP_PEAK_MIN := 2.5         # высота дуги черпачка при мин. заряде, м
+const PEN_CHIP_PEAK_MAX := 5.0         # при полном заряде, м
+
+# Зоны нырка вратаря (репрезентативные точки на линии).
+const PEN_KEEPER_DIVE_LOW_Y := 0.4     # высота «низового» угла, м
+const PEN_KEEPER_DIVE_HIGH_Y := 1.9    # высота «верхнего» угла, м
+const PEN_KEEPER_DIVE_LATERAL := 2.6   # боковое смещение угла от центра, м
+
+# Фикс-камера пенальти (за бьющим на ворота).
+const PEN_CAM_BACK := 9.0              # отступ камеры назад от точки удара (от ворот), м
+const PEN_CAM_HEIGHT := 4.0            # высота камеры, м
+const PEN_CAM_LOOK_Y := 1.2           # высота точки, куда смотрит камера в воротах, м
