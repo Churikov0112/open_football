@@ -23,6 +23,9 @@ var _celebrating: bool = false
 var _penalty_active: bool = false
 var _penalty                                   # PenaltyController
 var _penalty_cam_pose: Transform3D = Transform3D.IDENTITY
+var _free_kick                                 # FreeKickController
+var _free_kick_active: bool = false
+var _free_kick_cam_pose: Transform3D = Transform3D.IDENTITY
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -132,6 +135,10 @@ func _ready() -> void:
 	_penalty.name = "PenaltyController"
 	add_child(_penalty)
 	_penalty.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_free_kick = preload("res://scripts/match/free_kick_controller.gd").new()
+	_free_kick.name = "FreeKickController"
+	add_child(_free_kick)
+	_free_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
 
 
 ## DEBUG: линия-след за мячом. MeshInstance3D + ImmediateMesh, перестраивается каждый кадр
@@ -211,6 +218,7 @@ func _setup_inputs() -> void:
 		&"combo_curl":      {"keys": [KEY_E],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
+		&"free_kick_debug": {"keys": [KEY_F],     "buttons": [], "axes": []},
 	}
 	for action in actions:
 		if InputMap.has_action(action):
@@ -570,6 +578,18 @@ func set_penalty_cam_pose(pose: Transform3D) -> void:
 	_penalty_cam_pose = pose
 
 
+func is_free_kick_active() -> bool:
+	return _free_kick_active
+
+
+func set_free_kick_active(on: bool) -> void:
+	_free_kick_active = on
+
+
+func set_free_kick_cam_pose(pose: Transform3D) -> void:
+	_free_kick_cam_pose = pose
+
+
 ## Глушим/возвращаем полевой ИИ на время пенальти (вратаря НЕ трогаем — он должен нырять).
 func set_field_ai_active(on: bool) -> void:
 	for p in [player_away, player_teammate]:
@@ -739,6 +759,8 @@ func _process(delta: float) -> void:
 	# вперёд него. -pivot.basis.z тогда = «вперёд игрока» → камера-относительный ввод корректен.
 	if _penalty_active:
 		camera_pivot.global_transform = _penalty_cam_pose
+	elif _free_kick_active:
+		camera_pivot.global_transform = _free_kick_cam_pose
 	else:
 		var cam_target: Node3D = controlled_player if (controlled_player and is_instance_valid(controlled_player)) else null
 		if cam_target != null:
@@ -795,6 +817,14 @@ func _physics_process(delta: float) -> void:
 	# _reset_ball() (телепорт игроков/мяча), запуск пенальти в это окно ломает расстановку.
 	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null and not _celebrating:
 		_penalty.start_single(controlled_player, _keeper.goal_line_z)
+		return
+	# Штрафной-режим: всё ведёт контроллер, обычные системы заглушены.
+	if _free_kick_active:
+		_free_kick.update(delta)
+		return
+	# Штрафной по F — только из чистого состояния (не во время празднования гола).
+	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper != null and not _celebrating:
+		_free_kick.start(controlled_player, _keeper.goal_line_z)
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():
