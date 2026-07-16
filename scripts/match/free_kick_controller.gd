@@ -228,18 +228,111 @@ func _kicker_visual() -> PlayerVisual:
 			return c
 	return null
 
-# ── Хуки (наполняются в следующих задачах) ────────────────────────────────────
+# ── Стенка ────────────────────────────────────────────────────────────────────
 func _spawn_defense() -> void:
-	pass   # Task 7
+	_wall_bodies.clear()
+	var dist_to_goal := absf(_spot.z - _goal_line_z)
+	var count := FreeKickLogic.wall_count(dist_to_goal, FootballConstants.FK_WALL_FAR_DIST,
+		FootballConstants.FK_WALL_NEAR_DIST, FootballConstants.FK_WALL_MIN_PLAYERS, FootballConstants.FK_WALL_MAX_PLAYERS)
+	if count <= 0:
+		return
+	var nf := FreeKickLogic.near_far_posts(_spot, 0.0, FootballConstants.GOAL_WIDTH * 0.5, _goal_line_z)
+	var wl := FreeKickLogic.wall_line(_spot, nf[0], _goal_line_z, FootballConstants.FK_WALL_DIST, 0.5)
+	var positions := FreeKickLogic.wall_body_positions(wl["center"], wl["right"], count, FootballConstants.FK_WALL_SPACING)
+	for pos in positions:
+		var body := _make_wall_body(pos)
+		_wall_bodies.append({"body": body, "jumping": false, "jump_t": 0.0, "base_y": body.global_position.y})
 
+## Создать статичное тело стенки (team_2, лицом к мячу), пока без ИИ-скрипта.
+func _make_wall_body(pos: Vector3) -> CharacterBody3D:
+	var p := CharacterBody3D.new()
+	p.name = "WallMember"
+	p.global_position = pos
+	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
+	p.add_child(visual)
+	p.add_child(PlayerMotor.new())
+	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
+	var col := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.height = 1.5
+	shape.radius = 0.3
+	col.shape = shape
+	col.position = Vector3(0, 0.25, 0)
+	p.add_child(col)
+	_manager.add_child(p)
+	p.add_to_group("team_2")
+	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
+	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
+	# Лицом к мячу, мотор залочен (стоит на месте).
+	p.look_at(Vector3(_spot.x, pos.y, _spot.z), Vector3.UP)
+	var pm := PlayerMotor.find_on(p)
+	if pm != null:
+		pm.set_control_locked(true)
+		pm.set_move_intent(Vector3.ZERO)
+	return p
+
+## Каждый кадр после удара: решаем прыжок стенки и ведём вертикальную дугу прыгнувших тел.
+func _update_wall_jumps(delta: float) -> void:
+	if not _ball_in_flight_watch:
+		return
+	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+	for entry in _wall_bodies:
+		var b: CharacterBody3D = entry["body"]
+		if not is_instance_valid(b):
+			continue
+		if not entry["jumping"]:
+			var should := FreeKickLogic.wall_should_jump(_ball.global_position, _ball.linear_velocity,
+				b.global_position, FootballConstants.FK_WALL_STAND_REACH, FootballConstants.FK_WALL_JUMP_REACH, g)
+			if should:
+				entry["jumping"] = true
+				entry["jump_t"] = 0.0
+				b.add_to_group("fallen")   # чтобы PlayerMotor не пинил Y во время прыжка
+				var v := _wall_visual(b)
+				if v != null:
+					v.play_oneshot(&"jumping_wall")
+		else:
+			entry["jump_t"] += delta
+			var tt: float = entry["jump_t"] / FootballConstants.FK_WALL_JUMP_TIME
+			if tt >= 1.0:
+				b.global_position.y = entry["base_y"]
+				b.remove_from_group("fallen")
+				entry["jumping"] = false
+				entry["jump_t"] = FootballConstants.FK_WALL_JUMP_TIME + 1.0   # больше не прыгаем
+				var v := _wall_visual(b)
+				if v != null:
+					v.recover()
+			else:
+				var arc: float = sin(tt * PI)   # 0→1→0
+				b.global_position.y = entry["base_y"] + arc * FootballConstants.FK_WALL_JUMP_HEIGHT
+
+func _wall_visual(b: Node) -> PlayerVisual:
+	for c in b.get_children():
+		if c is PlayerVisual:
+			return c
+	return null
+
+## Стенка → обычный team_2-ИИ (simple_ai). Тела не удаляются, а вливаются в игру.
+## _wall_bodies НЕ очищаем (спавн чистит на старте) — чтобы состояние было инспектируемо.
+func _convert_bodies() -> void:
+	var ai_script := preload("res://scripts/ai/simple_ai.gd")
+	for entry in _wall_bodies:
+		var b: CharacterBody3D = entry["body"]
+		if not is_instance_valid(b):
+			continue
+		if b.is_in_group("fallen"):
+			b.remove_from_group("fallen")
+			b.global_position.y = entry["base_y"]
+		var pm := PlayerMotor.find_on(b)
+		if pm != null:
+			pm.set_control_locked(false)
+		b.set_script(ai_script)
+		b.set_physics_process(true)
+		b.ball = _ball
+		b.home_goal = _manager.get_node_or_null("GoalHome/GoalArea")
+
+# ── Пас/навес (наполняются в Task 9) ──────────────────────────────────────────
 func _spawn_mates() -> void:
 	pass   # Task 9
-
-func _update_wall_jumps(_delta: float) -> void:
-	pass   # Task 7
-
-func _convert_bodies() -> void:
-	pass   # Tasks 7, 9
 
 func _fire_pass(_action: String, _ratio: float) -> void:
 	pass   # Task 9
