@@ -329,10 +329,96 @@ func _convert_bodies() -> void:
 		b.set_physics_process(true)
 		b.ball = _ball
 		b.home_goal = _manager.get_node_or_null("GoalHome/GoalArea")
+	# Свои (тиммейт/цели) → обычный team_1-ИИ (teammate_ai). _mates НЕ очищаем (спавн чистит на старте).
+	var mate_script := preload("res://scripts/ai/teammate_ai.gd")
+	for entry in _mates:
+		var mb: CharacterBody3D = entry["body"]
+		if not is_instance_valid(mb):
+			continue
+		var mpm := PlayerMotor.find_on(mb)
+		if mpm != null:
+			mpm.set_control_locked(false)
+		mb.set_script(mate_script)
+		mb.set_physics_process(true)
+		mb.ball = _ball
+		mb.controlled_player = _manager.controlled_player
 
-# ── Пас/навес (наполняются в Task 9) ──────────────────────────────────────────
+# ── Пас/навес ─────────────────────────────────────────────────────────────────
 func _spawn_mates() -> void:
-	pass   # Task 9
+	_mates.clear()
+	var right := _heading.cross(Vector3.UP).normalized()
+	# Тиммейт рядом с бьющим (для короткого паса).
+	var mate_pos := _spot + right * FootballConstants.FK_MATE_LATERAL - _heading * FootballConstants.FK_MATE_BACK
+	mate_pos.y = 0.5
+	_mates.append({"body": _make_mate_body(mate_pos), "is_target": false})
+	# 1-2 атакующих у ворот (цель для навеса), по разные стороны от центра.
+	var into := signf(_goal_line_z) * -1.0   # от ворот в поле
+	var depth_z := _goal_line_z - into * FootballConstants.FK_TARGET_DEPTH
+	for sx in [-1.0, 1.0]:
+		var tp := Vector3(sx * FootballConstants.FK_TARGET_LATERAL, 0.5, depth_z)
+		_mates.append({"body": _make_mate_body(tp), "is_target": true})
 
-func _fire_pass(_action: String, _ratio: float) -> void:
-	pass   # Task 9
+## Создать статичное тело своей команды (team_1), пока без ИИ-скрипта.
+func _make_mate_body(pos: Vector3) -> CharacterBody3D:
+	var p := CharacterBody3D.new()
+	p.name = "FKMate"
+	p.global_position = pos
+	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
+	p.add_child(visual)
+	p.add_child(PlayerMotor.new())
+	visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
+	var col := CollisionShape3D.new()
+	var shape := CapsuleShape3D.new()
+	shape.height = 1.5
+	shape.radius = 0.3
+	col.shape = shape
+	col.position = Vector3(0, 0.25, 0)
+	p.add_child(col)
+	_manager.add_child(p)
+	p.add_to_group("team_1")
+	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
+	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
+	var pm := PlayerMotor.find_on(p)
+	if pm != null:
+		pm.set_control_locked(true)
+		pm.set_move_intent(Vector3.ZERO)
+	return p
+
+## Пас/навес: выбираем цель (короткий — тиммейт рядом; навес/lob — атакующий у ворот),
+## считаем скорость по дистанции (ground) или дугу (lob) через PassSystem, запускаем ball.launch.
+func _fire_pass(action: String, _ratio: float) -> void:
+	if _mates.is_empty():
+		return
+	var from: Vector3 = _ball.global_position
+	var target: CharacterBody3D = _select_pass_target(action)
+	if target == null:
+		return
+	var to: Vector3 = target.global_position
+	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+	var vel: Vector3
+	if action == "pass_lob":
+		vel = PassSystem.launch_lob(from, to, FootballConstants.PASS_LOB_PEAK_HEIGHT, g)
+	else:
+		var dist := Vector2(to.x - from.x, to.z - from.z).length()
+		var speed := PassSystem.ground_pass_speed(dist, 1.0,
+			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
+		vel = PassSystem.launch_ground(from, to, speed)
+	if _ball.has_method(&"launch"):
+		_ball.launch(vel, action != "pass_lob")   # ground — настильно (flat=true), навес — дугой
+	struck.emit()
+	# После паса переключаем управление на получателя и завершаем розыгрыш (как страйк).
+	_manager.controlled_player = target
+	_phase = Phase.WATCH
+	_watch_timer = FootballConstants.FK_WATCH_TIME
+
+## Короткий/through пас — тиммейт рядом; навес — атакующий у ворот. Фолбэк — первый доступный.
+func _select_pass_target(action: String) -> CharacterBody3D:
+	var want_target := action == "pass_lob"
+	for entry in _mates:
+		if bool(entry["is_target"]) == want_target and is_instance_valid(entry["body"]):
+			return entry["body"]
+	for entry in _mates:
+		if is_instance_valid(entry["body"]):
+			return entry["body"]
+	return null

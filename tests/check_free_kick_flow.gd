@@ -28,6 +28,9 @@ func _process(delta: float) -> bool:
 		if not _mm.is_free_kick_active():
 			print("CHECK FAIL: режим штрафного не включился после start")
 			return true
+		if _fk._mates.size() < 1:
+			print("CHECK FAIL: не заспавнены тиммейт/цели (_mates пуст)")
+			return true
 		return false
 	if _elapsed > 0.3 and _started and not _fired:
 		_fk._fire_shot(0.7)
