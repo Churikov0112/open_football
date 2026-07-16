@@ -470,3 +470,45 @@ const PEN_CAM_BACK := 9.0              # отступ камеры назад о
 const PEN_CAM_HEIGHT := 4.0            # высота камеры, м
 const PEN_CAM_LOOK_Y := 1.2           # высота точки, куда смотрит камера в воротах, м
 const PEN_WATCH_TIME := 1.5            # держим пенальти-вид после удара до возврата к следящей камере, с (смотрим исход, без рывка на самом ударе)
+
+# ── FREE KICK (Фаза A) ────────────────────────────────────────────────────────
+# Разбег/нога (переиспуют логику PEN_*).
+const FK_RUNUP_DIST := 2.8            # пред-расстановка бьющего назад под разбег (мировые метры)
+const FK_DEFAULT_FOOT := "penalty_r"  # ключ ACTION_CLIPS (клип penalty_kick_r)
+const FK_FOOT_LATERAL := 0.4          # латеральный сдвиг бьющего под опорную ногу, м
+# Прицел/камера.
+const FK_AIM_ARC := 1.221             # ±сектор поворота heading от направления на центр ворот (рад ≈ 70°)
+const FK_AIM_SPEED := 1.6             # скорость поворота heading стиком, рад/с
+const FK_CAM_BACK := 8.0              # отступ камеры назад от точки вдоль -heading, м
+const FK_CAM_HEIGHT := 3.5            # высота камеры, м
+const FK_CAM_LOOK_Y := 1.4            # высота точки взгляда камеры, м
+# Сила/траектория.
+const FK_CHARGE_MAX_TIME := 0.9       # макс. время заряда силы, с
+const FK_POWER_MIN_SPEED := 16.0      # скорость мяча при мин. заряде, м/с
+const FK_POWER_MAX_SPEED := 34.0      # при полном заряде, м/с
+const FK_ELEV_MIN := 4.0              # угол вылета при мин. заряде, град (настильно, под стенку)
+const FK_ELEV_MAX := 22.0             # при полном заряде, град (перелёт стенки / навесом)
+const FK_SPREAD_MIN_DEG := 0.5        # угловой разброс при мин. заряде, град
+const FK_SPREAD_MAX_DEG := 6.0        # при полном заряде, град
+const FK_CURL_SCALE := 6.0            # накопленный боковой ввод стика → величина curl.z
+const FK_CURL_MAX := 9.0              # кламп |curl.z|
+# Стенка.
+const FK_WALL_DIST := 9.15            # дистанция стенки от мяча, м
+const FK_WALL_FAR_DIST := 40.0        # дальше — стенки нет (0 игроков)
+const FK_WALL_NEAR_DIST := 25.0       # ближе — максимум игроков
+const FK_WALL_MIN_PLAYERS := 2        # на границе far
+const FK_WALL_MAX_PLAYERS := 5        # у near и ближе
+const FK_WALL_SPACING := 0.62         # интервал тел (плечо к плечу), м
+const FK_WALL_STAND_REACH := 2.2      # высота, до которой достаёт стоящая стенка, м
+const FK_WALL_JUMP_REACH := 2.9       # высота, до которой достаёт прыгнувшая стенка, м
+const FK_WALL_JUMP_HEIGHT := 0.7      # на сколько поднимается тело в прыжке, м
+const FK_WALL_JUMP_TIME := 0.5        # длительность прыжка (подъём+спуск), с
+# Вратарь.
+const FK_KEEPER_STEP_OUT := 1.5       # выход вратаря от линии в поле, м
+# Пас/навес (спавны).
+const FK_MATE_LATERAL := 6.0          # тиммейт: сдвиг вбок от бьющего, м
+const FK_MATE_BACK := 2.0             # тиммейт: сдвиг назад от бьющего, м
+const FK_TARGET_LATERAL := 6.0        # цель навеса: сдвиг по X от центра, м
+const FK_TARGET_DEPTH := 14.0         # цель навеса: отступ в поле от линии ворот, м
+# Тайминг.
+const FK_WATCH_TIME := 1.5            # держим фикс-вид после удара до возврата, с
