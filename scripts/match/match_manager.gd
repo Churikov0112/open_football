@@ -602,11 +602,20 @@ func set_field_ai_active(on: bool) -> void:
 ## штрафным тела) в чистый idle — управляемого человеком не трогаем. Пока просто стоп
 ## (задел на будущее празднование гола): отключаем их скрипт-логику и лочим мотор в 0, чтобы
 ## остаточная скорость не тащила тело дальше по инерции.
+## ВАЖНО: controlled_player исключаем ТОЛЬКО на заморозке (on=true) — на разморозке (on=false)
+## снимаем со ВСЕХ безусловно. Между заморозкой (на голе) и разморозкой (после _reset_ball())
+## controlled_player меняется (сброс всегда переключает на player_home) — если бы разморозка
+## тоже исключала «текущего», игрок, залоченный на заморозке, но ставший controlled_player к
+## моменту разморозки, остался бы залоченным навсегда (мотор игнорирует ввод, маркер выбран,
+## но тело не бежит). Разморозка чужого/не-AI тела безвредна — его собственный скрипт
+## self-гейтится по `controlled_player == self`.
 func _set_ai_frozen(on: bool) -> void:
 	var bodies := get_tree().get_nodes_in_group("team_1")
 	bodies += get_tree().get_nodes_in_group("team_2")
 	for n in bodies:
-		if not is_instance_valid(n) or n == controlled_player:
+		if not is_instance_valid(n):
+			continue
+		if on and n == controlled_player:
 			continue
 		n.set_physics_process(not on)
 		var m := PlayerMotor.find_on(n)
