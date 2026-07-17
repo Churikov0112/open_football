@@ -468,6 +468,7 @@ func _setup_goals() -> void:
 				return
 			if body == ball and not _celebrating:
 				_celebrating = true
+				_set_ai_frozen(true)   # все ИИ стоп в idle (задел на будущее празднование)
 				if g.side == "Home":
 					away_score += 1
 				else:
@@ -595,6 +596,30 @@ func set_field_ai_active(on: bool) -> void:
 	for p in [player_away, player_teammate]:
 		if p != null and is_instance_valid(p):
 			p.set_physics_process(on)
+
+
+## Останавливаем/возвращаем ВСЕХ ИИ-игроков (team_1+team_2, включая вратаря и заспавненные
+## штрафным тела) в чистый idle — управляемого человеком не трогаем. Пока просто стоп
+## (задел на будущее празднование гола): отключаем их скрипт-логику и лочим мотор в 0, чтобы
+## остаточная скорость не тащила тело дальше по инерции.
+func _set_ai_frozen(on: bool) -> void:
+	var bodies := get_tree().get_nodes_in_group("team_1")
+	bodies += get_tree().get_nodes_in_group("team_2")
+	for n in bodies:
+		if not is_instance_valid(n) or n == controlled_player:
+			continue
+		n.set_physics_process(not on)
+		var m := PlayerMotor.find_on(n)
+		if m != null:
+			m.set_control_locked(on)
+			if on:
+				m.set_move_intent(Vector3.ZERO)
+		if on:
+			for c in n.get_children():
+				if c is PlayerVisual:
+					c.cancel_action()
+					c.recover()
+					break
 
 
 ## Вратарь соперника в атакуемых человеком воротах (Away, +field_length).
@@ -2166,6 +2191,7 @@ func _celebrate_then_reset(net) -> void:
 	if net and is_instance_valid(net):
 		net.stop_sim()
 	_celebrating = false
+	_set_ai_frozen(false)   # возвращаем ИИ в игру
 
 
 func _poll_ai_tackles() -> void:
