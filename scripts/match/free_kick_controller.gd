@@ -208,7 +208,8 @@ func _fire_shot(ratio: float) -> void:
 	vel = FreeKickLogic.apply_scatter(vel, spread, _fk_rng)
 	vel = _apply_goal_magnet(vel)   # лёгкое подтягивание к воротам
 	_pending_launch = vel
-	_pending_curl = FreeKickLogic.curl_from_stick(_curl_accum, FootballConstants.FK_CURL_SCALE, FootballConstants.FK_CURL_MAX)
+	# _pending_curl НЕ считаем здесь — стик ещё двигается во время разбега (_strike_update),
+	# закрутка фиксируется на самом контакте (_on_kicker_contact), как и задумано.
 	_begin_strike("shot")
 
 ## Общий запуск разбега: лочим мотор, играем клип ноги, ждём action_contact.
@@ -239,7 +240,12 @@ func _apply_goal_magnet(vel: Vector3) -> Vector3:
 	var dir := h.normalized().lerp(to_goal, FootballConstants.FK_GOAL_MAGNET).normalized()
 	return Vector3(dir.x * speed_h, vel.y, dir.z * speed_h)
 
-func _strike_update(_delta: float) -> void:
+func _strike_update(delta: float) -> void:
+	# Закрутка копится ВСЮ дистанцию «нажатие kick → контакт», включая разбег — не только пока
+	# держали кнопку. Раньше накопление останавливалось на _fire_shot (до разбега), из-за чего
+	# закрутка ощущалась пропавшей — стик двигали именно во время бега к мячу.
+	if _pending_kind == "shot":
+		_curl_accum += Input.get_axis(&"move_left", &"move_right") * delta
 	var vis := _kicker_visual()
 	if vis == null:
 		return
@@ -256,6 +262,9 @@ func _on_kicker_contact(_action: String) -> void:
 	var flat := Vector3(_heading.x, 0.0, _heading.z).normalized()
 	# Для паса/навеса заранее выбираем получателя (тиммейт по направлению паса) — до запуска мяча.
 	var receiver: CharacterBody3D = _select_receiver() if _pending_kind != "shot" else null
+	if _pending_kind == "shot":
+		# Закрутка фиксируется здесь — на самом контакте, весь путь стика с момента нажатия учтён.
+		_pending_curl = FreeKickLogic.curl_from_stick(_curl_accum, FootballConstants.FK_CURL_SCALE, FootballConstants.FK_CURL_MAX)
 	match _pending_kind:
 		"ground":
 			# Наземный пас в направлении камеры (heading), настильно; сила = скорость (заряд).
