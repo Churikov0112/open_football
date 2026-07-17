@@ -1051,8 +1051,13 @@ func _handle_dribbling() -> void:
 	# Прочий подбор (бесхозный/остановившийся мяч) — только медленный: быстрый мяч «в полёте».
 	if ball.linear_velocity.length() > FootballConstants.BALL_TRAP_MAX_SPEED:
 		return
-	for p in [player_home, player_teammate, player_away]:
-		if not p or not is_instance_valid(p):
+	# Перебираем ВСЕХ полевых (team_1+team_2, кроме вратаря — у него свой захват в руки), а не
+	# жёсткий список player_home/player_teammate/player_away: иначе заспавненные штрафным тела
+	# (получатель паса/навеса после истечения окна приёма) добегают к мячу, но подобрать некому.
+	var pickers := get_tree().get_nodes_in_group("team_1")
+	pickers += get_tree().get_nodes_in_group("team_2")
+	for p in pickers:
+		if not is_instance_valid(p) or p == _keeper:
 			continue
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
