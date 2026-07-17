@@ -28,6 +28,8 @@ var _pending_ratio: float = 1.0      # заряд паса/навеса, при�
 var _curl_accum: float = 0.0
 var _locked: bool = false            # heading/камера зафиксированы (после нажатия кнопки)
 
+var _cam_eye_z: float = 0.0           # сглаженная Z-позиция ТВ-камеры (плавно догоняет мяч)
+
 var _fk_rng := RandomNumberGenerator.new()
 var _pending_kind: String = ""       # "shot" / "ground" / "lob" — что запускаем на контакте
 var _pending_launch: Vector3 = Vector3.ZERO
@@ -119,6 +121,7 @@ func _setup() -> void:
 	_curl_accum = 0.0
 	_locked = false
 	_ball_in_flight_watch = false
+	_cam_eye_z = _spot.z   # ТВ-камера стартует уже наведённой на мяч, без рывка на первом кадре
 	_update_camera_pose()
 	_phase = Phase.AIM
 
@@ -138,7 +141,7 @@ func update(delta: float) -> void:
 			var ball_live: bool = _watch_elapsed > 0.15 and _ball.has_method(&"is_flight") and not bool(_ball.is_flight())
 			if ball_live or _watch_timer <= 0.0:
 				_release()
-	_update_camera_pose()
+	_update_camera_pose(delta)
 
 func _aim_update(delta: float) -> void:
 	var stick_x := Input.get_axis(&"move_left", &"move_right")
@@ -330,11 +333,15 @@ func _release() -> void:
 	_manager.set_free_kick_active(false)
 	_phase = Phase.IDLE
 
-func _update_camera_pose() -> void:
+## ТВ-трансляция: камера сбоку и сверху поля на фиксированной боковой позиции (X), плавно
+## панорамирует за мячом вдоль поля (Z сглажен лерпом — не резко), поворачивается (look_at),
+## отслеживая текущую позицию мяча. Не крутится вокруг бьющего, как раньше (3-е лицо).
+func _update_camera_pose(delta: float = 0.0) -> void:
 	if _phase == Phase.IDLE:
 		return
-	var eye := _spot - _heading * FootballConstants.FK_CAM_BACK + Vector3(0.0, FootballConstants.FK_CAM_HEIGHT, 0.0)
-	var look := _spot + _heading * 4.0 + Vector3(0.0, FootballConstants.FK_CAM_LOOK_Y, 0.0)
+	_cam_eye_z = lerpf(_cam_eye_z, _ball.global_position.z, clampf(FootballConstants.FK_CAM_FOLLOW * delta, 0.0, 1.0))
+	var eye := Vector3(FootballConstants.FK_CAM_SIDE_X, FootballConstants.FK_CAM_HEIGHT, _cam_eye_z)
+	var look := Vector3(_ball.global_position.x, FootballConstants.FK_CAM_LOOK_Y, _ball.global_position.z)
 	var t := Transform3D.IDENTITY
 	t.origin = eye
 	t = t.looking_at(look, Vector3.UP)
