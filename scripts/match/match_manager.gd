@@ -848,12 +848,19 @@ func _physics_process(delta: float) -> void:
 				_sync_ai_controllers()
 
 	# Смена игрока — только в защите (мяч не у нас). В атаке combo_modifier = модификатор паса.
-	# Циклим по ВСЕМ team_1 (player_home + тиммейт + заспавненные штрафным), а не только home↔teammate.
+	# Переключаем на БЛИЖАЙШЕГО к мячу из team_1 (player_home + тиммейт + заспавненные штрафным).
+	# Если ближайший уже выбран — на второго ближайшего (иначе кнопка не давала бы эффекта).
 	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess():
 		var team := get_tree().get_nodes_in_group("team_1")
 		if team.size() > 1:
-			var idx: int = team.find(controlled_player)
-			controlled_player = team[(idx + 1) % team.size()]
+			var ball_pos := ball.global_position
+			var sorted: Array = team.duplicate()
+			sorted.sort_custom(func(a, b):
+				return a.global_position.distance_squared_to(ball_pos) < b.global_position.distance_squared_to(ball_pos))
+			var target = sorted[0]
+			if target == controlled_player and sorted.size() > 1:
+				target = sorted[1]
+			controlled_player = target
 			_sync_ai_controllers()
 			_manual_swap_cooldown = 10
 

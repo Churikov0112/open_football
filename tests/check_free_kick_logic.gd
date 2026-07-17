@@ -13,6 +13,7 @@ func _init() -> void:
 	ok = _check_wall_line_and_bodies() and ok
 	ok = _check_wall_jump() and ok
 	ok = _check_keeper_pos() and ok
+	ok = _check_corridor_push() and ok
 	if ok:
 		print("CHECK PASS: free_kick_logic")
 		quit(0)
@@ -153,6 +154,26 @@ func _check_wall_jump() -> bool:
 	# Мяч, улетающий от стенки → не прыгать.
 	if FreeKickLogic.wall_should_jump(ball_pos, Vector3(0, 5, 20), wall_center, 0.25):
 		print("  FAIL wall_jump: мяч от стенки")
+		return false
+	return true
+
+func _check_corridor_push() -> bool:
+	var from := Vector3(0, 0.5, -20.0)
+	var to := Vector3(0, 0.5, -29.0)   # прямая линия вдоль -Z
+	# Точка ровно на линии, в середине → выталкивается вбок минимум на half_width.
+	var on_line := FreeKickLogic.push_out_of_corridor(Vector3(0, 0.5, -24.5), from, to, 1.5)
+	if absf(on_line.x) < 1.5 - 0.001 or not is_equal_approx(on_line.z, -24.5):
+		print("  FAIL corridor on_line: ", on_line)
+		return false
+	# Точка уже далеко сбоку → не трогаем.
+	var outside := FreeKickLogic.push_out_of_corridor(Vector3(5, 0.5, -24.5), from, to, 1.5)
+	if not outside.is_equal_approx(Vector3(5, 0.5, -24.5)):
+		print("  FAIL corridor outside changed: ", outside)
+		return false
+	# Точка вне отрезка (za пределами from..to по Z) → не трогаем, даже если рядом с продолжением линии.
+	var beyond := FreeKickLogic.push_out_of_corridor(Vector3(0, 0.5, -10.0), from, to, 1.5)
+	if not beyond.is_equal_approx(Vector3(0, 0.5, -10.0)):
+		print("  FAIL corridor beyond segment changed: ", beyond)
 		return false
 	return true
 

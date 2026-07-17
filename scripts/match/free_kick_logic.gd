@@ -98,6 +98,27 @@ static func wall_should_jump(ball_pos: Vector3, ball_vel: Vector3, wall_center: 
 	var t := along / horiz.length()
 	return t > 0.0 and t <= jump_rise_time
 
+## Если pos лежит внутри коридора (от from до to, полу-ширина half_width) — выталкивает его
+## перпендикулярно наружу коридора (сохраняя продвижение вдоль линии, y не трогает). Иначе
+## возвращает pos без изменений. Используется, чтобы никто не стоял между бьющим и стенкой.
+static func push_out_of_corridor(pos: Vector3, from: Vector3, to: Vector3, half_width: float) -> Vector3:
+	var seg := Vector3(to.x - from.x, 0.0, to.z - from.z)
+	var seg_len := seg.length()
+	if seg_len < 0.01:
+		return pos
+	var dir := seg / seg_len
+	var rel := Vector3(pos.x - from.x, 0.0, pos.z - from.z)
+	var t := clampf(rel.dot(dir), 0.0, seg_len)
+	var closest := from + dir * t
+	var perp := Vector3(pos.x - closest.x, 0.0, pos.z - closest.z)
+	var d := perp.length()
+	if d >= half_width:
+		return pos
+	var side := perp / d if d > 0.01 else dir.cross(Vector3.UP).normalized()
+	var out := closest + side * half_width
+	out.y = pos.y
+	return out
+
 ## Оптимальная позиция вратаря: по биссектрисе угла обстрела (между штангами), выход step_out
 ## от линии в поле. Возвращает мировую точку на высоте ground_y.
 static func keeper_position(from: Vector3, near_post: Vector3, far_post: Vector3, half_width: float, step_out: float, goal_line_z: float, ground_y: float) -> Vector3:
