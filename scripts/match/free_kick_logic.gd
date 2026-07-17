@@ -83,9 +83,11 @@ static func wall_body_positions(center: Vector3, right: Vector3, count: int, spa
 		out.append(center + right * offset)
 	return out
 
-## Прыгать ли стенке: прогноз высоты мяча в плоскости стенки. Прыжок только если мяч перелетает
-## стоящих (> stand_reach), но в досягаемости прыжка (<= jump_reach). Мяч от стенки → нет.
-static func wall_should_jump(ball_pos: Vector3, ball_vel: Vector3, wall_center: Vector3, stand_reach: float, jump_reach: float, gravity: float) -> bool:
+## Прыгать ли стенке: как только мяч ЛЕТИТ на стенку и близок по времени (t <= jump_rise_time) —
+## прыгаем, НЕЗАВИСИМО от высоты (пик прыжка ≈ приход мяча). Тогда низкий удар проходит ПОД
+## прыгнувшей стенкой (гол!), средний перекрывается поднятыми телами, высокий перелетает. Мяч,
+## летящий ОТ стенки, игнорируем.
+static func wall_should_jump(ball_pos: Vector3, ball_vel: Vector3, wall_center: Vector3, jump_rise_time: float) -> bool:
 	var horiz := Vector3(ball_vel.x, 0.0, ball_vel.z)
 	if horiz.length() < 0.5:
 		return false
@@ -94,8 +96,7 @@ static func wall_should_jump(ball_pos: Vector3, ball_vel: Vector3, wall_center: 
 	if along <= 0.0:
 		return false
 	var t := along / horiz.length()
-	var y := ball_pos.y + ball_vel.y * t - 0.5 * gravity * t * t
-	return y > stand_reach and y <= jump_reach
+	return t > 0.0 and t <= jump_rise_time
 
 ## Оптимальная позиция вратаря: по биссектрисе угла обстрела (между штангами), выход step_out
 ## от линии в поле. Возвращает мировую точку на высоте ground_y.

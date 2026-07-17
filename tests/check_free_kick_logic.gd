@@ -132,20 +132,26 @@ func _check_wall_line_and_bodies() -> bool:
 	return true
 
 func _check_wall_jump() -> bool:
-	var ball_pos := Vector3(10, 0.11, -20.0)
+	var ball_pos := Vector3(10, 0.5, -20.0)
 	var wall_center := Vector3(6.0, 0.5, -25.0)
-	# Высокий мяч (перелетает стоящих, но в досягаемости прыжка) → прыгать.
-	var high_vel := (wall_center + Vector3(0, 2.6, 0) - ball_pos).normalized() * 22.0
-	var jump := FreeKickLogic.wall_should_jump(ball_pos, high_vel, wall_center, 2.2, 2.9, 9.8)
-	# Низкий настильный мяч → не прыгать.
-	var low_vel := (wall_center + Vector3(0, 0.3, 0) - ball_pos).normalized() * 22.0
-	var no_jump := FreeKickLogic.wall_should_jump(ball_pos, low_vel, wall_center, 2.2, 2.9, 9.8)
-	if no_jump:
-		print("  FAIL wall_jump: низкий мяч не должен вызывать прыжок")
+	var horiz := Vector3(wall_center.x - ball_pos.x, 0.0, wall_center.z - ball_pos.z)
+	# Мяч летит на стенку и близко по времени (~0.2с ≤ 0.25) → прыгать (независимо от высоты).
+	var vel_in := horiz.normalized() * (horiz.length() / 0.2)
+	if not FreeKickLogic.wall_should_jump(ball_pos, vel_in, wall_center, 0.25):
+		print("  FAIL wall_jump: должен прыгать на подлёте")
 		return false
-	# Мяч, улетающий от стенки (назад) → не прыгать.
-	var away := FreeKickLogic.wall_should_jump(ball_pos, Vector3(0, 5, 20), wall_center, 2.2, 2.9, 9.8)
-	if away:
+	# Тот же низкий настильный мяч тоже прыгает (низ откроется — гол под стенку).
+	var vel_low := Vector3(horiz.x, 0.0, horiz.z).normalized() * (horiz.length() / 0.2)
+	if not FreeKickLogic.wall_should_jump(ball_pos, vel_low, wall_center, 0.25):
+		print("  FAIL wall_jump: низкий подлетающий мяч тоже должен прыгать")
+		return false
+	# Мяч далеко по времени (медленный, t≈2с) → ещё рано прыгать.
+	var vel_slow := horiz.normalized() * (horiz.length() / 2.0)
+	if FreeKickLogic.wall_should_jump(ball_pos, vel_slow, wall_center, 0.25):
+		print("  FAIL wall_jump: рано прыгать (мяч далеко по времени)")
+		return false
+	# Мяч, улетающий от стенки → не прыгать.
+	if FreeKickLogic.wall_should_jump(ball_pos, Vector3(0, 5, 20), wall_center, 0.25):
 		print("  FAIL wall_jump: мяч от стенки")
 		return false
 	return true

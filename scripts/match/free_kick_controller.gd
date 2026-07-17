@@ -389,14 +389,15 @@ func _make_wall_body(pos: Vector3) -> CharacterBody3D:
 func _update_wall_jumps(delta: float) -> void:
 	if not _ball_in_flight_watch:
 		return
-	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 	for entry in _wall_bodies:
 		var b: CharacterBody3D = entry["body"]
 		if not is_instance_valid(b):
 			continue
 		if not entry["jumping"]:
+			# Прыжок по таймингу подлёта: стартуем, когда до плоскости стенки ≈ время подъёма
+			# (половина FK_WALL_JUMP_TIME), чтобы пик прыжка совпал с приходом мяча.
 			var should := FreeKickLogic.wall_should_jump(_ball.global_position, _ball.linear_velocity,
-				b.global_position, FootballConstants.FK_WALL_STAND_REACH, FootballConstants.FK_WALL_JUMP_REACH, g)
+				b.global_position, FootballConstants.FK_WALL_JUMP_TIME * 0.5)
 			if should:
 				entry["jumping"] = true
 				entry["jump_t"] = 0.0
