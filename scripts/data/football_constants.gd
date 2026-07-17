@@ -496,7 +496,7 @@ const FK_CURL_MAX := 22.0             # кламп |curl.z|
 const FK_PASS_MIN_SPEED := 12.0       # скорость наземного паса при мин. заряде, м/с
 const FK_PASS_MAX_SPEED := 30.0       # при полном заряде, м/с
 const FK_LOB_MIN_DIST := 10.0         # дальность приземления навеса при мин. заряде, м
-const FK_LOB_MAX_DIST := 42.0         # при полном заряде, м
+const FK_LOB_MAX_DIST := 50.0         # при полном заряде, м
 const FK_LOB_PEAK_MIN := 3.0          # высота дуги навеса при мин. заряде, м
 const FK_LOB_PEAK_MAX := 6.5          # при полном заряде, м
 # Стенка.

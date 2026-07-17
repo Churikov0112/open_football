@@ -260,7 +260,14 @@ func _on_kicker_contact(_action: String) -> void:
 			var peak := lerpf(FootballConstants.FK_LOB_PEAK_MIN, FootballConstants.FK_LOB_PEAK_MAX, _pending_ratio)
 			var land := from + flat * land_dist
 			land.y = FootballConstants.BALL_RADIUS
-			var vel := PassSystem.launch_lob(from, land, peak, g)
+			# launch_lob не учитывает драг мяча → недолёт. Берём вертикаль из неё, а горизонталь —
+			# с поправкой на драг (как черпачок пенальти), чтобы навес реально долетал до точки.
+			var lob := PassSystem.launch_lob(from, land, peak, g)
+			var vy: float = lob.y
+			var flight_t: float = (2.0 * vy / g) if g > 0.01 else 0.0
+			var dt := 1.0 / float(Engine.physics_ticks_per_second)
+			var hspeed := KeeperLogic.drag_horizontal_speed(land_dist, flight_t, _ball.drag_factor, dt)
+			var vel := flat * hspeed + Vector3.UP * vy
 			if _ball.has_method(&"launch"):
 				_ball.launch(vel, false)
 		_:
