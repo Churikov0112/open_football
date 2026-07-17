@@ -94,6 +94,12 @@ func _setup() -> void:
 		km.set_control_locked(true)
 		km.set_move_intent(Vector3.ZERO)
 		km.set_face_direction(_base_heading)
+	# Бьющий — в чистый idle: сбрасываем любое текущее действие/one-shot (если перед штрафным
+	# делали что-то другое — подкат/пас/удар — иначе бьющий стоит в чужой позе до разбега).
+	var kvis := _kicker_visual()
+	if kvis != null:
+		kvis.cancel_action()
+		kvis.recover()
 	# Вратарь: реактивный режим штрафного (позиция-якорь, сейв ВКЛ).
 	if _keeper != null and _keeper.has_method(&"set_freekick_anchor"):
 		var nf := FreeKickLogic.near_far_posts(_spot, 0.0, FootballConstants.GOAL_WIDTH * 0.5, _goal_line_z)

@@ -243,6 +243,24 @@ func set_freekick_anchor(pos: Vector3) -> void:
 	_freekick_mode = true
 	_freekick_anchor = pos
 	_penalty_mode = false
+	# Чистый сброс из ЛЮБОГО состояния (нырок/ловля/раздача/вне линии) — как в пенальти-режиме,
+	# но реактивный сейв остаётся ВКЛ. И сразу телепортируем на якорь (в ворота с самого начала).
+	_pen_struck = false
+	_reacting = false
+	_pass_through = false
+	_current_action = KeeperLogic.SaveAction.NONE
+	_state = State.POSITION
+	if ball != null and is_instance_valid(ball) and ball.dribbler == self:
+		ball.release_dribble()
+	global_position = Vector3(pos.x, _ground_y, pos.z)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)
+		m.set_move_intent(Vector3.ZERO)
+	var vis := _visual()
+	if vis != null:
+		vis.recover()   # выйти из любого one-shot в локомоцию-хаб (idle)
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
 
 
 func clear_freekick_anchor() -> void:
