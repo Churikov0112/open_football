@@ -82,16 +82,16 @@ func _setup() -> void:
 	_ball.global_position = _spot
 	# Бьющий за мячом на длину разбега, лицом по heading; латеральный сдвиг под опорную ногу.
 	var side := 1.0 if _foot == "penalty_r" else -1.0
-	var right := _heading.cross(Vector3.UP).normalized()
-	_kicker.global_position = _spot - _heading * FootballConstants.FK_RUNUP_DIST \
+	var right := _base_heading.cross(Vector3.UP).normalized()
+	_kicker.global_position = _spot - _base_heading * FootballConstants.FK_RUNUP_DIST \
 		+ right * (-side * FootballConstants.FK_FOOT_LATERAL) \
 		+ Vector3(0.0, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
-	_kicker.look_at(_kicker.global_position + _heading, Vector3.UP)
+	_kicker.look_at(_kicker.global_position + _base_heading, Vector3.UP)
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
 		km.set_control_locked(true)
 		km.set_move_intent(Vector3.ZERO)
-		km.set_face_direction(_heading)
+		km.set_face_direction(_base_heading)
 	# Вратарь: реактивный режим штрафного (позиция-якорь, сейв ВКЛ).
 	if _keeper != null and _keeper.has_method(&"set_freekick_anchor"):
 		var nf := FreeKickLogic.near_far_posts(_spot, 0.0, FootballConstants.GOAL_WIDTH * 0.5, _goal_line_z)
@@ -135,11 +135,10 @@ func _aim_update(delta: float) -> void:
 	# боковой ввод копится в закрутку.
 	if not _locked:
 		if absf(stick_x) > 0.15:
+			# Крутим направление вылета (камеру). Бьющего НЕ доворачиваем — он смотрит на мяч
+			# (_base_heading), чтобы разбег всегда шёл к мячу.
 			_heading = FreeKickLogic.rotate_heading(_heading, _base_heading, stick_x,
 				FootballConstants.FK_AIM_SPEED, delta, FootballConstants.FK_AIM_ARC)
-			var km := PlayerMotor.find_on(_kicker)
-			if km != null:
-				km.set_face_direction(_heading)
 		# Пас/навес доступны до нажатия удара — тоже через разбег (анимацию), направление = heading.
 		if Input.is_action_just_pressed(&"pass_short") or Input.is_action_just_pressed(&"pass_through"):
 			_commit_action("ground"); return
@@ -217,7 +216,9 @@ func _strike_update(_delta: float) -> void:
 		return
 	var advance: float = vis.consume_root_motion()
 	if advance > 0.0:
-		_kicker.global_position += _heading * advance
+		# Разбег ВСЕГДА к мячу (фиксированный _base_heading), а не по камере (_heading задаёт
+		# только направление вылета мяча). Иначе поворот камеры при прицеле уводил бьющего вбок.
+		_kicker.global_position += _base_heading * advance
 
 func _on_kicker_contact(_action: String) -> void:
 	_contact_connected = false
