@@ -23,6 +23,10 @@ var _celebrating: bool = false
 var _penalty_active: bool = false
 var _penalty                                   # PenaltyController
 var _penalty_cam_pose: Transform3D = Transform3D.IDENTITY
+var _free_kick                                 # FreeKickController
+var _free_kick_active: bool = false
+var _free_kick_cam_pose: Transform3D = Transform3D.IDENTITY
+var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -132,6 +136,10 @@ func _ready() -> void:
 	_penalty.name = "PenaltyController"
 	add_child(_penalty)
 	_penalty.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_free_kick = preload("res://scripts/match/free_kick_controller.gd").new()
+	_free_kick.name = "FreeKickController"
+	add_child(_free_kick)
+	_free_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
 
 
 ## DEBUG: линия-след за мячом. MeshInstance3D + ImmediateMesh, перестраивается каждый кадр
@@ -211,6 +219,7 @@ func _setup_inputs() -> void:
 		&"combo_curl":      {"keys": [KEY_E],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
+		&"free_kick_debug": {"keys": [KEY_F],     "buttons": [], "axes": []},
 	}
 	for action in actions:
 		if InputMap.has_action(action):
@@ -460,6 +469,7 @@ func _setup_goals() -> void:
 				return
 			if body == ball and not _celebrating:
 				_celebrating = true
+				_set_ai_frozen(true)   # все ИИ стоп в idle (задел на будущее празднование)
 				if g.side == "Home":
 					away_score += 1
 				else:
@@ -570,11 +580,88 @@ func set_penalty_cam_pose(pose: Transform3D) -> void:
 	_penalty_cam_pose = pose
 
 
-## Глушим/возвращаем полевой ИИ на время пенальти (вратаря НЕ трогаем — он должен нырять).
+func is_free_kick_active() -> bool:
+	return _free_kick_active
+
+
+func set_free_kick_active(on: bool) -> void:
+	_free_kick_active = on
+
+
+func set_free_kick_cam_pose(pose: Transform3D) -> void:
+	_free_kick_cam_pose = pose
+
+
+## Включить приём паса для receiver — то же самое, что обычный _fire_pass() делает для
+## человека-получателя (наведение стика на предсказанную позицию мяча в _handle_player_input
+## + принудительный трап на любой скорости в _handle_dribbling, минуя BALL_TRAP_MAX_SPEED).
+## Штрафной свой пас/навес не проводит через _fire_pass(), но должен давать тот же эффект
+## «получатель сам добегает до мяча», иначе он просто стоит, пока мяч не замедлится сам.
+func begin_pass_receive(receiver: CharacterBody3D) -> void:
+	_receive_active = true
+	_receiver = receiver
+	_receive_timer = FootballConstants.PASS_RECEIVE_MAX_TIME
+
+
+## Переключить controlled_player и синхронизировать всех ИИ-скриптов (см. _sync_ai_controllers).
+## Публичная обёртка для внешних контроллеров (штрафной и т.п.) — ВАЖНО вызывать её ДО любой
+## конвертации ИИ-тел (напр. FreeKickController._convert_bodies), которая читает
+## match_manager.controlled_player для проставления своего поля controlled_player: если вызвать
+## после конвертации, тела (включая самого получателя!) получат СТАРОЕ значение (прежнего
+## бьющего), self-гейт `controlled_player == self` их AI-скрипта не сработает, и AI продолжит
+## сам двигать мотор параллельно с человеческим вводом (борьба за один мотор).
+func assign_controlled_player(p: CharacterBody3D) -> void:
+	controlled_player = p
+	_sync_ai_controllers()
+
+
+## Глушим/возвращаем полевой ИИ на время пенальти/штрафного (вратаря НЕ трогаем — он должен
+## нырять/реагировать). Тонкая обёртка над _set_ai_frozen — раньше это была отдельная слабая
+## реализация (только player_away/player_teammate, без лока мотора), из-за чего ИИ-соперник
+## (и любые другие team_1/team_2, напр. конвертированные штрафным тела) при старте штрафного
+## НЕ останавливался: их PlayerMotor — отдельный узел со своим _physics_process, отключение
+## ТОЛЬКО скрипта ИИ не мешало мотору доигрывать последнее заданное направление движения —
+## соперник продолжал бежать к мячу/игроку сквозь всю расстановку.
 func set_field_ai_active(on: bool) -> void:
-	for p in [player_away, player_teammate]:
-		if p != null and is_instance_valid(p):
-			p.set_physics_process(on)
+	_set_ai_frozen(not on, _keeper)
+
+
+## Останавливаем/возвращаем ИИ-игроков (team_1+team_2) в чистый idle. `keep_active` (если
+## задан — вратарь для пенальти/штрафного) НЕ трогаем НИКОГДА, ни на заморозке, ни на
+## разморозке: он сам управляет своим локом/мотором во время нырка (manual move_and_collide,
+## мотор залочен на время дива, как у слайд-тэкла — см. CLAUDE.md), и наш безусловный
+## set_control_locked(false) на разморозке посреди чужого нырка столкнул бы мотор с ручным
+## движением. Отключаем скрипт-логику и лочим мотор в 0, чтобы остаточная скорость не тащила
+## тело дальше по инерции (сам скрипт ИИ — отдельный узел от PlayerMotor, отключения
+## физпроцесса скрипта недостаточно, мотор продолжит доигрывать последний intent, если явно
+## его не залочить).
+## ВАЖНО: controlled_player исключаем ТОЛЬКО на заморозке (on=true) — на разморозке (on=false)
+## снимаем со ВСЕХ (кроме keep_active) безусловно. Между заморозкой (на голе/сет-писе) и
+## разморозкой controlled_player может измениться (напр. сброс после гола всегда переключает
+## на player_home) — если бы разморозка тоже исключала «текущего», игрок, залоченный на
+## заморозке, но ставший controlled_player к моменту разморозки, остался бы залоченным
+## навсегда (мотор игнорирует ввод, маркер выбран, но тело не бежит). Разморозка чужого/не-AI
+## тела безвредна — его собственный скрипт self-гейтится по `controlled_player == self`.
+func _set_ai_frozen(on: bool, keep_active: Node = null) -> void:
+	var bodies := get_tree().get_nodes_in_group("team_1")
+	bodies += get_tree().get_nodes_in_group("team_2")
+	for n in bodies:
+		if not is_instance_valid(n) or n == keep_active:
+			continue   # keep_active (вратарь) не трогаем НИКОГДА — сам управляет своим локом/мотором
+		if on and n == controlled_player:
+			continue
+		n.set_physics_process(not on)
+		var m := PlayerMotor.find_on(n)
+		if m != null:
+			m.set_control_locked(on)
+			if on:
+				m.set_move_intent(Vector3.ZERO)
+		if on:
+			for c in n.get_children():
+				if c is PlayerVisual:
+					c.cancel_action()
+					c.recover()
+					break
 
 
 ## Вратарь соперника в атакуемых человеком воротах (Away, +field_length).
@@ -735,21 +822,19 @@ func _setup_teammate() -> void:
 
 func _process(delta: float) -> void:
 	var ball_pos := ball.global_position
-	# Камера от 3-го лица: пивот встаёт ПОЗАДИ управляемого игрока (по его facing) и смотрит
-	# вперёд него. -pivot.basis.z тогда = «вперёд игрока» → камера-относительный ввод корректен.
+	# Пенальти/штрафной — свои фикс-камеры от 3-го лица за бьющим (см. соответствующие
+	# контроллеры). Обычная игра — ТВ-трансляция: фикс. позиция сбоку и сверху поля, плавно
+	# панорамирует за МЯЧОМ (не за игроком), а не следует от 3-го лица за спиной игрока.
 	if _penalty_active:
 		camera_pivot.global_transform = _penalty_cam_pose
+	elif _free_kick_active:
+		camera_pivot.global_transform = _free_kick_cam_pose
 	else:
-		var cam_target: Node3D = controlled_player if (controlled_player and is_instance_valid(controlled_player)) else null
-		if cam_target != null:
-			var fwd := -cam_target.global_transform.basis.z
-			fwd.y = 0.0
-			if fwd.length() < 0.01:
-				fwd = Vector3(0, 0, -1)
-			fwd = fwd.normalized()
-			var eye := cam_target.global_position - fwd * FootballConstants.CAMERA_TP_DISTANCE + Vector3.UP * FootballConstants.CAMERA_TP_HEIGHT
-			camera_pivot.global_position = camera_pivot.global_position.lerp(eye, clampf(FootballConstants.CAMERA_TP_FOLLOW * delta, 0.0, 1.0))
-			camera_pivot.look_at(cam_target.global_position + fwd * FootballConstants.CAMERA_TP_LOOK_AHEAD + Vector3.UP, Vector3.UP)
+		_bc_cam_eye_z = lerpf(_bc_cam_eye_z, ball_pos.z, clampf(FootballConstants.CAMERA_BC_FOLLOW * delta, 0.0, 1.0))
+		var eye := Vector3(FootballConstants.CAMERA_BC_X, FootballConstants.CAMERA_BC_HEIGHT, _bc_cam_eye_z)
+		var look := Vector3(ball_pos.x, FootballConstants.CAMERA_BC_LOOK_Y, ball_pos.z)
+		camera_pivot.global_position = eye
+		camera_pivot.look_at(look, Vector3.UP)
 
 	if _trail != null:
 		_update_ball_trail(ball_pos)
@@ -762,27 +847,29 @@ func _process(delta: float) -> void:
 			_controlled_marker.visible = true
 			_controlled_marker.position = _match_camera.unproject_position(marker_world_pos)
 
-	# Заряд: копим, пока держим кнопку заряжаемого действия.
-	if _is_charging() and _charge_player == controlled_player:
-		var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
-		var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
-		_charge_time += get_process_delta_time()
-		if _charge_time >= max_time:
-			_charge_time = max_time
-			if _is_queued():
-				_stop_queue_fix_ratio()  # мяч не у ног — фиксируем силу на макс., ждём касания
-			else:
-				_fire_charge()
-		if _is_charging():
-			var ratio := clampf(_charge_time / max_time, 0.0, 1.0)
-			power_bar.value = ratio
-			var fill := power_bar.get_theme_stylebox("fill")
-			if fill:
-				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-	elif _is_charging():
-		_cancel_charge()
-	power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
-		or (_is_queued() and _queue_player == controlled_player)
+	# Заряд: копим, пока держим кнопку заряжаемого действия. Во время пенальти/штрафного баром
+	# владеет соответствующий контроллер — не трогаем (иначе он тут же гасится каждый кадр).
+	if not _penalty_active and not _free_kick_active:
+		if _is_charging() and _charge_player == controlled_player:
+			var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
+			var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
+			_charge_time += get_process_delta_time()
+			if _charge_time >= max_time:
+				_charge_time = max_time
+				if _is_queued():
+					_stop_queue_fix_ratio()  # мяч не у ног — фиксируем силу на макс., ждём касания
+				else:
+					_fire_charge()
+			if _is_charging():
+				var ratio := clampf(_charge_time / max_time, 0.0, 1.0)
+				power_bar.value = ratio
+				var fill := power_bar.get_theme_stylebox("fill")
+				if fill:
+					fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		elif _is_charging():
+			_cancel_charge()
+		power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
+			or (_is_queued() and _queue_player == controlled_player)
 
 
 
@@ -795,6 +882,14 @@ func _physics_process(delta: float) -> void:
 	# _reset_ball() (телепорт игроков/мяча), запуск пенальти в это окно ломает расстановку.
 	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null and not _celebrating:
 		_penalty.start_single(controlled_player, _keeper.goal_line_z)
+		return
+	# Штрафной-режим: всё ведёт контроллер, обычные системы заглушены.
+	if _free_kick_active:
+		_free_kick.update(delta)
+		return
+	# Штрафной по F — только из чистого состояния (не во время празднования гола).
+	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper != null and not _celebrating:
+		_free_kick.start(controlled_player, _keeper.goal_line_z)
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():
@@ -809,16 +904,28 @@ func _physics_process(delta: float) -> void:
 	else:
 		if ball.has_method(&"set_dribbler") and ball.dribbler:
 			var db: Node3D = ball.dribbler
-			if (db == player_home or db == player_teammate) and db != controlled_player:
+			# Под управлением всегда тот из НАШЕЙ команды, у кого мяч (любой team_1, включая
+			# заспавненных штрафным тиммейтов), а не только player_home/player_teammate.
+			if db != controlled_player and db.is_in_group("team_1"):
 				controlled_player = db
 				_sync_ai_controllers()
 
 	# Смена игрока — только в защите (мяч не у нас). В атаке combo_modifier = модификатор паса.
-	# При отключённом тиммейте (player_teammate == null) свапать некуда — пропускаем.
-	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess() and player_teammate != null:
-		controlled_player = player_teammate if controlled_player == player_home else player_home
-		_sync_ai_controllers()
-		_manual_swap_cooldown = 10
+	# Переключаем на БЛИЖАЙШЕГО к мячу из team_1 (player_home + тиммейт + заспавненные штрафным).
+	# Если ближайший уже выбран — на второго ближайшего (иначе кнопка не давала бы эффекта).
+	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess():
+		var team := get_tree().get_nodes_in_group("team_1")
+		if team.size() > 1:
+			var ball_pos := ball.global_position
+			var sorted: Array = team.duplicate()
+			sorted.sort_custom(func(a, b):
+				return a.global_position.distance_squared_to(ball_pos) < b.global_position.distance_squared_to(ball_pos))
+			var target = sorted[0]
+			if target == controlled_player and sorted.size() > 1:
+				target = sorted[1]
+			controlled_player = target
+			_sync_ai_controllers()
+			_manual_swap_cooldown = 10
 
 	# Set opponent's target_node to whoever on our team is dribbling
 	if player_away:
@@ -875,6 +982,11 @@ func _sync_ai_controllers() -> void:
 		player_home.controlled_player = controlled_player
 	if player_teammate:
 		player_teammate.controlled_player = controlled_player
+	# Прочие team_1 с ИИ (напр. заспавненные штрафным тиммейты) — тоже синхронизируем, чтобы
+	# управляемое тело пропускало свой teammate_ai (гейт controlled_player == self).
+	for n in get_tree().get_nodes_in_group("team_1"):
+		if n != player_home and n != player_teammate and (&"controlled_player" in n):
+			n.controlled_player = controlled_player
 
 
 func _setup_tackle_area() -> void:
@@ -939,8 +1051,13 @@ func _handle_dribbling() -> void:
 	# Прочий подбор (бесхозный/остановившийся мяч) — только медленный: быстрый мяч «в полёте».
 	if ball.linear_velocity.length() > FootballConstants.BALL_TRAP_MAX_SPEED:
 		return
-	for p in [player_home, player_teammate, player_away]:
-		if not p or not is_instance_valid(p):
+	# Перебираем ВСЕХ полевых (team_1+team_2, кроме вратаря — у него свой захват в руки), а не
+	# жёсткий список player_home/player_teammate/player_away: иначе заспавненные штрафным тела
+	# (получатель паса/навеса после истечения окна приёма) добегают к мячу, но подобрать некому.
+	var pickers := get_tree().get_nodes_in_group("team_1")
+	pickers += get_tree().get_nodes_in_group("team_2")
+	for p in pickers:
+		if not is_instance_valid(p) or p == _keeper:
 			continue
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
@@ -1132,7 +1249,10 @@ func _is_our_dribbler(player_node: Node3D) -> bool:
 func _we_possess() -> bool:
 	if not (ball.has_method(&"set_dribbler") and ball.dribbler):
 		return false
-	return ball.dribbler == player_home or ball.dribbler == player_teammate
+	# По группе team_1, а не по именам player_home/player_teammate — иначе владение мячом
+	# заспавненным штрафным тиммейтом (team_1) не распознавалось, и combo_modifier ошибочно
+	# работал как свап игрока вместо модификатора паса.
+	return ball.dribbler.is_in_group("team_1")
 
 ## Можно ли поставить действие в очередь: мяч НЕ у ног (иначе обычный немедленный заряд) и им
 ## не владеет кто-то ДРУГОЙ (тогда это территория подката/смены). Источники очереди:
@@ -2074,6 +2194,12 @@ func _same_team(a: Node, b: Node) -> bool:
 
 
 func _on_ball_collision(body: Node) -> void:
+	# Любой контакт мяча с игроком (стенка/защитник/вратарь) нарушает траекторию — сбрасываем
+	# кручение сразу и безусловно (не только в FLIGHT-ветке block_in_flight ниже), иначе Magnus
+	# продолжает крутить уже отскочивший мяч (виден как «кружение на месте»).
+	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
+			and ball.has_method(&"clear_curl"):
+		ball.clear_curl()
 	# Мяч коснулся вратаря → ловля/отбой (а не блок): иначе block_in_flight гасит мяч, и он
 	# закатывается в ворота. Физический контакт — надёжный триггер сейва.
 	if body == _keeper and _keeper != null and is_instance_valid(_keeper) and _keeper.has_method(&"on_ball_contact"):
@@ -2117,6 +2243,7 @@ func _celebrate_then_reset(net) -> void:
 	if net and is_instance_valid(net):
 		net.stop_sim()
 	_celebrating = false
+	_set_ai_frozen(false)   # возвращаем ИИ в игру
 
 
 func _poll_ai_tackles() -> void:

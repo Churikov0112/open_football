@@ -42,7 +42,7 @@ const LOOP_CLIPS := [&"idle", &"run", &"sprint", &"fallen_idle"]
 ## Дополнительные one-shot стейты (подкат/падение/перекаты/вставание): travel-only, без
 ## авто-возврата — цепочку падения ведёт match_manager. fallen_idle зациклен (LOOP_CLIPS)
 ## и служит удерживаемой позой «лежит» в фазе knockdown.
-const ONESHOT_CLIPS := [&"tackle", &"fallen_idle", &"roll_left", &"roll_right", &"standing_up",
+const ONESHOT_CLIPS := [&"tackle", &"fallen_idle", &"roll_left", &"roll_right", &"standing_up", &"jumping_wall",
 	&"keeper_body_block_l", &"keeper_body_block_r", &"keeper_diving_save_l", &"keeper_diving_save_r",
 	&"keeper_catch", &"keeper_catch_top", &"keeper_catch_head", &"keeper_scoop", &"keeper_miss_top", &"keeper_idle_ball"]
 

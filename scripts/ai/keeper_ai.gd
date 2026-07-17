@@ -35,6 +35,8 @@ var _high_roll: int = -1   # бросок «взять/пропустить» в
 
 # Пенальти-подрежим (Фаза A): держим центр, реактивный боковой сейв off; нырок — по команде.
 var _penalty_mode: bool = false
+var _freekick_mode: bool = false
+var _freekick_anchor: Vector3 = Vector3.ZERO
 var _pen_struck: bool = false
 
 
@@ -148,7 +150,7 @@ func _position(delta: float) -> void:
 	# с лёгким доворотом к X мяча.
 	var into := -1.0 if goal_line_z > 0.0 else 1.0
 	m.set_face_direction(Vector3(ball.global_position.x - global_position.x, 0.0, into * 4.0))
-	var target := KeeperLogic.line_position(
+	var target := _freekick_anchor if _freekick_mode else KeeperLogic.line_position(
 		ball.global_position, goal_line_z, FootballConstants.GOAL_WIDTH * 0.5,
 		FootballConstants.KEEPER_LINE_NARROW_GAIN, FootballConstants.KEEPER_MAX_OFF_LINE)
 	var to := target - global_position
@@ -235,6 +237,36 @@ func _position(delta: float) -> void:
 ## Пенальти-подрежим: держим центр линии, лицом в поле, боковой РЕАКТИВНЫЙ сейв ВЫКЛ. Рефлекс
 ## центрального мяча (ловля/промах по высоте прилёта) остаётся — им решается центральный удар,
 ## если вратарь остался в центре.
+## Режим штрафного: держим оптимальную позицию-якорь, реактивный сейв ОСТАЁТСЯ включён
+## (в отличие от пенальти-режима — вратарь видит мяч). Позицию считает FreeKickLogic.keeper_position.
+func set_freekick_anchor(pos: Vector3) -> void:
+	_freekick_mode = true
+	_freekick_anchor = pos
+	_penalty_mode = false
+	# Чистый сброс из ЛЮБОГО состояния (нырок/ловля/раздача/вне линии) — как в пенальти-режиме,
+	# но реактивный сейв остаётся ВКЛ. И сразу телепортируем на якорь (в ворота с самого начала).
+	_pen_struck = false
+	_reacting = false
+	_pass_through = false
+	_current_action = KeeperLogic.SaveAction.NONE
+	_state = State.POSITION
+	if ball != null and is_instance_valid(ball) and ball.dribbler == self:
+		ball.release_dribble()
+	global_position = Vector3(pos.x, _ground_y, pos.z)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)
+		m.set_move_intent(Vector3.ZERO)
+	var vis := _visual()
+	if vis != null:
+		vis.recover()   # выйти из любого one-shot в локомоцию-хаб (idle)
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+
+
+func clear_freekick_anchor() -> void:
+	_freekick_mode = false
+
+
 func set_penalty_mode(on: bool) -> void:
 	_penalty_mode = on
 	if on:
