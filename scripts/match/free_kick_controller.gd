@@ -61,6 +61,9 @@ func start(kicker: CharacterBody3D, goal_line_z: float) -> void:
 
 func _setup() -> void:
 	_phase = Phase.SETUP
+	# Убираем тела, заспавненные ПРОШЛЫМ штрафным (иначе накапливаются, а их конвертированный
+	# teammate_ai бежит к новому мячу и мешает бить). Бьющего не трогаем.
+	_cleanup_spawned()
 	_manager.set_free_kick_active(true)
 	_manager.set_field_ai_active(false)
 	# Точка удара = позиция бьющего (горизонталь), мяч кладём туда.
@@ -238,6 +241,17 @@ func _kicker_visual() -> PlayerVisual:
 			return c
 	return null
 
+# ── Очистка тел прошлого штрафного ────────────────────────────────────────────
+## Деспавн тел стенки/своих, заспавненных прошлым розыгрышем (чтобы не накапливались и их ИИ
+## не мешал новому штрафному). Текущего бьющего (controlled_player) НЕ трогаем.
+func _cleanup_spawned() -> void:
+	for n in _manager.get_tree().get_nodes_in_group("fk_spawned"):
+		if is_instance_valid(n) and n != _kicker:
+			n.queue_free()
+	_wall_bodies.clear()
+	_mates.clear()
+
+
 # ── Стенка ────────────────────────────────────────────────────────────────────
 func _spawn_defense() -> void:
 	_wall_bodies.clear()
@@ -271,6 +285,7 @@ func _make_wall_body(pos: Vector3) -> CharacterBody3D:
 	p.add_child(col)
 	_manager.add_child(p)
 	p.add_to_group("team_2")
+	p.add_to_group("fk_spawned")
 	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
 	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
 	# Лицом к мячу, мотор залочен (стоит на месте).
@@ -386,6 +401,7 @@ func _make_mate_body(pos: Vector3) -> CharacterBody3D:
 	p.add_child(col)
 	_manager.add_child(p)
 	p.add_to_group("team_1")
+	p.add_to_group("fk_spawned")
 	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
 	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
 	var pm := PlayerMotor.find_on(p)
