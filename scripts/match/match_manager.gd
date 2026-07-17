@@ -848,11 +848,14 @@ func _physics_process(delta: float) -> void:
 				_sync_ai_controllers()
 
 	# Смена игрока — только в защите (мяч не у нас). В атаке combo_modifier = модификатор паса.
-	# При отключённом тиммейте (player_teammate == null) свапать некуда — пропускаем.
-	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess() and player_teammate != null:
-		controlled_player = player_teammate if controlled_player == player_home else player_home
-		_sync_ai_controllers()
-		_manual_swap_cooldown = 10
+	# Циклим по ВСЕМ team_1 (player_home + тиммейт + заспавненные штрафным), а не только home↔teammate.
+	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess():
+		var team := get_tree().get_nodes_in_group("team_1")
+		if team.size() > 1:
+			var idx: int = team.find(controlled_player)
+			controlled_player = team[(idx + 1) % team.size()]
+			_sync_ai_controllers()
+			_manual_swap_cooldown = 10
 
 	# Set opponent's target_node to whoever on our team is dribbling
 	if player_away:
