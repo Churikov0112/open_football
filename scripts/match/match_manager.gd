@@ -784,27 +784,29 @@ func _process(delta: float) -> void:
 			_controlled_marker.visible = true
 			_controlled_marker.position = _match_camera.unproject_position(marker_world_pos)
 
-	# Заряд: копим, пока держим кнопку заряжаемого действия.
-	if _is_charging() and _charge_player == controlled_player:
-		var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
-		var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
-		_charge_time += get_process_delta_time()
-		if _charge_time >= max_time:
-			_charge_time = max_time
-			if _is_queued():
-				_stop_queue_fix_ratio()  # мяч не у ног — фиксируем силу на макс., ждём касания
-			else:
-				_fire_charge()
-		if _is_charging():
-			var ratio := clampf(_charge_time / max_time, 0.0, 1.0)
-			power_bar.value = ratio
-			var fill := power_bar.get_theme_stylebox("fill")
-			if fill:
-				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-	elif _is_charging():
-		_cancel_charge()
-	power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
-		or (_is_queued() and _queue_player == controlled_player)
+	# Заряд: копим, пока держим кнопку заряжаемого действия. Во время пенальти/штрафного баром
+	# владеет соответствующий контроллер — не трогаем (иначе он тут же гасится каждый кадр).
+	if not _penalty_active and not _free_kick_active:
+		if _is_charging() and _charge_player == controlled_player:
+			var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
+			var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
+			_charge_time += get_process_delta_time()
+			if _charge_time >= max_time:
+				_charge_time = max_time
+				if _is_queued():
+					_stop_queue_fix_ratio()  # мяч не у ног — фиксируем силу на макс., ждём касания
+				else:
+					_fire_charge()
+			if _is_charging():
+				var ratio := clampf(_charge_time / max_time, 0.0, 1.0)
+				power_bar.value = ratio
+				var fill := power_bar.get_theme_stylebox("fill")
+				if fill:
+					fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		elif _is_charging():
+			_cancel_charge()
+		power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
+			or (_is_queued() and _queue_player == controlled_player)
 
 
 

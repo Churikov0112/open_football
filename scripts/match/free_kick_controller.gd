@@ -27,6 +27,7 @@ var _curl_accum: float = 0.0
 var _locked: bool = false            # heading/камера зафиксированы (после нажатия kick)
 
 var _fk_rng := RandomNumberGenerator.new()
+var _pending_kind: String = ""       # "shot" / "ground" / "lob" — что запускаем на контакте
 var _pending_launch: Vector3 = Vector3.ZERO
 var _pending_curl: Vector3 = Vector3.ZERO
 var _contact_connected := false
@@ -139,13 +140,11 @@ func _aim_update(delta: float) -> void:
 			var km := PlayerMotor.find_on(_kicker)
 			if km != null:
 				km.set_face_direction(_heading)
-		# Пас/навес доступны до нажатия удара.
-		if Input.is_action_just_pressed(&"pass_short"):
-			_fire_pass("pass_short", 1.0); return
-		if Input.is_action_just_pressed(&"pass_through"):
-			_fire_pass("pass_through", 1.0); return
+		# Пас/навес доступны до нажатия удара — тоже через разбег (анимацию), направление = heading.
+		if Input.is_action_just_pressed(&"pass_short") or Input.is_action_just_pressed(&"pass_through"):
+			_commit_action("ground"); return
 		if Input.is_action_just_pressed(&"pass_lob"):
-			_fire_pass("pass_lob", 1.0); return
+			_commit_action("lob"); return
 	# Заряд удара.
 	if Input.is_action_just_pressed(&"kick"):
 		_charging = true
@@ -172,8 +171,21 @@ func _fire_shot(ratio: float) -> void:
 		FootballConstants.FK_ELEV_MIN, FootballConstants.FK_ELEV_MAX)
 	var spread := FreeKickLogic.scatter_degrees(ratio, FootballConstants.FK_SPREAD_MIN_DEG, FootballConstants.FK_SPREAD_MAX_DEG)
 	vel = FreeKickLogic.apply_scatter(vel, spread, _fk_rng)
+	vel = _apply_goal_magnet(vel)   # лёгкое подтягивание к воротам
 	_pending_launch = vel
 	_pending_curl = FreeKickLogic.curl_from_stick(_curl_accum, FootballConstants.FK_CURL_SCALE, FootballConstants.FK_CURL_MAX)
+	_begin_strike("shot")
+
+## Пас/навес: коммит с разбегом (как удар). Направление = heading (куда смотрит камера).
+func _commit_action(kind: String) -> void:
+	_charging = false
+	_locked = true
+	_power_bar.visible = false
+	_begin_strike(kind)
+
+## Общий запуск разбега: лочим мотор, играем клип ноги, ждём action_contact.
+func _begin_strike(kind: String) -> void:
+	_pending_kind = kind
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
 		km.set_control_locked(true)
@@ -185,6 +197,20 @@ func _fire_shot(ratio: float) -> void:
 	if vis == null or not vis.trigger(_foot):
 		_on_kicker_contact("penalty")   # фолбэк без анимации — бьём сразу
 
+## Подмешивание направления на центр ворот к горизонтали удара (магнетизм).
+func _apply_goal_magnet(vel: Vector3) -> Vector3:
+	var from: Vector3 = _ball.global_position
+	var to_goal := Vector3(0.0 - from.x, 0.0, _goal_line_z - from.z)
+	if to_goal.length() < 0.5:
+		return vel
+	to_goal = to_goal.normalized()
+	var h := Vector3(vel.x, 0.0, vel.z)
+	var speed_h := h.length()
+	if speed_h < 0.1:
+		return vel
+	var dir := h.normalized().lerp(to_goal, FootballConstants.FK_GOAL_MAGNET).normalized()
+	return Vector3(dir.x * speed_h, vel.y, dir.z * speed_h)
+
 func _strike_update(_delta: float) -> void:
 	var vis := _kicker_visual()
 	if vis == null:
@@ -195,12 +221,32 @@ func _strike_update(_delta: float) -> void:
 
 func _on_kicker_contact(_action: String) -> void:
 	_contact_connected = false
-	if _pending_curl.length_squared() > 0.0001:
-		if _ball.has_method(&"launch_curl"):
-			_ball.launch_curl(_pending_launch, _pending_curl, false)
-	else:
-		if _ball.has_method(&"launch"):
-			_ball.launch(_pending_launch, false)
+	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+	var from: Vector3 = _ball.global_position
+	var flat := Vector3(_heading.x, 0.0, _heading.z).normalized()
+	match _pending_kind:
+		"ground":
+			# Наземный пас в направлении камеры (heading), настильно.
+			var vel := PassSystem.launch_ground(from, from + flat, FootballConstants.FK_PASS_SPEED)
+			if _ball.has_method(&"launch"):
+				_ball.launch(vel, true)
+		"lob":
+			# Навес дугой в направлении камеры; дальность приземления ~к воротам.
+			var dist_goal := Vector2(from.x, from.z).distance_to(Vector2(0.0, _goal_line_z))
+			var land_dist := clampf(dist_goal - 6.0, FootballConstants.FK_LOB_MIN_DIST, FootballConstants.FK_LOB_MAX_DIST)
+			var land := from + flat * land_dist
+			land.y = FootballConstants.BALL_RADIUS
+			var vel := PassSystem.launch_lob(from, land, FootballConstants.PASS_LOB_PEAK_HEIGHT, g)
+			if _ball.has_method(&"launch"):
+				_ball.launch(vel, false)
+		_:
+			# Удар (прямой/кручёный) — вектор посчитан заранее в _fire_shot.
+			if _pending_curl.length_squared() > 0.0001:
+				if _ball.has_method(&"launch_curl"):
+					_ball.launch_curl(_pending_launch, _pending_curl, false)
+			else:
+				if _ball.has_method(&"launch"):
+					_ball.launch(_pending_launch, false)
 	_ball_in_flight_watch = true      # включаем наблюдение за прыжком стенки
 	struck.emit()
 	var km := PlayerMotor.find_on(_kicker)
@@ -409,46 +455,6 @@ func _make_mate_body(pos: Vector3) -> CharacterBody3D:
 		pm.set_control_locked(true)
 		pm.set_move_intent(Vector3.ZERO)
 	return p
-
-## Пас/навес: выбираем цель (короткий — тиммейт рядом; навес/lob — атакующий у ворот),
-## считаем скорость по дистанции (ground) или дугу (lob) через PassSystem, запускаем ball.launch.
-func _fire_pass(action: String, _ratio: float) -> void:
-	if _mates.is_empty():
-		return
-	var from: Vector3 = _ball.global_position
-	var target: CharacterBody3D = _select_pass_target(action)
-	if target == null:
-		return
-	var to: Vector3 = target.global_position
-	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
-	var vel: Vector3
-	if action == "pass_lob":
-		vel = PassSystem.launch_lob(from, to, FootballConstants.PASS_LOB_PEAK_HEIGHT, g)
-	else:
-		var dist := Vector2(to.x - from.x, to.z - from.z).length()
-		var speed := PassSystem.ground_pass_speed(dist, 1.0,
-			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
-			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
-		vel = PassSystem.launch_ground(from, to, speed)
-	if _ball.has_method(&"launch"):
-		_ball.launch(vel, action != "pass_lob")   # ground — настильно (flat=true), навес — дугой
-	struck.emit()
-	# После паса переключаем управление на получателя и завершаем розыгрыш (как страйк).
-	_manager.controlled_player = target
-	_phase = Phase.WATCH
-	_watch_timer = FootballConstants.FK_WATCH_TIME
-	_watch_elapsed = 0.0
-
-## Короткий/through пас — тиммейт рядом; навес — атакующий у ворот. Фолбэк — первый доступный.
-func _select_pass_target(action: String) -> CharacterBody3D:
-	var want_target := action == "pass_lob"
-	for entry in _mates:
-		if bool(entry["is_target"]) == want_target and is_instance_valid(entry["body"]):
-			return entry["body"]
-	for entry in _mates:
-		if is_instance_valid(entry["body"]):
-			return entry["body"]
-	return null
 
 # ── Debug-болванки (тестовое scaffolding) ────────────────────────────────────
 ## Прячем стоячие debug-болванки стенки на время штрафного (визуал + коллизия), чтобы они не
