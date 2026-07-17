@@ -1249,7 +1249,10 @@ func _is_our_dribbler(player_node: Node3D) -> bool:
 func _we_possess() -> bool:
 	if not (ball.has_method(&"set_dribbler") and ball.dribbler):
 		return false
-	return ball.dribbler == player_home or ball.dribbler == player_teammate
+	# По группе team_1, а не по именам player_home/player_teammate — иначе владение мячом
+	# заспавненным штрафным тиммейтом (team_1) не распознавалось, и combo_modifier ошибочно
+	# работал как свап игрока вместо модификатора паса.
+	return ball.dribbler.is_in_group("team_1")
 
 ## Можно ли поставить действие в очередь: мяч НЕ у ног (иначе обычный немедленный заряд) и им
 ## не владеет кто-то ДРУГОЙ (тогда это территория подката/смены). Источники очереди:
