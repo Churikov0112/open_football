@@ -2194,6 +2194,12 @@ func _same_team(a: Node, b: Node) -> bool:
 
 
 func _on_ball_collision(body: Node) -> void:
+	# Любой контакт мяча с игроком (стенка/защитник/вратарь) нарушает траекторию — сбрасываем
+	# кручение сразу и безусловно (не только в FLIGHT-ветке block_in_flight ниже), иначе Magnus
+	# продолжает крутить уже отскочивший мяч (виден как «кружение на месте»).
+	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
+			and ball.has_method(&"clear_curl"):
+		ball.clear_curl()
 	# Мяч коснулся вратаря → ловля/отбой (а не блок): иначе block_in_flight гасит мяч, и он
 	# закатывается в ворота. Физический контакт — надёжный триггер сейва.
 	if body == _keeper and _keeper != null and is_instance_valid(_keeper) and _keeper.has_method(&"on_ball_contact"):
