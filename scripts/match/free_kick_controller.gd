@@ -36,6 +36,8 @@ var _watch_timer: float = 0.0
 var _wall_bodies: Array = []
 var _mates: Array = []
 var _ball_in_flight_watch := false
+var _watch_elapsed: float = 0.0
+var _hidden_dummies: Array = []      # debug-болванки, спрятанные на время штрафного
 
 func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
 	_manager = manager
@@ -92,6 +94,8 @@ func _setup() -> void:
 		var kpos := FreeKickLogic.keeper_position(_spot, nf[0], nf[1], FootballConstants.GOAL_WIDTH * 0.5,
 			FootballConstants.FK_KEEPER_STEP_OUT, _goal_line_z, 0.5)
 		_keeper.set_freekick_anchor(kpos)
+	# Прячем debug-болванки стенки (тестовое scaffolding), чтобы не засоряли розыгрыш.
+	_hide_debug_dummies()
 	# Оборона (стенка) + атакующие (тиммейт/цели).
 	_spawn_defense()
 	_spawn_mates()
@@ -113,7 +117,11 @@ func update(delta: float) -> void:
 		Phase.WATCH:
 			_update_wall_jumps(delta)
 			_watch_timer -= delta
-			if _watch_timer <= 0.0:
+			_watch_elapsed += delta
+			# Ранний выход: мяч уже вышел в обычную игру (пас принят, перехват стенкой, ловля
+			# вратарём — мяч не в FLIGHT) — снимаем лок камеры раньше таймера.
+			var ball_live: bool = _watch_elapsed > 0.15 and _ball.has_method(&"is_flight") and not bool(_ball.is_flight())
+			if ball_live or _watch_timer <= 0.0:
 				_release()
 	_update_camera_pose()
 
@@ -197,6 +205,7 @@ func _on_kicker_contact(_action: String) -> void:
 		km.set_control_locked(false)
 	_phase = Phase.WATCH
 	_watch_timer = FootballConstants.FK_WATCH_TIME
+	_watch_elapsed = 0.0
 
 func _release() -> void:
 	var km := PlayerMotor.find_on(_kicker)
@@ -206,6 +215,7 @@ func _release() -> void:
 	if _keeper != null and _keeper.has_method(&"clear_freekick_anchor"):
 		_keeper.clear_freekick_anchor()
 	_convert_bodies()                 # стенка/тиммейты → обычный ИИ
+	_restore_debug_dummies()          # возвращаем спрятанные debug-болванки
 	_manager.set_field_ai_active(true)
 	_manager.set_free_kick_active(false)
 	_phase = Phase.IDLE
@@ -352,8 +362,8 @@ func _spawn_mates() -> void:
 	mate_pos.y = 0.5
 	_mates.append({"body": _make_mate_body(mate_pos), "is_target": false})
 	# 1-2 атакующих у ворот (цель для навеса), по разные стороны от центра.
-	var into := signf(_goal_line_z) * -1.0   # от ворот в поле
-	var depth_z := _goal_line_z - into * FootballConstants.FK_TARGET_DEPTH
+	var into := signf(_goal_line_z) * -1.0   # от ворот в поле (к центру)
+	var depth_z := _goal_line_z + into * FootballConstants.FK_TARGET_DEPTH
 	for sx in [-1.0, 1.0]:
 		var tp := Vector3(sx * FootballConstants.FK_TARGET_LATERAL, 0.5, depth_z)
 		_mates.append({"body": _make_mate_body(tp), "is_target": true})
@@ -411,6 +421,7 @@ func _fire_pass(action: String, _ratio: float) -> void:
 	_manager.controlled_player = target
 	_phase = Phase.WATCH
 	_watch_timer = FootballConstants.FK_WATCH_TIME
+	_watch_elapsed = 0.0
 
 ## Короткий/through пас — тиммейт рядом; навес — атакующий у ворот. Фолбэк — первый доступный.
 func _select_pass_target(action: String) -> CharacterBody3D:
@@ -422,3 +433,22 @@ func _select_pass_target(action: String) -> CharacterBody3D:
 		if is_instance_valid(entry["body"]):
 			return entry["body"]
 	return null
+
+# ── Debug-болванки (тестовое scaffolding) ────────────────────────────────────
+## Прячем стоячие debug-болванки стенки на время штрафного (визуал + коллизия), чтобы они не
+## засоряли розыгрыш. В реальной игре их нет — это временный тест-инструмент.
+func _hide_debug_dummies() -> void:
+	_hidden_dummies.clear()
+	for n in _manager.get_children():
+		if n is CharacterBody3D and String(n.name).begins_with("WallDummy"):
+			_hidden_dummies.append({"node": n, "layer": n.collision_layer})
+			n.visible = false
+			n.collision_layer = 0
+
+func _restore_debug_dummies() -> void:
+	for entry in _hidden_dummies:
+		var n = entry["node"]
+		if is_instance_valid(n):
+			n.visible = true
+			n.collision_layer = entry["layer"]
+	_hidden_dummies.clear()

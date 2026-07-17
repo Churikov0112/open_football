@@ -497,7 +497,7 @@ const FK_WALL_DIST := 9.15            # дистанция стенки от м�
 const FK_WALL_FAR_DIST := 40.0        # дальше — стенки нет (0 игроков)
 const FK_WALL_NEAR_DIST := 25.0       # ближе — максимум игроков
 const FK_WALL_MIN_PLAYERS := 2        # на границе far
-const FK_WALL_MAX_PLAYERS := 5        # у near и ближе
+const FK_WALL_MAX_PLAYERS := 4        # у near и ближе
 const FK_WALL_SPACING := 0.62         # интервал тел (плечо к плечу), м
 const FK_WALL_STAND_REACH := 2.2      # высота, до которой достаёт стоящая стенка, м
 const FK_WALL_JUMP_REACH := 2.9       # высота, до которой достаёт прыгнувшая стенка, м
@@ -506,8 +506,8 @@ const FK_WALL_JUMP_TIME := 0.5        # длительность прыжка (�
 # Вратарь.
 const FK_KEEPER_STEP_OUT := 1.5       # выход вратаря от линии в поле, м
 # Пас/навес (спавны).
-const FK_MATE_LATERAL := 6.0          # тиммейт: сдвиг вбок от бьющего, м
-const FK_MATE_BACK := 2.0             # тиммейт: сдвиг назад от бьющего, м
+const FK_MATE_LATERAL := 10.0         # тиммейт: сдвиг вбок от бьющего, м (вне коридора удара)
+const FK_MATE_BACK := 5.0             # тиммейт: сдвиг назад от бьющего, м
 const FK_TARGET_LATERAL := 6.0        # цель навеса: сдвиг по X от центра, м
 const FK_TARGET_DEPTH := 14.0         # цель навеса: отступ в поле от линии ворот, м
 # Тайминг.
