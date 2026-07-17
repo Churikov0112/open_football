@@ -23,8 +23,10 @@ var _foot: String = "penalty_r"
 
 var _charging: bool = false
 var _charge: float = 0.0
+var _charge_kind: String = ""        # что заряжаем: "shot" / "ground" / "lob"
+var _pending_ratio: float = 1.0      # заряд паса/навеса, применяется на контакте
 var _curl_accum: float = 0.0
-var _locked: bool = false            # heading/камера зафиксированы (после нажатия kick)
+var _locked: bool = false            # heading/камера зафиксированы (после нажатия кнопки)
 
 var _fk_rng := RandomNumberGenerator.new()
 var _pending_kind: String = ""       # "shot" / "ground" / "lob" — что запускаем на контакте
@@ -139,28 +141,53 @@ func _aim_update(delta: float) -> void:
 			# (_base_heading), чтобы разбег всегда шёл к мячу.
 			_heading = FreeKickLogic.rotate_heading(_heading, _base_heading, stick_x,
 				FootballConstants.FK_AIM_SPEED, delta, FootballConstants.FK_AIM_ARC)
-		# Пас/навес доступны до нажатия удара — тоже через разбег (анимацию), направление = heading.
-		if Input.is_action_just_pressed(&"pass_short") or Input.is_action_just_pressed(&"pass_through"):
-			_commit_action("ground"); return
-		if Input.is_action_just_pressed(&"pass_lob"):
-			_commit_action("lob"); return
-	# Заряд удара.
-	if Input.is_action_just_pressed(&"kick"):
-		_charging = true
-		_locked = true            # фиксируем heading и камеру
-		_charge = 0.0
-		_curl_accum = 0.0
+		# Старт заряда: удар / наземный пас / навес — все через удержание кнопки (сила растёт).
+		if Input.is_action_just_pressed(&"kick"):
+			_start_charge("shot")
+		elif Input.is_action_just_pressed(&"pass_short") or Input.is_action_just_pressed(&"pass_through"):
+			_start_charge("ground")
+		elif Input.is_action_just_pressed(&"pass_lob"):
+			_start_charge("lob")
 	if _charging:
 		_charge += delta
-		_curl_accum += Input.get_axis(&"move_left", &"move_right") * delta   # копим боковой ввод → curl
+		if _charge_kind == "shot":
+			_curl_accum += stick_x * delta   # закрутка копится только для удара
 		var ratio := clampf(_charge / FootballConstants.FK_CHARGE_MAX_TIME, 0.0, 1.0)
 		_power_bar.visible = true
 		_power_bar.value = ratio
 		var fill := _power_bar.get_theme_stylebox("fill")
 		if fill:
 			fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-		if ratio >= 1.0 or Input.is_action_just_released(&"kick"):
-			_fire_shot(ratio)
+		if ratio >= 1.0 or _charge_released():
+			_fire_charge(ratio)
+
+## Старт заряда действия (удар/пас/навес): фиксируем heading/камеру, копим силу.
+func _start_charge(kind: String) -> void:
+	_charging = true
+	_locked = true
+	_charge = 0.0
+	_curl_accum = 0.0
+	_charge_kind = kind
+
+## Кнопка текущего заряжаемого действия отпущена?
+func _charge_released() -> bool:
+	match _charge_kind:
+		"shot":
+			return not Input.is_action_pressed(&"kick")
+		"lob":
+			return not Input.is_action_pressed(&"pass_lob")
+		_:
+			return not (Input.is_action_pressed(&"pass_short") or Input.is_action_pressed(&"pass_through"))
+
+## Отпустили (или макс. заряд): удар считает вектор сразу; пас/навес запоминают ratio до контакта.
+func _fire_charge(ratio: float) -> void:
+	_charging = false
+	_power_bar.visible = false
+	if _charge_kind == "shot":
+		_fire_shot(ratio)
+	else:
+		_pending_ratio = ratio
+		_begin_strike(_charge_kind)
 
 func _fire_shot(ratio: float) -> void:
 	_charging = false
@@ -174,13 +201,6 @@ func _fire_shot(ratio: float) -> void:
 	_pending_launch = vel
 	_pending_curl = FreeKickLogic.curl_from_stick(_curl_accum, FootballConstants.FK_CURL_SCALE, FootballConstants.FK_CURL_MAX)
 	_begin_strike("shot")
-
-## Пас/навес: коммит с разбегом (как удар). Направление = heading (куда смотрит камера).
-func _commit_action(kind: String) -> void:
-	_charging = false
-	_locked = true
-	_power_bar.visible = false
-	_begin_strike(kind)
 
 ## Общий запуск разбега: лочим мотор, играем клип ноги, ждём action_contact.
 func _begin_strike(kind: String) -> void:
@@ -227,17 +247,18 @@ func _on_kicker_contact(_action: String) -> void:
 	var flat := Vector3(_heading.x, 0.0, _heading.z).normalized()
 	match _pending_kind:
 		"ground":
-			# Наземный пас в направлении камеры (heading), настильно.
-			var vel := PassSystem.launch_ground(from, from + flat, FootballConstants.FK_PASS_SPEED)
+			# Наземный пас в направлении камеры (heading), настильно; сила = скорость (заряд).
+			var speed := lerpf(FootballConstants.FK_PASS_MIN_SPEED, FootballConstants.FK_PASS_MAX_SPEED, _pending_ratio)
+			var vel := PassSystem.launch_ground(from, from + flat, speed)
 			if _ball.has_method(&"launch"):
 				_ball.launch(vel, true)
 		"lob":
-			# Навес дугой в направлении камеры; дальность приземления ~к воротам.
-			var dist_goal := Vector2(from.x, from.z).distance_to(Vector2(0.0, _goal_line_z))
-			var land_dist := clampf(dist_goal - 6.0, FootballConstants.FK_LOB_MIN_DIST, FootballConstants.FK_LOB_MAX_DIST)
+			# Навес дугой в направлении камеры; сила = дальность приземления и высота дуги (заряд).
+			var land_dist := lerpf(FootballConstants.FK_LOB_MIN_DIST, FootballConstants.FK_LOB_MAX_DIST, _pending_ratio)
+			var peak := lerpf(FootballConstants.FK_LOB_PEAK_MIN, FootballConstants.FK_LOB_PEAK_MAX, _pending_ratio)
 			var land := from + flat * land_dist
 			land.y = FootballConstants.BALL_RADIUS
-			var vel := PassSystem.launch_lob(from, land, FootballConstants.PASS_LOB_PEAK_HEIGHT, g)
+			var vel := PassSystem.launch_lob(from, land, peak, g)
 			if _ball.has_method(&"launch"):
 				_ball.launch(vel, false)
 		_:
@@ -253,9 +274,15 @@ func _on_kicker_contact(_action: String) -> void:
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
 		km.set_control_locked(false)
-	_phase = Phase.WATCH
-	_watch_timer = FootballConstants.FK_WATCH_TIME
-	_watch_elapsed = 0.0
+	if _pending_kind == "shot":
+		# Удар — держим фикс-вид, смотрим полёт.
+		_phase = Phase.WATCH
+		_watch_timer = FootballConstants.FK_WATCH_TIME
+		_watch_elapsed = 0.0
+	else:
+		# Пас/навес — розыгрыш окончен, сразу в обычную игру (камера следит, получивший станет
+		# выбранным по авто-переключению).
+		_release()
 
 func _release() -> void:
 	var km := PlayerMotor.find_on(_kicker)
