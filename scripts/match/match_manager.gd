@@ -26,6 +26,7 @@ var _penalty_cam_pose: Transform3D = Transform3D.IDENTITY
 var _free_kick                                 # FreeKickController
 var _free_kick_active: bool = false
 var _free_kick_cam_pose: Transform3D = Transform3D.IDENTITY
+var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -789,23 +790,19 @@ func _setup_teammate() -> void:
 
 func _process(delta: float) -> void:
 	var ball_pos := ball.global_position
-	# Камера от 3-го лица: пивот встаёт ПОЗАДИ управляемого игрока (по его facing) и смотрит
-	# вперёд него. -pivot.basis.z тогда = «вперёд игрока» → камера-относительный ввод корректен.
+	# Пенальти/штрафной — свои фикс-камеры от 3-го лица за бьющим (см. соответствующие
+	# контроллеры). Обычная игра — ТВ-трансляция: фикс. позиция сбоку и сверху поля, плавно
+	# панорамирует за МЯЧОМ (не за игроком), а не следует от 3-го лица за спиной игрока.
 	if _penalty_active:
 		camera_pivot.global_transform = _penalty_cam_pose
 	elif _free_kick_active:
 		camera_pivot.global_transform = _free_kick_cam_pose
 	else:
-		var cam_target: Node3D = controlled_player if (controlled_player and is_instance_valid(controlled_player)) else null
-		if cam_target != null:
-			var fwd := -cam_target.global_transform.basis.z
-			fwd.y = 0.0
-			if fwd.length() < 0.01:
-				fwd = Vector3(0, 0, -1)
-			fwd = fwd.normalized()
-			var eye := cam_target.global_position - fwd * FootballConstants.CAMERA_TP_DISTANCE + Vector3.UP * FootballConstants.CAMERA_TP_HEIGHT
-			camera_pivot.global_position = camera_pivot.global_position.lerp(eye, clampf(FootballConstants.CAMERA_TP_FOLLOW * delta, 0.0, 1.0))
-			camera_pivot.look_at(cam_target.global_position + fwd * FootballConstants.CAMERA_TP_LOOK_AHEAD + Vector3.UP, Vector3.UP)
+		_bc_cam_eye_z = lerpf(_bc_cam_eye_z, ball_pos.z, clampf(FootballConstants.CAMERA_BC_FOLLOW * delta, 0.0, 1.0))
+		var eye := Vector3(FootballConstants.CAMERA_BC_X, FootballConstants.CAMERA_BC_HEIGHT, _bc_cam_eye_z)
+		var look := Vector3(ball_pos.x, FootballConstants.CAMERA_BC_LOOK_Y, ball_pos.z)
+		camera_pivot.global_position = eye
+		camera_pivot.look_at(look, Vector3.UP)
 
 	if _trail != null:
 		_update_ball_trail(ball_pos)
