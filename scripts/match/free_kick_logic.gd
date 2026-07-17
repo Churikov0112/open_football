@@ -112,24 +112,35 @@ static func push_out_of_radius(pos: Vector3, center: Vector3, min_dist: float) -
 	out.y = pos.y
 	return out
 
-## Если pos лежит внутри коридора (от from до to, полу-ширина half_width) — выталкивает его
-## перпендикулярно наружу коридора (сохраняя продвижение вдоль линии, y не трогает). Иначе
-## возвращает pos без изменений. Используется, чтобы никто не стоял между бьющим и стенкой.
-static func push_out_of_corridor(pos: Vector3, from: Vector3, to: Vector3, half_width: float) -> Vector3:
-	var seg := Vector3(to.x - from.x, 0.0, to.z - from.z)
-	var seg_len := seg.length()
-	if seg_len < 0.01:
+## Конус обзора удара: вершина в apex (мяч), стороны идут к крайним игрокам стенки (edge_l/edge_r).
+## Если pos внутри этого конуса (между мячом и стенкой, в угловом секторе к крайним) — выталкивает
+## его вбок на ближайшую сторону конуса + margin_deg запаса (сохраняя дистанцию от мяча, y не
+## трогает). Иначе возвращает pos без изменений. Так никто не перекрывает полёт мяча в стенку по
+## всей её ширине, а не только по узкому коридору к центру.
+static func push_out_of_cone(pos: Vector3, apex: Vector3, edge_l: Vector3, edge_r: Vector3, margin_deg: float) -> Vector3:
+	var rel := Vector3(pos.x - apex.x, 0.0, pos.z - apex.z)
+	var dl := Vector3(edge_l.x - apex.x, 0.0, edge_l.z - apex.z)
+	var dr := Vector3(edge_r.x - apex.x, 0.0, edge_r.z - apex.z)
+	if rel.length() < 0.01 or dl.length() < 0.01 or dr.length() < 0.01:
 		return pos
-	var dir := seg / seg_len
-	var rel := Vector3(pos.x - from.x, 0.0, pos.z - from.z)
-	var t := clampf(rel.dot(dir), 0.0, seg_len)
-	var closest := from + dir * t
-	var perp := Vector3(pos.x - closest.x, 0.0, pos.z - closest.z)
-	var d := perp.length()
-	if d >= half_width:
+	var mid := (dl.normalized() + dr.normalized())
+	if mid.length() < 0.001:
 		return pos
-	var side := perp / d if d > 0.01 else dir.cross(Vector3.UP).normalized()
-	var out := closest + side * half_width
+	mid = mid.normalized()
+	var along := rel.dot(mid)
+	if along <= 0.0:
+		return pos   # позади мяча (не в сторону стенки)
+	# Дальше плоскости стенки (+ полметра) — не трогаем: там стенка и так перекрывает мяч.
+	var wall_dist: float = maxf(dl.dot(mid), dr.dot(mid))
+	if along > wall_dist + 0.5:
+		return pos
+	var half := maxf(mid.angle_to(dl), mid.angle_to(dr)) + deg_to_rad(margin_deg)
+	var ang := mid.signed_angle_to(rel, Vector3.UP)
+	if absf(ang) >= half:
+		return pos   # вне углового сектора конуса
+	var target_ang := half if ang >= 0.0 else -half   # выталкиваем на ближайшую сторону
+	var out_dir := mid.rotated(Vector3.UP, target_ang)
+	var out := apex + out_dir * rel.length()
 	out.y = pos.y
 	return out
 

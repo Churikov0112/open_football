@@ -112,10 +112,10 @@ func _setup() -> void:
 	# любому направлению — не только в коридоре удара (официальное правило IFAB, действует
 	# всегда, даже на дальних штрафных без формальной стенки).
 	_clear_opponent_encroachment()
-	# Никто (свои/чужие, кроме бьющего и вратаря) не должен стоять в коридоре мяч→стенка —
-	# расчищаем ПОСЛЕ радиального оттеснения (иначе соперник мог бы отъехать ровно на линию
-	# удара) и ДО спавна стенки/своих (сама стенка намеренно встаёт на этой линии).
-	_clear_corridor()
+	# Никто (свои/чужие, кроме бьющего и вратаря) не должен стоять в КОНУСЕ мяч→крайние игроки
+	# стенки (по всей её ширине, а не узкому коридору к центру) — расчищаем ПОСЛЕ радиального
+	# оттеснения и ДО спавна стенки/своих (сама стенка намеренно встаёт на границе этого конуса).
+	_clear_ball_to_wall_cone()
 	# Оборона (стенка) + атакующие (тиммейт/цели).
 	_spawn_defense()
 	_spawn_mates()
@@ -384,24 +384,29 @@ func _clear_opponent_encroachment() -> void:
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
 
-## Никто (ни свои, ни чужие — кроме бьющего и вратаря) не должен физически стоять между мячом
-## и стенкой: выталкиваем их вбок за пределы коридора. Если стенки нет (дальний штрафной) —
-## расчищать нечего, пропускаем.
-func _clear_corridor() -> void:
+## Никто (ни свои, ни чужие — кроме бьющего и вратаря) не должен стоять в КОНУСЕ мяч→крайние
+## игроки стенки (по всей ширине стенки) — иначе перекроют полёт мяча. Выталкиваем вбок за
+## границу конуса. Если стенки нет (дальний штрафной) — расчищать нечего, пропускаем.
+func _clear_ball_to_wall_cone() -> void:
 	var dist_to_goal := absf(_spot.z - _goal_line_z)
 	var count := FreeKickLogic.wall_count(dist_to_goal, FootballConstants.FK_WALL_FAR_DIST,
 		FootballConstants.FK_WALL_NEAR_DIST, FootballConstants.FK_WALL_MIN_PLAYERS, FootballConstants.FK_WALL_MAX_PLAYERS)
 	if count <= 0:
 		return
+	# Те же позиции тел, что построит _spawn_defense (чистые фн детерминированы) — крайние = края конуса.
 	var nf := FreeKickLogic.near_far_posts(_spot, 0.0, FootballConstants.GOAL_WIDTH * 0.5, _goal_line_z)
 	var wl := FreeKickLogic.wall_line(_spot, nf[0], _goal_line_z, FootballConstants.FK_WALL_DIST, 0.5)
-	var to: Vector3 = wl["center"]
+	var positions := FreeKickLogic.wall_body_positions(wl["center"], wl["right"], count, FootballConstants.FK_WALL_SPACING)
+	if positions.is_empty():
+		return
+	var edge_l: Vector3 = positions[0]
+	var edge_r: Vector3 = positions[positions.size() - 1]
 	var bodies := _manager.get_tree().get_nodes_in_group("team_1")
 	bodies += _manager.get_tree().get_nodes_in_group("team_2")
 	for n in bodies:
 		if not is_instance_valid(n) or n == _kicker or n == _keeper or not (n is Node3D):
 			continue
-		var adjusted := FreeKickLogic.push_out_of_corridor(n.global_position, _spot, to, FootballConstants.FK_CORRIDOR_HALF_WIDTH)
+		var adjusted := FreeKickLogic.push_out_of_cone(n.global_position, _spot, edge_l, edge_r, FootballConstants.FK_CONE_MARGIN_DEG)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
 

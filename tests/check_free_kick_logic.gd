@@ -13,7 +13,7 @@ func _init() -> void:
 	ok = _check_wall_line_and_bodies() and ok
 	ok = _check_wall_jump() and ok
 	ok = _check_keeper_pos() and ok
-	ok = _check_corridor_push() and ok
+	ok = _check_cone_push() and ok
 	ok = _check_radius_push() and ok
 	if ok:
 		print("CHECK PASS: free_kick_logic")
@@ -158,23 +158,35 @@ func _check_wall_jump() -> bool:
 		return false
 	return true
 
-func _check_corridor_push() -> bool:
-	var from := Vector3(0, 0.5, -20.0)
-	var to := Vector3(0, 0.5, -29.0)   # прямая линия вдоль -Z
-	# Точка ровно на линии, в середине → выталкивается вбок минимум на half_width.
-	var on_line := FreeKickLogic.push_out_of_corridor(Vector3(0, 0.5, -24.5), from, to, 1.5)
-	if absf(on_line.x) < 1.5 - 0.001 or not is_equal_approx(on_line.z, -24.5):
-		print("  FAIL corridor on_line: ", on_line)
+func _check_cone_push() -> bool:
+	var apex := Vector3(0, 0.5, -20.0)             # мяч
+	var edge_l := Vector3(-2.0, 0.5, -29.0)        # левый край стенки
+	var edge_r := Vector3(2.0, 0.5, -29.0)         # правый край стенки
+	# Точка на центральной линии между мячом и стенкой → внутри конуса → выталкивается вбок.
+	var inside := FreeKickLogic.push_out_of_cone(Vector3(0, 0.5, -24.5), apex, edge_l, edge_r, 3.0)
+	if is_equal_approx(inside.x, 0.0):
+		print("  FAIL cone inside not pushed: ", inside)
 		return false
-	# Точка уже далеко сбоку → не трогаем.
-	var outside := FreeKickLogic.push_out_of_corridor(Vector3(5, 0.5, -24.5), from, to, 1.5)
-	if not outside.is_equal_approx(Vector3(5, 0.5, -24.5)):
-		print("  FAIL corridor outside changed: ", outside)
+	# Дистанция от мяча сохраняется (выталкиваем по дуге, не меняя дальность).
+	var d_before := Vector2(0.0 - apex.x, -24.5 - apex.z).length()
+	var d_after := Vector2(inside.x - apex.x, inside.z - apex.z).length()
+	if absf(d_before - d_after) > 0.01:
+		print("  FAIL cone distance changed: ", d_before, " -> ", d_after)
 		return false
-	# Точка вне отрезка (za пределами from..to по Z) → не трогаем, даже если рядом с продолжением линии.
-	var beyond := FreeKickLogic.push_out_of_corridor(Vector3(0, 0.5, -10.0), from, to, 1.5)
-	if not beyond.is_equal_approx(Vector3(0, 0.5, -10.0)):
-		print("  FAIL corridor beyond segment changed: ", beyond)
+	# Точка сильно сбоку (вне углового сектора) → не трогаем.
+	var outside := FreeKickLogic.push_out_of_cone(Vector3(10, 0.5, -24.5), apex, edge_l, edge_r, 3.0)
+	if not outside.is_equal_approx(Vector3(10, 0.5, -24.5)):
+		print("  FAIL cone outside changed: ", outside)
+		return false
+	# Точка позади мяча (в другую сторону от стенки) → не трогаем.
+	var behind := FreeKickLogic.push_out_of_cone(Vector3(0, 0.5, -10.0), apex, edge_l, edge_r, 3.0)
+	if not behind.is_equal_approx(Vector3(0, 0.5, -10.0)):
+		print("  FAIL cone behind changed: ", behind)
+		return false
+	# Точка дальше стенки (за ней) → не трогаем (стенка и так перекрывает).
+	var beyond := FreeKickLogic.push_out_of_cone(Vector3(0, 0.5, -40.0), apex, edge_l, edge_r, 3.0)
+	if not beyond.is_equal_approx(Vector3(0, 0.5, -40.0)):
+		print("  FAIL cone beyond wall changed: ", beyond)
 		return false
 	return true
 
