@@ -14,6 +14,7 @@ func _init() -> void:
 	ok = _check_wall_jump() and ok
 	ok = _check_keeper_pos() and ok
 	ok = _check_corridor_push() and ok
+	ok = _check_radius_push() and ok
 	if ok:
 		print("CHECK PASS: free_kick_logic")
 		quit(0)
@@ -174,6 +175,31 @@ func _check_corridor_push() -> bool:
 	var beyond := FreeKickLogic.push_out_of_corridor(Vector3(0, 0.5, -10.0), from, to, 1.5)
 	if not beyond.is_equal_approx(Vector3(0, 0.5, -10.0)):
 		print("  FAIL corridor beyond segment changed: ", beyond)
+		return false
+	return true
+
+func _check_radius_push() -> bool:
+	var center := Vector3(0, 0.11, -20.0)
+	# Игрок в 3м от мяча (ближе 9.15) → выталкивается ровно на 9.15, в ТОМ ЖЕ направлении.
+	var near := center + Vector3(3.0, 0.0, 0.0)
+	var pushed := FreeKickLogic.push_out_of_radius(near, center, 9.15)
+	var dist := Vector2(pushed.x - center.x, pushed.z - center.z).length()
+	if absf(dist - 9.15) > 0.001:
+		print("  FAIL radius_push near dist: ", dist)
+		return false
+	if pushed.x <= 0.0:
+		print("  FAIL radius_push near direction flipped: ", pushed)
+		return false
+	# Игрок уже в 15м (дальше 9.15) → не трогаем.
+	var far := center + Vector3(15.0, 0.0, 0.0)
+	var unchanged := FreeKickLogic.push_out_of_radius(far, center, 9.15)
+	if not unchanged.is_equal_approx(far):
+		print("  FAIL radius_push far changed: ", unchanged)
+		return false
+	# Игрок ровно на позиции мяча (вырожденный случай) → не делится на ноль, куда-то выталкивается.
+	var degenerate := FreeKickLogic.push_out_of_radius(center, center, 9.15)
+	if Vector2(degenerate.x - center.x, degenerate.z - center.z).length() < 9.0:
+		print("  FAIL radius_push degenerate: ", degenerate)
 		return false
 	return true
 

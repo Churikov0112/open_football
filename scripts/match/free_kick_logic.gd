@@ -98,6 +98,20 @@ static func wall_should_jump(ball_pos: Vector3, ball_vel: Vector3, wall_center: 
 	var t := along / horiz.length()
 	return t > 0.0 and t <= jump_rise_time
 
+## Если pos ближе min_dist к center (по горизонтали) — выталкивает наружу вдоль (pos-center)
+## до ровно min_dist (y не трогает). Иначе возвращает pos без изменений. Правило 9.15 м:
+## соперники не должны стоять ближе к мячу вообще, по любому направлению (не только в
+## коридоре удара) — в отличие от push_out_of_corridor, это радиус, а не полоса.
+static func push_out_of_radius(pos: Vector3, center: Vector3, min_dist: float) -> Vector3:
+	var d := Vector3(pos.x - center.x, 0.0, pos.z - center.z)
+	var len := d.length()
+	if len >= min_dist:
+		return pos
+	var dir := d / len if len > 0.01 else Vector3.RIGHT
+	var out := center + dir * min_dist
+	out.y = pos.y
+	return out
+
 ## Если pos лежит внутри коридора (от from до to, полу-ширина half_width) — выталкивает его
 ## перпендикулярно наружу коридора (сохраняя продвижение вдоль линии, y не трогает). Иначе
 ## возвращает pos без изменений. Используется, чтобы никто не стоял между бьющим и стенкой.
