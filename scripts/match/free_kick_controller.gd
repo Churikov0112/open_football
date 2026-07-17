@@ -245,6 +245,8 @@ func _on_kicker_contact(_action: String) -> void:
 	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 	var from: Vector3 = _ball.global_position
 	var flat := Vector3(_heading.x, 0.0, _heading.z).normalized()
+	# Для паса/навеса заранее выбираем получателя (тиммейт по направлению паса) — до запуска мяча.
+	var receiver: CharacterBody3D = _select_receiver() if _pending_kind != "shot" else null
 	match _pending_kind:
 		"ground":
 			# Наземный пас в направлении камеры (heading), настильно; сила = скорость (заряд).
@@ -280,9 +282,15 @@ func _on_kicker_contact(_action: String) -> void:
 		_watch_timer = FootballConstants.FK_WATCH_TIME
 		_watch_elapsed = 0.0
 	else:
-		# Пас/навес — розыгрыш окончен, сразу в обычную игру (камера следит, получивший станет
-		# выбранным по авто-переключению).
+		# Пас/навес — розыгрыш окончен, сразу в обычную игру. Управление передаём тиммейту, в
+		# которого шёл пас (играем за команду), чтобы человек вёл именно его к мячу.
 		_release()
+		if is_instance_valid(receiver):
+			_manager.controlled_player = receiver
+			for entry in _mates:
+				var mb = entry["body"]
+				if is_instance_valid(mb):
+					mb.controlled_player = receiver
 
 func _release() -> void:
 	var km := PlayerMotor.find_on(_kicker)
@@ -483,6 +491,25 @@ func _make_mate_body(pos: Vector3) -> CharacterBody3D:
 		pm.set_control_locked(true)
 		pm.set_move_intent(Vector3.ZERO)
 	return p
+
+## Тиммейт, в которого направлен пас: максимально совпадающий с heading (по dot от мяча).
+func _select_receiver() -> CharacterBody3D:
+	var best: CharacterBody3D = null
+	var best_dot := 0.2   # порог выравнивания направления
+	var from: Vector3 = _ball.global_position
+	var h := Vector3(_heading.x, 0.0, _heading.z).normalized()
+	for entry in _mates:
+		var b = entry["body"]
+		if not is_instance_valid(b):
+			continue
+		var d := Vector3(b.global_position.x - from.x, 0.0, b.global_position.z - from.z)
+		if d.length() < 0.1:
+			continue
+		var dt := d.normalized().dot(h)
+		if dt > best_dot:
+			best_dot = dt
+			best = b
+	return best
 
 # ── Debug-болванки (тестовое scaffolding) ────────────────────────────────────
 ## Прячем стоячие debug-болванки стенки на время штрафного (визуал + коллизия), чтобы они не
