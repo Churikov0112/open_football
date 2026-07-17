@@ -313,14 +313,18 @@ func _on_kicker_contact(_action: String) -> void:
 		_watch_elapsed = 0.0
 	else:
 		# Пас/навес — розыгрыш окончен, сразу в обычную игру. Управление передаём тиммейту, в
-		# которого шёл пас (играем за команду), чтобы человек вёл именно его к мячу.
+		# которого шёл пас (играем за команду) — ДО _release()/конвертации ИИ-тел: та читает
+		# match_manager.controlled_player, чтобы проставить его всем конвертированным (включая
+		# самого получателя); если сделать это ПОСЛЕ, получатель окажется с controlled_player,
+		# указывающим на старого бьющего, self-гейт его teammate_ai не сработает, и AI-скрипт
+		# продолжит сам двигать мотор параллельно с человеческим вводом.
+		if is_instance_valid(receiver) and _manager.has_method(&"assign_controlled_player"):
+			_manager.assign_controlled_player(receiver)
 		_release()
-		if is_instance_valid(receiver):
-			_manager.controlled_player = receiver
-			for entry in _mates:
-				var mb = entry["body"]
-				if is_instance_valid(mb):
-					mb.controlled_player = receiver
+		if is_instance_valid(receiver) and _manager.has_method(&"begin_pass_receive"):
+			# Наведение стика на мяч + принудительный трап на любой скорости (как обычный пас в
+			# игре) — иначе получатель ждёт, пока мяч сам не замедлится ниже BALL_TRAP_MAX_SPEED.
+			_manager.begin_pass_receive(receiver)
 
 func _release() -> void:
 	var km := PlayerMotor.find_on(_kicker)

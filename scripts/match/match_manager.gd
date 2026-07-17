@@ -592,6 +592,29 @@ func set_free_kick_cam_pose(pose: Transform3D) -> void:
 	_free_kick_cam_pose = pose
 
 
+## Включить приём паса для receiver — то же самое, что обычный _fire_pass() делает для
+## человека-получателя (наведение стика на предсказанную позицию мяча в _handle_player_input
+## + принудительный трап на любой скорости в _handle_dribbling, минуя BALL_TRAP_MAX_SPEED).
+## Штрафной свой пас/навес не проводит через _fire_pass(), но должен давать тот же эффект
+## «получатель сам добегает до мяча», иначе он просто стоит, пока мяч не замедлится сам.
+func begin_pass_receive(receiver: CharacterBody3D) -> void:
+	_receive_active = true
+	_receiver = receiver
+	_receive_timer = FootballConstants.PASS_RECEIVE_MAX_TIME
+
+
+## Переключить controlled_player и синхронизировать всех ИИ-скриптов (см. _sync_ai_controllers).
+## Публичная обёртка для внешних контроллеров (штрафной и т.п.) — ВАЖНО вызывать её ДО любой
+## конвертации ИИ-тел (напр. FreeKickController._convert_bodies), которая читает
+## match_manager.controlled_player для проставления своего поля controlled_player: если вызвать
+## после конвертации, тела (включая самого получателя!) получат СТАРОЕ значение (прежнего
+## бьющего), self-гейт `controlled_player == self` их AI-скрипта не сработает, и AI продолжит
+## сам двигать мотор параллельно с человеческим вводом (борьба за один мотор).
+func assign_controlled_player(p: CharacterBody3D) -> void:
+	controlled_player = p
+	_sync_ai_controllers()
+
+
 ## Глушим/возвращаем полевой ИИ на время пенальти/штрафного (вратаря НЕ трогаем — он должен
 ## нырять/реагировать). Тонкая обёртка над _set_ai_frozen — раньше это была отдельная слабая
 ## реализация (только player_away/player_teammate, без лока мотора), из-за чего ИИ-соперник
