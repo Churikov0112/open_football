@@ -434,6 +434,11 @@ func _make_wall_body(pos: Vector3) -> CharacterBody3D:
 	p.add_child(visual)
 	p.add_child(PlayerMotor.new())
 	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
+	# Полноценный игрок: подключаем сигналы удара/паса, как штатные игроки (иначе система
+	# deferred-impulse ждёт action_contact, который не приходит → пас летит по фолбэку с другой
+	# силой/направлением и без анимации, когда этим телом управляют).
+	visual.action_contact.connect(_manager._on_action_contact.bind(p))
+	visual.action_finished.connect(_manager._on_action_finished.bind(p))
 	var col := CollisionShape3D.new()
 	var shape := CapsuleShape3D.new()
 	shape.height = 1.5
@@ -551,6 +556,10 @@ func _make_mate_body(pos: Vector3) -> CharacterBody3D:
 	p.add_child(visual)
 	p.add_child(PlayerMotor.new())
 	visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
+	# Полноценный игрок: сигналы удара/паса как у штатных (иначе при управлении этим телом пас
+	# идёт по фолбэку — другая сила/направление, без анимации). См. _make_wall_body.
+	visual.action_contact.connect(_manager._on_action_contact.bind(p))
+	visual.action_finished.connect(_manager._on_action_finished.bind(p))
 	var col := CollisionShape3D.new()
 	var shape := CapsuleShape3D.new()
 	shape.height = 1.5
