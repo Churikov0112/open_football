@@ -841,7 +841,9 @@ func _physics_process(delta: float) -> void:
 	else:
 		if ball.has_method(&"set_dribbler") and ball.dribbler:
 			var db: Node3D = ball.dribbler
-			if (db == player_home or db == player_teammate) and db != controlled_player:
+			# Под управлением всегда тот из НАШЕЙ команды, у кого мяч (любой team_1, включая
+			# заспавненных штрафным тиммейтов), а не только player_home/player_teammate.
+			if db != controlled_player and db.is_in_group("team_1"):
 				controlled_player = db
 				_sync_ai_controllers()
 
@@ -907,6 +909,11 @@ func _sync_ai_controllers() -> void:
 		player_home.controlled_player = controlled_player
 	if player_teammate:
 		player_teammate.controlled_player = controlled_player
+	# Прочие team_1 с ИИ (напр. заспавненные штрафным тиммейты) — тоже синхронизируем, чтобы
+	# управляемое тело пропускало свой teammate_ai (гейт controlled_player == self).
+	for n in get_tree().get_nodes_in_group("team_1"):
+		if n != player_home and n != player_teammate and (&"controlled_player" in n):
+			n.controlled_player = controlled_player
 
 
 func _setup_tackle_area() -> void:
