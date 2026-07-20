@@ -146,7 +146,7 @@ func _ready() -> void:
 	_free_kick.name = "FreeKickController"
 	add_child(_free_kick)
 	_free_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
-	# Стартовая расстановка: человек с мячом в центре, соперник в 10 м впереди (см. _setup_away_player).
+	# Стартовая расстановка: человек с мячом в центре (соперник глубоко — см. _setup_away_player).
 	ball.global_position = _human_player.global_position + Vector3(0, 0.0, -0.6)
 	if ball.has_method(&"set_dribbler"):
 		ball.set_dribbler(_human_player, true)

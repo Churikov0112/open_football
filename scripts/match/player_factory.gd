@@ -9,6 +9,11 @@ const PLAYER_SCENE := preload("res://scenes/player.tscn")
 static func spawn(config: PlayerConfig, team: Team) -> CharacterBody3D:
 	var body: CharacterBody3D = PLAYER_SCENE.instantiate()
 	body.name = config.display_name
+	# Позу задаём ДО входа в дерево: тогда физ-тело регистрируется в физсервере сразу на споте.
+	# Если ставить global_position ПОСЛЕ add_child, все тела на кадр остаются в origin (0,0,0),
+	# где их инстанцировали, и игрок, чей спот и есть origin, оверлапит эти «застрявшие» физ-тела —
+	# move_and_slide() депенетрирует его прочь (телепорт на другое тело, зависание в воздухе).
+	body.position = config.spawn_pos
 	body.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
 	body.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
 	var visual := find_visual(body)
@@ -16,7 +21,6 @@ static func spawn(config: PlayerConfig, team: Team) -> CharacterBody3D:
 		visual.apply_appearance({"kit_color": config.kit_color})
 	# регистрация в ростер + группы (вход в дерево → _ready детей: motor находит visual-сиблинга)
 	team.add_player(body, config.role)
-	body.global_position = config.spawn_pos
 	body.set_meta(&"home_pos", config.spawn_pos)
 	if config.locomotion_style >= 0 and visual != null:
 		visual.set_locomotion_style(config.locomotion_style)
