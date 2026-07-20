@@ -10,6 +10,8 @@ var home_score: int = 0
 var away_score: int = 0
 var player_away: CharacterBody3D
 var player_teammate: CharacterBody3D
+var _team_home: Team
+var _team_away: Team
 var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
@@ -110,6 +112,24 @@ func _ready() -> void:
 	_setup_ball()
 	_setup_camera()
 	_setup_goals()
+	_team_home = Team.new()
+	_team_home.name = "TeamHome"
+	_team_home.team_group = &"team_1"
+	_team_home.attack_z_sign = _attack_dir_z
+	_team_home.kit_color = Color(0.1, 0.1, 0.9)
+	_team_home.id = &"home"
+	_team_home.manager = self
+	_team_home.ball = ball
+	add_child(_team_home)
+	_team_away = Team.new()
+	_team_away.name = "TeamAway"
+	_team_away.team_group = &"team_2"
+	_team_away.attack_z_sign = -_attack_dir_z
+	_team_away.kit_color = Color(0.9, 0.1, 0.1)
+	_team_away.id = &"away"
+	_team_away.manager = self
+	_team_away.ball = ball
+	add_child(_team_away)
 	_setup_away_player()
 	controlled_player = player_home
 	player_home.add_to_group("team_1")
@@ -714,31 +734,18 @@ func _setup_keeper() -> void:
 
 
 func _setup_away_player() -> void:
-	var new_player := CharacterBody3D.new()
-	new_player.name = "PlayerAway"
-	new_player.global_position = Vector3(20, 0.5, 0)
-	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	new_player.add_child(visual)
-	new_player.add_child(PlayerMotor.new())
-	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
-	visual.action_contact.connect(_on_action_contact.bind(new_player))
-	visual.action_finished.connect(_on_action_finished.bind(new_player))
-	var col := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.height = 1.5
-	shape.radius = 0.3
-	col.shape = shape
-	col.position = Vector3(0, 0.25, 0)
-	new_player.add_child(col)
-	add_child(new_player)
-	new_player.add_to_group("team_2")
-	new_player.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	new_player.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
-	var ai_script = preload("res://scripts/ai/simple_ai.gd")
-	new_player.set_script(ai_script)
-	new_player.set_physics_process(true)
-	new_player.ball = ball
-	new_player.home_goal = $GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_2"
+	cfg.role = PlayerConfig.Role.FWD
+	cfg.kit_color = Color(0.9, 0.1, 0.1)
+	cfg.spawn_pos = Vector3(20, 0.5, 0)
+	cfg.display_name = "PlayerAway"
+	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
+	cfg.connect_action_signals = true
+	cfg.extra_fields = {
+		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
+	}
+	var new_player := PlayerFactory.spawn(cfg, _team_away)
 	player_away = new_player
 	# Тестовая стенка из бездействующих соперников (только пока соперник отключён флагом) —
 	# удобно проверять удары/блоки. Вернём настоящего соперника → флаг false → стенки нет.
