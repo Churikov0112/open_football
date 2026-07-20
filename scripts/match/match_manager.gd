@@ -146,6 +146,10 @@ func _ready() -> void:
 	_free_kick.name = "FreeKickController"
 	add_child(_free_kick)
 	_free_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
+	# Стартовая расстановка: человек с мячом в центре, соперник в 10 м впереди (см. _setup_away_player).
+	ball.global_position = _human_player.global_position + Vector3(0, 0.0, -0.6)
+	if ball.has_method(&"set_dribbler"):
+		ball.set_dribbler(_human_player, true)
 
 
 ## DEBUG: линия-след за мячом. MeshInstance3D + ImmediateMesh, перестраивается каждый кадр
@@ -720,7 +724,7 @@ func _setup_away_player() -> void:
 	cfg.team_group = &"team_2"
 	cfg.role = PlayerConfig.Role.FWD
 	cfg.kit_color = Color(0.9, 0.1, 0.1)
-	cfg.spawn_pos = Vector3(20, 0.5, 0)
+	cfg.spawn_pos = Vector3(0, 0.5, -10)   # 10 м впереди человека (по направлению атаки −Z)
 	cfg.display_name = "PlayerAway"
 	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
 	cfg.connect_action_signals = true
