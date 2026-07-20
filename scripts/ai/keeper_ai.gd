@@ -150,9 +150,19 @@ func _position(delta: float) -> void:
 	# с лёгким доворотом к X мяча.
 	var into := -1.0 if goal_line_z > 0.0 else 1.0
 	m.set_face_direction(Vector3(ball.global_position.x - _body.global_position.x, 0.0, into * 4.0))
-	var target := _freekick_anchor if _freekick_mode else KeeperLogic.line_position(
-		ball.global_position, goal_line_z, FootballConstants.GOAL_WIDTH * 0.5,
-		FootballConstants.KEEPER_LINE_NARROW_GAIN, FootballConstants.KEEPER_MAX_OFF_LINE)
+	var target: Vector3
+	if _freekick_mode:
+		target = _freekick_anchor
+	else:
+		target = KeeperLogic.line_position(ball.global_position, goal_line_z, FootballConstants.GOAL_WIDTH * 0.5,
+			FootballConstants.KEEPER_LINE_NARROW_GAIN, FootballConstants.KEEPER_MAX_OFF_LINE)
+		# «Выход из ворот» (off-line advance) — ТОЛЬКО против реальной угрозы (мяч летит В створ
+		# прямо сейчас), а не по голой дистанции мяча до линии. Раньше line_position реагировала
+		# на любую близость мяча к линии — включая обычный пас между СВОИМИ игроками рядом со
+		# штрафной (мяч ничем не угрожает воротам), и вратарь всё равно рвался вперёд на 2.5м.
+		# Без угрозы держим X (следим за мячом по горизонтали) но Z фиксируем на линии ворот.
+		if not (ball.is_flight() and _heading_at_goal()):
+			target.z = goal_line_z + into * 0.5
 	var to := target - _body.global_position
 	to.y = 0.0
 	if to.length() > 0.15:
