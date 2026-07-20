@@ -1,7 +1,6 @@
 extends Node3D
 
 @onready var ball: RigidBody3D = $Ball
-var player_home: CharacterBody3D          # алиас на _human_player (удаляется в конце рефактора)
 var _human_player: CharacterBody3D        # тело, которым по умолчанию управляет человек
 @onready var camera_pivot: Node3D = $CameraPivot
 @onready var score_label: Label = $HUD/ScoreLabel
@@ -9,8 +8,6 @@ var _human_player: CharacterBody3D        # тело, которым по умо
 
 var home_score: int = 0
 var away_score: int = 0
-var player_away: CharacterBody3D
-var player_teammate: CharacterBody3D
 var _team_home: Team
 var _team_away: Team
 var controlled_player: CharacterBody3D
@@ -574,7 +571,6 @@ func _setup_home_player() -> void:
 		&"teammate_home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),
 	}
 	_human_player = PlayerFactory.spawn(cfg, _team_home)
-	player_home = _human_player
 	controlled_player = _human_player
 	_human_player.set(&"controlled_player", controlled_player)
 
@@ -634,7 +630,7 @@ func assign_controlled_player(p: CharacterBody3D) -> void:
 
 ## Глушим/возвращаем полевой ИИ на время пенальти/штрафного (вратаря НЕ трогаем — он должен
 ## нырять/реагировать). Тонкая обёртка над _set_ai_frozen — раньше это была отдельная слабая
-## реализация (только player_away/player_teammate, без лока мотора), из-за чего ИИ-соперник
+## реализация (только по паре именованных игроков, без лока мотора), из-за чего ИИ-соперник
 ## (и любые другие team_1/team_2, напр. конвертированные штрафным тела) при старте штрафного
 ## НЕ останавливался: их PlayerMotor — отдельный узел со своим _physics_process, отключение
 ## ТОЛЬКО скрипта ИИ не мешало мотору доигрывать последнее заданное направление движения —
@@ -655,7 +651,7 @@ func set_field_ai_active(on: bool) -> void:
 ## ВАЖНО: controlled_player исключаем ТОЛЬКО на заморозке (on=true) — на разморозке (on=false)
 ## снимаем со ВСЕХ (кроме keep_active) безусловно. Между заморозкой (на голе/сет-писе) и
 ## разморозкой controlled_player может измениться (напр. сброс после гола всегда переключает
-## на player_home) — если бы разморозка тоже исключала «текущего», игрок, залоченный на
+## на _human_player) — если бы разморозка тоже исключала «текущего», игрок, залоченный на
 ## заморозке, но ставший controlled_player к моменту разморозки, остался бы залоченным
 ## навсегда (мотор игнорирует ввод, маркер выбран, но тело не бежит). Разморозка чужого/не-AI
 ## тела безвредна — его собственный скрипт self-гейтится по `controlled_player == self`.
@@ -730,12 +726,18 @@ func _setup_away_player() -> void:
 	cfg.extra_fields = {
 		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
 	}
-	var new_player := PlayerFactory.spawn(cfg, _team_away)
-	player_away = new_player
+	PlayerFactory.spawn(cfg, _team_away)
 	# Тестовая стенка из бездействующих соперников (только пока соперник отключён флагом) —
 	# удобно проверять удары/блоки. Вернём настоящего соперника → флаг false → стенки нет.
 	if FootballConstants.DEBUG_DISABLE_OPPONENT:
 		_spawn_wall_dummies()
+
+
+## Соперник-полевой по умолчанию (первый не-вратарь team_2). До 11×11 их немного.
+func _away_outfielder() -> CharacterBody3D:
+	for b in _team_away.outfield():
+		return b
+	return null
 
 
 ## Стенки из стоящих болванок team_2 (для теста ударов/блоков). Требует
@@ -769,7 +771,7 @@ func _make_dummy_opponent(pos: Vector3) -> void:
 
 func _setup_teammate() -> void:
 	if FootballConstants.DEBUG_DISABLE_TEAMMATE:
-		return   # ВРЕМЕННО: тиммейт отключён (тест вратаря) → player_teammate остаётся null
+		return   # ВРЕМЕННО: тиммейт отключён (тест вратаря) → не спавнится
 	var cfg := PlayerConfig.new()
 	cfg.team_group = &"team_1"
 	cfg.role = PlayerConfig.Role.MID
@@ -783,10 +785,11 @@ func _setup_teammate() -> void:
 		&"teammate_home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),
 	}
 	var new_player := PlayerFactory.spawn(cfg, _team_home)
-	player_teammate = new_player
-	# DEBUG: соперник опекает именно этого тиммейта (спавнится после соперника).
-	if FootballConstants.DEBUG_MARK_TEAMMATE and player_away and is_instance_valid(player_away):
-		player_away.set(&"mark_target", new_player)
+	# DEBUG: соперник опекает именно этого тиммейта.
+	if FootballConstants.DEBUG_MARK_TEAMMATE:
+		var opp := _away_outfielder()
+		if opp != null and is_instance_valid(opp):
+			opp.set(&"mark_target", new_player)
 
 
 func _process(delta: float) -> void:
@@ -874,13 +877,13 @@ func _physics_process(delta: float) -> void:
 		if ball.has_method(&"set_dribbler") and ball.dribbler:
 			var db: Node3D = ball.dribbler
 			# Под управлением всегда тот из НАШЕЙ команды, у кого мяч (любой team_1, включая
-			# заспавненных штрафным тиммейтов), а не только player_home/player_teammate.
+			# заспавненных штрафным тиммейтов), а не только пары именованных игроков.
 			if db != controlled_player and db.is_in_group("team_1"):
 				controlled_player = db
 				_sync_ai_controllers()
 
 	# Смена игрока — только в защите (мяч не у нас). В атаке combo_modifier = модификатор паса.
-	# Переключаем на БЛИЖАЙШЕГО к мячу из team_1 (player_home + тиммейт + заспавненные штрафным).
+	# Переключаем на БЛИЖАЙШЕГО к мячу из team_1 (человек + тиммейт + заспавненные штрафным).
 	# Если ближайший уже выбран — на второго ближайшего (иначе кнопка не давала бы эффекта).
 	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess():
 		var team := get_tree().get_nodes_in_group("team_1")
@@ -897,11 +900,12 @@ func _physics_process(delta: float) -> void:
 			_manual_swap_cooldown = 10
 
 	# Соперник целится в того из НАШЕЙ команды, кто дриблит (по группе, не по именам).
-	if player_away:
+	var opp := _away_outfielder()
+	if opp != null:
 		if ball.has_method(&"set_dribbler") and ball.dribbler and ball.dribbler.is_in_group("team_1"):
-			player_away.target_node = ball.dribbler
+			opp.target_node = ball.dribbler
 		else:
-			player_away.target_node = null
+			opp.target_node = null
 
 	_handle_tackle(delta)
 	_poll_ai_tackles()
@@ -1015,7 +1019,7 @@ func _handle_dribbling() -> void:
 	if ball.linear_velocity.length() > FootballConstants.BALL_TRAP_MAX_SPEED:
 		return
 	# Перебираем ВСЕХ полевых (team_1+team_2, кроме вратаря — у него свой захват в руки), а не
-	# жёсткий список player_home/player_teammate/player_away: иначе заспавненные штрафным тела
+	# жёсткий список именованных игроков: иначе заспавненные штрафным тела
 	# (получатель паса/навеса после истечения окна приёма) добегают к мячу, но подобрать некому.
 	var pickers := get_tree().get_nodes_in_group("team_1")
 	pickers += get_tree().get_nodes_in_group("team_2")
@@ -1212,7 +1216,7 @@ func _is_our_dribbler(player_node: Node3D) -> bool:
 func _we_possess() -> bool:
 	if not (ball.has_method(&"set_dribbler") and ball.dribbler):
 		return false
-	# По группе team_1, а не по именам player_home/player_teammate — иначе владение мячом
+	# По группе team_1, а не по именованным игрокам — иначе владение мячом
 	# заспавненным штрафным тиммейтом (team_1) не распознавалось, и combo_modifier ошибочно
 	# работал как свап игрока вместо модификатора паса.
 	return ball.dribbler.is_in_group("team_1")
