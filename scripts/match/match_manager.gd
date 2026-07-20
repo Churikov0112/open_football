@@ -683,24 +683,19 @@ func _set_ai_frozen(on: bool, keep_active: Node = null) -> void:
 
 ## Вратарь соперника в атакуемых человеком воротах (Away, +field_length).
 func _setup_keeper() -> void:
-	var k := CharacterBody3D.new()
-	k.name = "Keeper"
 	var goal_line_z := -field_length   # ворота Home на -field_length
 	var into_field := 1.0 if goal_line_z < 0.0 else -1.0
-	k.global_position = Vector3(0, 0.5, goal_line_z + into_field * 0.5)  # чуть в поле от линии
-	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	k.add_child(visual)
-	k.add_child(PlayerMotor.new())
-	visual.apply_appearance({"kit_color": Color(0.15, 0.7, 0.15)})  # вратарь — зелёный
-	visual.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
-	var col := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.height = 1.5
-	shape.radius = 0.3
-	col.shape = shape
-	col.position = Vector3(0, 0.25, 0)
-	k.add_child(col)
-	# Сейв-зона: сфера на высоте груди (накрывает низ и верх), реагирует на мяч (слой 1).
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_2"
+	cfg.role = PlayerConfig.Role.GK
+	cfg.kit_color = Color(0.15, 0.7, 0.15)   # вратарь — зелёный
+	cfg.spawn_pos = Vector3(0, 0.5, goal_line_z + into_field * 0.5)
+	cfg.display_name = "Keeper"
+	cfg.ai_script = preload("res://scripts/ai/keeper_ai.gd")
+	cfg.connect_action_signals = false        # keeper_ai сам коннектит visual.action_contact
+	cfg.locomotion_style = PlayerVisual.LOCO_STYLE_KEEPER
+	var k := PlayerFactory.spawn(cfg, _team_away)
+	# --- keeper-специфичные узлы (не входят в общий player.tscn) ---
 	var save_area := Area3D.new()
 	save_area.name = "SaveArea"
 	var sacol := CollisionShape3D.new()
@@ -711,18 +706,11 @@ func _setup_keeper() -> void:
 	save_area.add_child(sacol)
 	save_area.collision_mask = 1   # только мяч (слой 1)
 	k.add_child(save_area)
-	# Точка «рук»: сюда приклеивается пойманный мяч (грудь, чуть вперёд в поле).
 	var hold_point := Node3D.new()
 	hold_point.name = "HoldPoint"
 	hold_point.position = Vector3(0, 1.0, -0.45)
 	k.add_child(hold_point)
-	add_child(k)
-	k.add_to_group("team_2")
-	k.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	k.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
-	k.set_script(preload("res://scripts/ai/keeper_ai.gd"))
-	k.set_physics_process(true)
-	k.ball = ball
+	# keeper-поля (ball уже проставлен фабрикой)
 	k.goal_line_z = goal_line_z
 	k.save_area = save_area
 	k.hold_point = hold_point
@@ -765,61 +753,38 @@ func _spawn_wall_line(center: Vector3, spacing: float) -> void:
 
 
 func _make_dummy_opponent(pos: Vector3) -> void:
-	var p := CharacterBody3D.new()
-	p.name = "WallDummy"
-	p.global_position = pos
-	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	p.add_child(visual)
-	p.add_child(PlayerMotor.new())
-	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
-	var col := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.height = 1.5
-	shape.radius = 0.3
-	col.shape = shape
-	col.position = Vector3(0, 0.25, 0)
-	p.add_child(col)
-	add_child(p)
-	p.add_to_group("team_2")
-	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
-	p.set_script(preload("res://scripts/ai/simple_ai.gd"))
-	p.set_physics_process(true)
-	p.ball = ball
-	p.home_goal = $GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_2"
+	cfg.role = PlayerConfig.Role.DEF
+	cfg.kit_color = Color(0.9, 0.1, 0.1)
+	cfg.spawn_pos = pos
+	cfg.display_name = "WallDummy"
+	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
+	cfg.connect_action_signals = true
+	cfg.extra_fields = {
+		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
+	}
+	PlayerFactory.spawn(cfg, _team_away)
 
 
 func _setup_teammate() -> void:
 	if FootballConstants.DEBUG_DISABLE_TEAMMATE:
 		return   # ВРЕМЕННО: тиммейт отключён (тест вратаря) → player_teammate остаётся null
-	var new_player := CharacterBody3D.new()
-	new_player.name = "PlayerTeammate"
-	new_player.global_position = Vector3(10, 0.5, 5)
-	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	new_player.add_child(visual)
-	new_player.add_child(PlayerMotor.new())
-	visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
-	visual.action_contact.connect(_on_action_contact.bind(new_player))
-	visual.action_finished.connect(_on_action_finished.bind(new_player))
-	var col := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.height = 1.5
-	shape.radius = 0.3
-	col.shape = shape
-	col.position = Vector3(0, 0.25, 0)
-	new_player.add_child(col)
-	add_child(new_player)
-	new_player.add_to_group("team_1")
-	new_player.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	new_player.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
-	var teammate_script = preload("res://scripts/ai/teammate_ai.gd")
-	new_player.set_script(teammate_script)
-	new_player.set_physics_process(true)
-	new_player.ball = ball
-	new_player.controlled_player = controlled_player
-	new_player.teammate_home_goal = $GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_1"
+	cfg.role = PlayerConfig.Role.MID
+	cfg.kit_color = Color(0.1, 0.1, 0.9)
+	cfg.spawn_pos = Vector3(10, 0.5, 5)
+	cfg.display_name = "PlayerTeammate"
+	cfg.ai_script = preload("res://scripts/ai/teammate_ai.gd")
+	cfg.connect_action_signals = true
+	cfg.extra_fields = {
+		&"controlled_player": controlled_player,
+		&"teammate_home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),
+	}
+	var new_player := PlayerFactory.spawn(cfg, _team_home)
 	player_teammate = new_player
-	# DEBUG: соперник опекает именно этого тиммейта (он спавнится после соперника — ссылку ставим тут).
+	# DEBUG: соперник опекает именно этого тиммейта (спавнится после соперника).
 	if FootballConstants.DEBUG_MARK_TEAMMATE and player_away and is_instance_valid(player_away):
 		player_away.set(&"mark_target", new_player)
 
