@@ -29,14 +29,14 @@ func _tick() -> void:
 	if ball.is_caught():
 		_caught_seen = true
 	if _frames % 30 == 0:
-		var keeper := _match_root.get_node_or_null("Keeper")
+		var keeper = _match_root.get(&"_keeper")   # после рефактора вратарь под TeamAway — берём из поля менеджера
 		var kst = keeper.get(&"_state") if keeper != null else -1
 		print("[T] f=", _frames, " keeper_state=", kst, " ball_state=", ball.state,
 			" celebrating=", _match_root.is_celebrating(), " ball=", ball.global_position)
 	# Через ~6 секунд весь сценарий (ловля ~0.5с + HOLD 1с + THROWING ~1с + полёт навеса) обязан
 	# завершиться: мяч не в руках/не ведётся и унесён броском от ворот в поле.
 	if _frames >= 10 + 360:
-		var keeper := _match_root.get_node_or_null("Keeper")
+		var keeper = _match_root.get(&"_keeper")   # после рефактора вратарь под TeamAway — берём из поля менеджера
 		var kst = keeper.get(&"_state") if keeper != null else -1
 		if not _caught_seen:
 			print("CHECK FAIL: keeper never caught the ball")
