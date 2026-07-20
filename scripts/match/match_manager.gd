@@ -479,7 +479,10 @@ func _setup_goals() -> void:
 				return
 			if body == ball and not _celebrating:
 				_celebrating = true
-				_set_ai_frozen(true)   # все ИИ стоп в idle (задел на будущее празднование)
+				# Вратаря НЕ замораживаем: у keeper_ai своя обработка празднования (доигрывает
+				# нырок и встаёт в idle ТОЛЬКО по завершении клипа). Заморозка (стоп _physics_process
+				# + лок мотора) обрывала бы это, и вратарь мгновенно вставал в idle-позу посреди нырка.
+				_set_ai_frozen(true, _keeper)   # прочие ИИ стоп в idle
 				if g.side == "Home":
 					away_score += 1
 				else:
@@ -2222,7 +2225,7 @@ func _celebrate_then_reset(net) -> void:
 	if net and is_instance_valid(net):
 		net.stop_sim()
 	_celebrating = false
-	_set_ai_frozen(false)   # возвращаем ИИ в игру
+	_set_ai_frozen(false, _keeper)   # возвращаем ИИ в игру (вратаря не трогали — он сам собой управлял)
 
 
 func _poll_ai_tackles() -> void:
