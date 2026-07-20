@@ -49,6 +49,18 @@ func _process(delta: float) -> bool:
 				_fail("нет контроллера пенальти/штрафного"); return true
 			if _victim == null:
 				_fail("нет поле-ИИ team_2 для проверки"); return true
+			# --- ГЕЙТ ПОДКАТОВ: _poll_ai_tackles во время празднования = no-op (иначе соперник
+			#     добивает забившего слайдом → падение + вставание) ---
+			_mm.set(&"_celebrating", true)
+			var vbrain = _victim.brain() if _victim.has_method(&"brain") else null
+			if vbrain != null:
+				vbrain.set(&"wants_to_tackle", true)
+			_mm.call(&"_poll_ai_tackles")
+			if int(_mm.get(&"_tackle_state")) != 0:   # 0 = TackleState.NORMAL
+				_fail("подкат стартовал во время празднования (гейт _poll_ai_tackles не сработал)"); return true
+			if vbrain != null:
+				vbrain.set(&"wants_to_tackle", false)
+			_mm.set(&"_celebrating", false)
 			# --- ПЕНАЛЬТИ: старт + удар + гол ---
 			_pen.start_single(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
 			_pen._fire(0.7)                     # → фаза WATCH → позже _release()
