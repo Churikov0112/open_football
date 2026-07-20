@@ -29,6 +29,8 @@ var _free_kick_active: bool = false
 var _action_executor                           # ActionExecutor
 var _free_kick_cam_pose: Transform3D = Transform3D.IDENTITY
 var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
+var _third_person_camera: bool = false         # DEBUG: переключение 1/3 — broadcast / вид от 3-го лица
+var _tp_cam_eye: Vector3 = Vector3.ZERO        # сглаженная позиция third-person камеры
 
 enum TackleState { NORMAL, SLIDING, RECOVERING }
 enum FallState { NONE, KNOCKDOWN, ROLL_1, ROLL_2, GETUP }
@@ -223,6 +225,8 @@ func _setup_inputs() -> void:
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
 		&"free_kick_debug": {"keys": [KEY_F],     "buttons": [], "axes": []},
+		&"camera_broadcast":    {"keys": [KEY_1], "buttons": [], "axes": []},
+		&"camera_third_person": {"keys": [KEY_3], "buttons": [], "axes": []},
 	}
 	for action in actions:
 		if InputMap.has_action(action):
@@ -797,13 +801,30 @@ func _setup_teammate() -> void:
 
 func _process(delta: float) -> void:
 	var ball_pos := ball.global_position
+	# DEBUG: 1 = обычная broadcast-камера, 3 = вид от 3-го лица за управляемым игроком (удобнее тестить).
+	if Input.is_action_just_pressed(&"camera_broadcast"):
+		_third_person_camera = false
+	elif Input.is_action_just_pressed(&"camera_third_person"):
+		_third_person_camera = true
+
 	# Пенальти/штрафной — свои фикс-камеры от 3-го лица за бьющим (см. соответствующие
 	# контроллеры). Обычная игра — ТВ-трансляция: фикс. позиция сбоку и сверху поля, плавно
-	# панорамирует за МЯЧОМ (не за игроком), а не следует от 3-го лица за спиной игрока.
+	# панорамирует за МЯЧОМ (не за игроком), а не следует от 3-го лица за спиной игрока —
+	# если только не включён DEBUG-вид от 3-го лица (кнопка 3).
 	if _penalty_active:
 		camera_pivot.global_transform = _penalty_cam_pose
 	elif _free_kick_active:
 		camera_pivot.global_transform = _free_kick_cam_pose
+	elif _third_person_camera and controlled_player != null:
+		var forward := -controlled_player.global_transform.basis.z
+		forward.y = 0.0
+		forward = forward.normalized() if forward.length() > 0.001 else Vector3(0, 0, -1)
+		var target_eye := controlled_player.global_position - forward * FootballConstants.CAMERA_TP_DISTANCE \
+			+ Vector3.UP * FootballConstants.CAMERA_TP_HEIGHT
+		var target_look := controlled_player.global_position + forward * FootballConstants.CAMERA_TP_LOOK_AHEAD
+		_tp_cam_eye = _tp_cam_eye.lerp(target_eye, clampf(FootballConstants.CAMERA_TP_FOLLOW * delta, 0.0, 1.0))
+		camera_pivot.global_position = _tp_cam_eye
+		camera_pivot.look_at(target_look, Vector3.UP)
 	else:
 		_bc_cam_eye_z = lerpf(_bc_cam_eye_z, ball_pos.z, clampf(FootballConstants.CAMERA_BC_FOLLOW * delta, 0.0, 1.0))
 		var eye := Vector3(FootballConstants.CAMERA_BC_X, FootballConstants.CAMERA_BC_HEIGHT, _bc_cam_eye_z)
