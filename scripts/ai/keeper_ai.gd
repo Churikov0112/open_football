@@ -282,6 +282,7 @@ func set_penalty_mode(on: bool) -> void:
 		# На линию по центру створа (как в _setup_keeper).
 		var into := 1.0 if goal_line_z < 0.0 else -1.0
 		_body.global_position = Vector3(0.0, _ground_y, goal_line_z + into * 0.5)
+		_body.velocity = Vector3.ZERO   # гасим остаточный импульс (вратарь мог выходить/двигаться), иначе унесёт с линии
 		var m := _motor()
 		if m != null:
 			m.set_control_locked(false)
@@ -328,9 +329,17 @@ func _pen_zone_to_action(zone: int) -> int:
 func _penalty_hold(delta: float, m: PlayerMotor) -> void:
 	var into := -1.0 if goal_line_z > 0.0 else 1.0
 	m.set_face_direction(Vector3(ball.global_position.x - _body.global_position.x, 0.0, into * 4.0))
-	var to := Vector3(-_body.global_position.x, 0.0, 0.0)  # к центру створа (x=0)
-	if to.length() > 0.15:
-		m.set_move_intent(to.normalized(), 1.0)
+	# Держим ПОЛНУЮ позицию на линии — центр створа (X=0) И глубину линии (Z=goal_line_z+into*0.5,
+	# та же точка, куда телепортирует set_penalty_mode). Раньше корректировали только X: если вратарь
+	# в момент нажатия P выходил навстречу удару, остаточная Z-скорость уносила его вперёд с линии, и
+	# вернуть было некому (Z не правился) — «вратарь не на линии». Теперь возвращаем по обеим осям.
+	var anchor_z := goal_line_z + into * 0.5
+	var to := Vector3(-_body.global_position.x, 0.0, anchor_z - _body.global_position.z)
+	var d := to.length()
+	if d > 0.15:
+		# Проп. скорость: тормозим у якоря, чтобы инерция мотора не проносила вратаря сквозь линию
+		# (иначе — качание туда-сюда). Далеко — полный ход, близко — плавно к нулю.
+		m.set_move_intent(to / d, clampf(d * 0.7, 0.15, 1.0))
 	else:
 		m.set_move_intent(Vector3.ZERO)
 	# Рефлекс центрального мяча: по высоте прилёта — scoop/catch/catch_head/catch_top / miss_top.
