@@ -427,31 +427,18 @@ func _spawn_defense() -> void:
 
 ## Создать статичное тело стенки (team_2, лицом к мячу), пока без ИИ-скрипта.
 func _make_wall_body(pos: Vector3) -> CharacterBody3D:
-	var p := CharacterBody3D.new()
-	p.name = "WallMember"
-	p.global_position = pos
-	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	p.add_child(visual)
-	p.add_child(PlayerMotor.new())
-	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
-	# Полноценный игрок: подключаем сигналы удара/паса, как штатные игроки (иначе система
-	# deferred-impulse ждёт action_contact, который не приходит → пас летит по фолбэку с другой
-	# силой/направлением и без анимации, когда этим телом управляют).
-	visual.action_contact.connect(_manager._on_action_contact.bind(p))
-	visual.action_finished.connect(_manager._on_action_finished.bind(p))
-	var col := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.height = 1.5
-	shape.radius = 0.3
-	col.shape = shape
-	col.position = Vector3(0, 0.25, 0)
-	p.add_child(col)
-	_manager.add_child(p)
-	p.add_to_group("team_2")
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_2"
+	cfg.role = PlayerConfig.Role.DEF
+	cfg.kit_color = Color(0.9, 0.1, 0.1)
+	cfg.spawn_pos = pos
+	cfg.display_name = "WallMember"
+	cfg.control_mode = PlayerConfig.ControlMode.AI
+	cfg.ai_script = null                 # пока без ИИ — стоит на месте; _convert_bodies даст simple_ai
+	cfg.connect_action_signals = true    # полноценный игрок: сигналы удара/паса как у штатных
+	var p := PlayerFactory.spawn(cfg, _manager._team_away)
 	p.add_to_group("fk_spawned")
-	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
-	# Лицом к мячу, мотор залочен (стоит на месте).
+	# лицом к мячу, мотор залочен (стоит на месте)
 	p.look_at(Vector3(_spot.x, pos.y, _spot.z), Vector3.UP)
 	var pm := PlayerMotor.find_on(p)
 	if pm != null:
@@ -549,29 +536,17 @@ func _spawn_mates() -> void:
 
 ## Создать статичное тело своей команды (team_1), пока без ИИ-скрипта.
 func _make_mate_body(pos: Vector3) -> CharacterBody3D:
-	var p := CharacterBody3D.new()
-	p.name = "FKMate"
-	p.global_position = pos
-	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	p.add_child(visual)
-	p.add_child(PlayerMotor.new())
-	visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
-	# Полноценный игрок: сигналы удара/паса как у штатных (иначе при управлении этим телом пас
-	# идёт по фолбэку — другая сила/направление, без анимации). См. _make_wall_body.
-	visual.action_contact.connect(_manager._on_action_contact.bind(p))
-	visual.action_finished.connect(_manager._on_action_finished.bind(p))
-	var col := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.height = 1.5
-	shape.radius = 0.3
-	col.shape = shape
-	col.position = Vector3(0, 0.25, 0)
-	p.add_child(col)
-	_manager.add_child(p)
-	p.add_to_group("team_1")
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_1"
+	cfg.role = PlayerConfig.Role.FWD
+	cfg.kit_color = Color(0.1, 0.1, 0.9)
+	cfg.spawn_pos = pos
+	cfg.display_name = "FKMate"
+	cfg.control_mode = PlayerConfig.ControlMode.AI
+	cfg.ai_script = null                 # без ИИ до _convert_bodies (даст teammate_ai)
+	cfg.connect_action_signals = true
+	var p := PlayerFactory.spawn(cfg, _manager._team_home)
 	p.add_to_group("fk_spawned")
-	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
 	var pm := PlayerMotor.find_on(p)
 	if pm != null:
 		pm.set_control_locked(true)
