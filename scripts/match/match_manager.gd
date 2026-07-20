@@ -1,3 +1,4 @@
+class_name MatchManager
 extends Node3D
 
 @onready var ball: RigidBody3D = $Ball
@@ -25,6 +26,7 @@ var _penalty                                   # PenaltyController
 var _penalty_cam_pose: Transform3D = Transform3D.IDENTITY
 var _free_kick                                 # FreeKickController
 var _free_kick_active: bool = false
+var _action_executor                           # ActionExecutor
 var _free_kick_cam_pose: Transform3D = Transform3D.IDENTITY
 var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
 
@@ -147,6 +149,10 @@ func _ready() -> void:
 	_free_kick.name = "FreeKickController"
 	add_child(_free_kick)
 	_free_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_action_executor = ActionExecutor.new()
+	_action_executor.name = "ActionExecutor"
+	add_child(_action_executor)
+	_action_executor.setup(self, ball)
 	# Стартовая расстановка: человек с мячом в центре (соперник глубоко — см. _setup_away_player).
 	ball.global_position = _human_player.global_position + Vector3(0, 0.0, -0.6)
 	if ball.has_method(&"set_dribbler"):
