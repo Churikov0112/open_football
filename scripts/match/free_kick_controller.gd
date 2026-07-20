@@ -518,10 +518,11 @@ func _convert_bodies() -> void:
 		var mpm := PlayerMotor.find_on(mb)
 		if mpm != null:
 			mpm.set_control_locked(false)
-		mb.set_script(mate_script)
-		mb.set_physics_process(true)
-		mb.ball = _ball
-		mb.controlled_player = _manager.controlled_player
+		var mbrain := mate_script.new()      # teammate_ai теперь Brain-компонент
+		mbrain.name = "Brain"
+		mb.add_child(mbrain)
+		mbrain.ball = _ball
+		mbrain.controlled_player = _manager.controlled_player
 
 # ── Пас/навес ─────────────────────────────────────────────────────────────────
 func _spawn_mates() -> void:

@@ -1022,8 +1022,8 @@ func _handle_dribbling() -> void:
 		var recv_dist: float = _receiver.global_position.distance_to(ball.global_position)
 		if recv_dist < FootballConstants.PASS_RECEIVE_CATCH_RADIUS:
 			ball.set_dribbler(_receiver, true)  # force: минуем кулдаун релиза (короткий пас доходит <500мс)
-			if _receiver.has_method(&"end_receiving"):
-				_receiver.end_receiving()
+			if _ai_of(_receiver).has_method(&"end_receiving"):
+				_ai_of(_receiver).end_receiving()
 			return
 	# Прочий подбор (бесхозный/остановившийся мяч) — только медленный: быстрый мяч «в полёте».
 	if ball.linear_velocity.length() > FootballConstants.BALL_TRAP_MAX_SPEED:
@@ -1039,8 +1039,8 @@ func _handle_dribbling() -> void:
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
 			ball.set_dribbler(p)
-			if p.has_method(&"end_receiving"):
-				p.end_receiving()
+			if _ai_of(p).has_method(&"end_receiving"):
+				_ai_of(p).end_receiving()
 			return
 
 
