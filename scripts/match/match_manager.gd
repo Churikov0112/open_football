@@ -724,7 +724,7 @@ func _setup_away_player() -> void:
 	cfg.team_group = &"team_2"
 	cfg.role = PlayerConfig.Role.FWD
 	cfg.kit_color = Color(0.9, 0.1, 0.1)
-	cfg.spawn_pos = Vector3(0, 0.5, -30)   # 30 м впереди человека (по направлению атаки −Z)
+	cfg.spawn_pos = Vector3(0, 0.5, -45)   # глубоко у защищаемых ворот (−Z): ~45 м разбега человеку
 	cfg.display_name = "PlayerAway"
 	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
 	cfg.connect_action_signals = true
