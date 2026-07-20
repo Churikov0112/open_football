@@ -13,6 +13,7 @@ var _ball: RigidBody3D
 var _camera_pivot: Node3D
 var _power_bar: ProgressBar
 var _keeper: CharacterBody3D
+var _keeper_brain: Node
 
 var _phase: int = Phase.IDLE
 var _kicker: CharacterBody3D
@@ -41,6 +42,7 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
 	_keeper = keeper
+	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_pen_rng.randomize()
 	_build_reticle()
 
@@ -85,8 +87,8 @@ func _setup() -> void:
 		km.set_move_intent(Vector3.ZERO)
 		km.set_face_direction(_forward)
 	# Вратарь: пенальти-режим (центр, keeper_idle, реактивный сейв off).
-	if _keeper != null and _keeper.has_method(&"set_penalty_mode"):
-		_keeper.set_penalty_mode(true)
+	if _keeper_brain != null and _keeper_brain.has_method(&"set_penalty_mode"):
+		_keeper_brain.set_penalty_mode(true)
 	# Правило: все, кроме бьющего и вратаря, — за мяч и вне штрафной (радиус 9.15 м от точки).
 	_clear_box()
 	# Прицел в центр створа.
@@ -219,8 +221,8 @@ func _on_kicker_contact(_action: String) -> void:
 	_contact_connected = false
 	if _ball.has_method(&"launch"):
 		_ball.launch(_pending_launch, false)
-	if _keeper != null and _keeper.has_method(&"begin_penalty_dive"):
-		_keeper.begin_penalty_dive(_struck_zone)
+	if _keeper_brain != null and _keeper_brain.has_method(&"begin_penalty_dive"):
+		_keeper_brain.begin_penalty_dive(_struck_zone)
 	struck.emit()
 	if release_after_strike:
 		# Не переключаем камеру сразу (иначе рывок на самом ударе) — держим пенальти-вид PEN_WATCH_TIME,

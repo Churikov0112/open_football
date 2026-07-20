@@ -12,6 +12,7 @@ var _ball: RigidBody3D
 var _camera_pivot: Node3D
 var _power_bar: ProgressBar
 var _keeper: CharacterBody3D
+var _keeper_brain: Node
 
 var _phase: int = Phase.IDLE
 var _kicker: CharacterBody3D
@@ -48,6 +49,7 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
 	_keeper = keeper
+	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_fk_rng.randomize()
 
 func is_active() -> bool:
@@ -101,11 +103,11 @@ func _setup() -> void:
 		kvis.cancel_action()
 		kvis.recover()
 	# Вратарь: реактивный режим штрафного (позиция-якорь, сейв ВКЛ).
-	if _keeper != null and _keeper.has_method(&"set_freekick_anchor"):
+	if _keeper_brain != null and _keeper_brain.has_method(&"set_freekick_anchor"):
 		var nf := FreeKickLogic.near_far_posts(_spot, 0.0, FootballConstants.GOAL_WIDTH * 0.5, _goal_line_z)
 		var kpos := FreeKickLogic.keeper_position(_spot, nf[0], nf[1], FootballConstants.GOAL_WIDTH * 0.5,
 			FootballConstants.FK_KEEPER_STEP_OUT, _goal_line_z, 0.5)
-		_keeper.set_freekick_anchor(kpos)
+		_keeper_brain.set_freekick_anchor(kpos)
 	# Прячем debug-болванки стенки (тестовое scaffolding), чтобы не засоряли розыгрыш.
 	_hide_debug_dummies()
 	# Правило 9.15 м: соперники (кроме вратаря) не должны стоять ближе к мячу ВООБЩЕ, по
@@ -331,8 +333,8 @@ func _release() -> void:
 	if km != null:
 		km.set_face_direction(Vector3.ZERO)
 		km.set_control_locked(false)
-	if _keeper != null and _keeper.has_method(&"clear_freekick_anchor"):
-		_keeper.clear_freekick_anchor()
+	if _keeper_brain != null and _keeper_brain.has_method(&"clear_freekick_anchor"):
+		_keeper_brain.clear_freekick_anchor()
 	_convert_bodies()                 # стенка/тиммейты → обычный ИИ
 	_restore_debug_dummies()          # возвращаем спрятанные debug-болванки
 	_manager.set_field_ai_active(true)

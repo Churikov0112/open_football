@@ -24,7 +24,7 @@ func _process(delta: float) -> bool:
 		if _pen == null:
 			print("CHECK FAIL: нет узла PenaltyController")
 			return true
-		_pen.start_single(_mm.controlled_player, _mm._keeper.goal_line_z)
+		_pen.start_single(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
 		_started = true
 		if not _mm.is_penalty_active():
 			print("CHECK FAIL: пенальти-режим не включился после start_single")

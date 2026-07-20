@@ -40,6 +40,7 @@ var _hit_processed: bool = false
 var _tackle_recovery_timer: float = 0.0
 var _tackle_area: Area3D
 var _keeper: CharacterBody3D
+var _keeper_brain: Node
 var _tackle_foul_position: Vector3 = Vector3.ZERO
 var _tackle_fouled_player: Node3D
 
@@ -699,7 +700,8 @@ func _setup_keeper() -> void:
 	cfg.connect_action_signals = false        # keeper_ai сам коннектит visual.action_contact
 	cfg.locomotion_style = PlayerVisual.LOCO_STYLE_KEEPER
 	var k := PlayerFactory.spawn(cfg, _team_away)
-	# --- keeper-специфичные узлы (не входят в общий player.tscn) ---
+	var kb: Node = k.brain()                    # keeper теперь Brain-компонент
+	# --- keeper-специфичные узлы (не входят в общий player.tscn) — на ТЕЛО (transform) ---
 	var save_area := Area3D.new()
 	save_area.name = "SaveArea"
 	var sacol := CollisionShape3D.new()
@@ -714,12 +716,13 @@ func _setup_keeper() -> void:
 	hold_point.name = "HoldPoint"
 	hold_point.position = Vector3(0, 1.0, -0.45)
 	k.add_child(hold_point)
-	# keeper-поля (ball уже проставлен фабрикой)
-	k.goal_line_z = goal_line_z
-	k.save_area = save_area
-	k.hold_point = hold_point
-	k.manager = self
+	# keeper-поля (ball уже проставлен фабрикой) — на МОЗГ
+	kb.goal_line_z = goal_line_z
+	kb.save_area = save_area
+	kb.hold_point = hold_point
+	kb.manager = self
 	_keeper = k
+	_keeper_brain = kb
 
 
 func _setup_away_player() -> void:
@@ -861,7 +864,7 @@ func _physics_process(delta: float) -> void:
 	# Пенальти по P — только из чистого состояния: во время празднования гола ждёт отложенный
 	# _reset_ball() (телепорт игроков/мяча), запуск пенальти в это окно ломает расстановку.
 	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null and not _celebrating:
-		_penalty.start_single(controlled_player, _keeper.goal_line_z)
+		_penalty.start_single(controlled_player, _keeper_brain.goal_line_z)
 		return
 	# Штрафной-режим: всё ведёт контроллер, обычные системы заглушены.
 	if _free_kick_active:
@@ -869,7 +872,7 @@ func _physics_process(delta: float) -> void:
 		return
 	# Штрафной по F — только из чистого состояния (не во время празднования гола).
 	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper != null and not _celebrating:
-		_free_kick.start(controlled_player, _keeper.goal_line_z)
+		_free_kick.start(controlled_player, _keeper_brain.goal_line_z)
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():
@@ -2199,9 +2202,9 @@ func _on_ball_collision(body: Node) -> void:
 		ball.clear_curl()
 	# Мяч коснулся вратаря → ловля/отбой (а не блок): иначе block_in_flight гасит мяч, и он
 	# закатывается в ворота. Физический контакт — надёжный триггер сейва.
-	if body == _keeper and _keeper != null and is_instance_valid(_keeper) and _keeper.has_method(&"on_ball_contact"):
+	if body == _keeper and _keeper_brain != null and _keeper_brain.has_method(&"on_ball_contact"):
 		print("[MATCH] ball hit KEEPER capsule")
-		_keeper.on_ball_contact()
+		_keeper_brain.on_ball_contact()
 		return
 	# Блок: летящий мяч коснулся игрока (защитник на пути / попал в своего). Гасим и роняем
 	# мяч в OPEN (без мгновенной передачи владения — дальше обычная борьба за подбор).
