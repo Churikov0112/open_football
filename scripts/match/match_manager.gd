@@ -48,6 +48,7 @@ var _fall_player: CharacterBody3D
 var _fall_visual: PlayerVisual
 var _fall_timer: float = 0.0
 var _fall_away_dir: Vector3 = Vector3.ZERO   # горизонталь: от подкатчика к жертве
+var _fall_ground_y: float = 0.5              # уровень газона жертвы (пин Y на время падения)
 var _fall_roll_clip: StringName = &"roll_left"
 var _roll_len: float = 0.5
 var _getup_len: float = 1.0
@@ -1913,6 +1914,11 @@ func _begin_fall(body: CharacterBody3D, normal: Vector3) -> void:
 			_finish_fall()
 		else:
 			_abort_fall()
+	# Уровень газона жертвы: пиним Y на всё падение (мотор в fallen гравитацию НЕ применяет,
+	# а _process_fall двигает только горизонталь — без пина приподнятое при контакте тело
+	# зависает в воздухе на всю анимацию). Газон плоский, высота стойки = spawn-y (home_pos).
+	var _fall_home: Vector3 = body.get_meta(&"home_pos", body.global_position)
+	_fall_ground_y = _fall_home.y
 	var visual := _player_visual(body)
 	if visual == null or not visual.has_method(&"play_oneshot"):
 		# Фолбэк: нет визуала — просто помечаем fallen на короткое время.
@@ -1959,6 +1965,9 @@ func _process_fall(delta: float) -> void:
 		_abort_fall()
 		return
 	_fall_timer += delta
+	# Держим тело на газоне: перекаты/отброс — только горизонталь; вертикаль (лежит/встаёт)
+	# делает клип, а физика в fallen Y не трогает. Без пина приподнятое при контакте тело зависло бы.
+	_fall_player.global_position.y = _fall_ground_y
 
 	match _fall_state:
 		FallState.KNOCKDOWN:
