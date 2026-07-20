@@ -10,7 +10,7 @@
 - **Autoload:** `FootballConstants` (see `project.godot` [autoload])
 - **Entry point:** `main_menu.tscn` → `_on_start` loads `match.tscn` (NOT `match.tscn` directly)
 - **All match logic** lives in `match_manager.gd` (controls input, AI, dribbling, goals, camera)
-- **Player scripts** live on the CharacterBody3D nodes: `simple_ai.gd` (opponent), `teammate_ai.gd` (our team AI), `keeper_ai.gd` (goalkeeper in the Home goal)
+- **AI scripts** are child `Brain` components (`scripts/ai/brain.gd`, `class_name Brain extends Node`), not `set_script` on the body: `simple_ai.gd` (opponent), `teammate_ai.gd` (our team AI), `keeper_ai.gd` (goalkeeper in the Home goal) all `extends Brain` and read their body via `_body := get_parent()`. The body root itself is `scripts/player/player.gd` (`class_name Player extends CharacterBody3D`, has `brain()`). `MatchManager._ai_of(body)` is the bridge every manager call-site uses to reach an AI's fields/methods.
 - **Player visuals** are a separate presentation layer: each field player gets a `scenes/player_visual.tscn` (`PlayerVisual`) child holding a rigged Mixamo model + AnimationTree. Gameplay (physics/AI) and presentation (model/anim) are kept decoupled.
 - **Player locomotion** is a third component: every field player also gets a `PlayerMotor` child (`player_motor.gd`), spawned AFTER `PlayerVisual` (order matters — it finds its sibling visual once in `_ready()`). It owns all movement physics; callers only call `motor.set_move_intent(dir, speed_scale)`, never write `global_position`/`rotation` directly.
 - **Ball physics** in `ball_controller.gd` — `BallState` machine (OPEN/TRAPPED/FLIGHT/CAUGHT), continuous **lead-follow** dribbling (NOT velocity-matching/spring), FLIGHT-gated ball↔player collision. See `CLAUDE.md`'s *Ball model & dribbling* section (source of truth).
@@ -30,7 +30,7 @@
 - **Camera:** sideline broadcast style — `camera_pivot` at X=-40, Y=20, follows ball Z, `look_at(Vector3(0,0,ballZ), UP)`
 - **Movement** is arrows/left-stick, camera-relative (uses `camera_pivot.global_transform.basis`) — WASD letters are freed for pass/shot actions, see *Passing* bullet above.
 - **Controlled player** switch: **Q**/`LB` (manual, only when our team doesn't have the ball — otherwise it's the pass-combo modifier), auto-switch to whoever on our team has the ball
-- **Players are spawned via one seam:** `PlayerFactory.spawn(config: PlayerConfig, team: Team)` (`scripts/match/player_factory.gd`) — instantiates `scenes/player.tscn`, tints kit, sets layers/groups/role, registers into a `Team` roster node, `set_script()`s the AI. No more `player_home`/`player_teammate`/`player_away` singletons — query `_team_home`/`_team_away` (`Team.players()`/`by_role()`/`keeper()`/`outfield()`) or groups instead. `_human_player` is the one remaining singleton (the human's default controlled body); it gets `teammate_ai.gd` too, and self-gates on `controlled_player == self`.
+- **Players are spawned via one seam:** `PlayerFactory.spawn(config: PlayerConfig, team: Team)` (`scripts/match/player_factory.gd`) — instantiates `scenes/player.tscn`, tints kit, sets layers/groups/role, registers into a `Team` roster node, attaches the AI as a **child `Brain` component** (`add_child`, not `set_script`). No more `player_home`/`player_teammate`/`player_away` singletons — query `_team_home`/`_team_away` (`Team.players()`/`by_role()`/`keeper()`/`outfield()`) or groups instead. `_human_player` is the one remaining singleton (the human's default controlled body); it gets a `teammate_ai.gd` brain too, and self-gates on `controlled_player == _body`. The keeper is special-cased: `match_manager._keeper`/`penalty_controller._keeper`/`free_kick_controller._keeper` stay the body (freeze/exclusion checks), a parallel `_keeper_brain` field carries its API (`goal_line_z`, `on_ball_contact()`, `set_penalty_mode()`, etc.).
 
 ## Colors
 - Home & teammate: **blue** (`Color(0.1, 0.1, 0.9)`)
@@ -56,10 +56,12 @@ scripts/match/pass_system.gd    — PassSystem: 8 pure static pass-math function
 scripts/match/pass_params.gd    — PassParams: plain data holder for a pass's power/height/lead
 scripts/match/net_sim.gd        — NetSim: pure static goal-net math (box-net builder + Verlet/PBD step, headless-tested)
 scripts/match/goal_net.gd       — GoalNet: per-goal net component (procedural mesh, sim, ImmediateMesh line render)
-scripts/ai/simple_ai.gd         — opponent AI (red, chases target/ball, shoots, honest interception)
-scripts/ai/teammate_ai.gd       — teammate AI (blue, positions for pass / chases ball / receives / give-and-go run)
-scripts/ai/keeper_ai.gd         — goalkeeper AI (save loop + ball-in-hands + distribution; math in keeper_logic.gd)
+scripts/ai/brain.gd             — Brain: base AI component (extends Node); _body accessor + _drive()/_stop() into PlayerMotor
+scripts/ai/simple_ai.gd         — opponent AI (red, chases target/ball, shoots, honest interception) — extends Brain
+scripts/ai/teammate_ai.gd       — teammate AI (blue, positions for pass / chases ball / receives / give-and-go run) — extends Brain
+scripts/ai/keeper_ai.gd         — goalkeeper AI (save loop + ball-in-hands + distribution; math in keeper_logic.gd) — extends Brain
 scripts/match/keeper_logic.gd   — KeeperLogic: pure static keeper math (drag-aware intercept, save zones, roll/throw speeds; headless-tested)
+scripts/player/player.gd        — Player: stable player.tscn root (extends CharacterBody3D), team_group/role fields + brain() lookup
 scripts/player/player_visual.gd — PlayerVisual: idle/run/sprint AnimationTree + action/fall one-shots + apply_appearance tint + set_lean
 scripts/player/player_motor.gd  — PlayerMotor: velocity+inertia locomotion (accel/decel/turn/lean/sprint)
 scripts/player/ragdoll_skeleton.gd — DEAD CODE (physics ragdoll, replaced by animation-driven fall in match_manager.gd; still has passing tests, nothing live calls it)

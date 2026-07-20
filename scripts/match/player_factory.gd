@@ -1,8 +1,8 @@
 class_name PlayerFactory
 extends Object
 ## Единственный шов создания игрока. Инстанцирует player.tscn, красит, вешает слои/группы/роль,
-## регистрирует в Team, навешивает ИИ-скрипт (Фаза 1: set_script). Повторяет 1:1 порядок операций
-## прежних 7 копипаст-сайтов: kit до входа в дерево, set_script ПОСЛЕ add_child, поля после set_script.
+## регистрирует в Team, навешивает ИИ как дочерний Brain-компонент (Фаза 2). Повторяет 1:1 порядок
+## операций прежних 7 копипаст-сайтов: kit до входа в дерево, мозг ПОСЛЕ add_child, поля после мозга.
 
 const PLAYER_SCENE := preload("res://scenes/player.tscn")
 
@@ -28,21 +28,13 @@ static func spawn(config: PlayerConfig, team: Team) -> CharacterBody3D:
 	if config.connect_action_signals and team.manager != null and visual != null:
 		visual.action_contact.connect(team.manager._on_action_contact.bind(body))
 		visual.action_finished.connect(team.manager._on_action_finished.bind(body))
-	# мозг (Фаза 2): Brain-скрипт → дочерний компонент; легаси (extends CharacterBody3D) → set_script.
-	# Автодетект через `is Brain` не требует правки конфигов при конверсии ИИ по одному.
+	# мозг (Фаза 2): все ИИ — Brain-компоненты (дочерний узел), никакого set_script на корне.
 	var ai_target: Object = body
 	if config.control_mode == PlayerConfig.ControlMode.AI and config.ai_script != null:
-		var inst: Object = config.ai_script.new()
-		if inst is Brain:
-			(inst as Node).name = "Brain"
-			body.add_child(inst)          # Brain._ready кэширует _body = get_parent()
-			ai_target = inst
-		else:
-			(inst as Node).free()         # легаси: проба-инстанс не нужна, идём через set_script
-			body.set_script(config.ai_script)
-			body.set_physics_process(true)
-			ai_target = body
-	# общая ссылка на мяч + пер-ролевые поля — на мозг (компонент) либо тело (легаси)
+		var brain: Node = config.ai_script.new()
+		brain.name = "Brain"
+		body.add_child(brain)              # Brain._ready кэширует _body = get_parent()
+		ai_target = brain
 	if team.ball != null:
 		ai_target.set(&"ball", team.ball)
 	for k in config.extra_fields:
