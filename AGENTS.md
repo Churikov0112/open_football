@@ -30,7 +30,7 @@
 - **Camera:** sideline broadcast style — `camera_pivot` at X=-40, Y=20, follows ball Z, `look_at(Vector3(0,0,ballZ), UP)`
 - **Movement** is arrows/left-stick, camera-relative (uses `camera_pivot.global_transform.basis`) — WASD letters are freed for pass/shot actions, see *Passing* bullet above.
 - **Controlled player** switch: **Q**/`LB` (manual, only when our team doesn't have the ball — otherwise it's the pass-combo modifier), auto-switch to whoever on our team has the ball
-- **player_home** gets AI script (`teammate_ai.gd`) in `_ready()` — when not human-controlled, it's AI
+- **Players are spawned via one seam:** `PlayerFactory.spawn(config: PlayerConfig, team: Team)` (`scripts/match/player_factory.gd`) — instantiates `scenes/player.tscn`, tints kit, sets layers/groups/role, registers into a `Team` roster node, `set_script()`s the AI. No more `player_home`/`player_teammate`/`player_away` singletons — query `_team_home`/`_team_away` (`Team.players()`/`by_role()`/`keeper()`/`outfield()`) or groups instead. `_human_player` is the one remaining singleton (the human's default controlled body); it gets `teammate_ai.gd` too, and self-gates on `controlled_player == self`.
 
 ## Colors
 - Home & teammate: **blue** (`Color(0.1, 0.1, 0.9)`)
@@ -46,8 +46,12 @@
 ## Known file layout
 ```
 scenes/match.tscn      — match scene (no direct load, only via main_menu)
+scenes/player.tscn              — factory's spawn primitive (CharacterBody3D + PlayerVisual -> PlayerMotor -> CollisionShape3D, fixed order)
 scenes/player_visual.tscn       — rigged model + team-tint wrapper (child of each field player)
 scripts/match/match_manager.gd  — all game logic
+scripts/match/player_factory.gd — PlayerFactory: single player-spawn seam (headless-tested)
+scripts/match/player_config.gd  — PlayerConfig: plain data holder, input to PlayerFactory.spawn
+scripts/match/team.gd           — Team: roster node (players as children; groups+role are the physics index)
 scripts/match/pass_system.gd    — PassSystem: 8 pure static pass-math functions (headless-tested)
 scripts/match/pass_params.gd    — PassParams: plain data holder for a pass's power/height/lead
 scripts/match/net_sim.gd        — NetSim: pure static goal-net math (box-net builder + Verlet/PBD step, headless-tested)
