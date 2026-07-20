@@ -480,7 +480,11 @@ func _update_wall_jumps(delta: float) -> void:
 		else:
 			entry["jump_t"] += delta
 			var tt: float = entry["jump_t"] / FootballConstants.FK_WALL_JUMP_TIME
-			if tt >= 1.0:
+			# Гол уже засчитан (мяч в сетке) РАНЬШЕ, чем прыжок доиграл естественно: обрываем прыжок
+			# СРАЗУ, а не ждём _release() (это может занять ещё секунду-две WATCH-фазы — весь этот
+			# промежуток тело висело бы в воздухе с застрявшей анимацией). Тот же клинап, что и при
+			# tt>=1.0 — просто триггерится досрочно.
+			if tt >= 1.0 or _manager.is_celebrating():
 				b.global_position.y = entry["base_y"]
 				b.remove_from_group("fallen")
 				entry["jumping"] = false
