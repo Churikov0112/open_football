@@ -20,7 +20,9 @@ func _tick() -> void:
 	if _frames < 10:
 		return  # дать сцене осесть (спавны, скрипты, привязки)
 	var ball := _match_root.get_node("Ball") as RigidBody3D
-	var player := _match_root.get_node("PlayerHome") as CharacterBody3D
+	# PlayerHome больше не прямой child сцены (спавнится фабрикой под TeamHome) — берём
+	# по полю менеджера, как _keeper в check_keeper_clear.gd.
+	var player := _match_root.get(&"_human_player") as CharacterBody3D
 	if not _fired:
 		_fired = true
 		# Игрок СТОИТ НА мяче (перекрытие капсулой) — худший случай удара с места.

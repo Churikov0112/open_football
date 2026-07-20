@@ -28,15 +28,25 @@ static func spawn(config: PlayerConfig, team: Team) -> CharacterBody3D:
 	if config.connect_action_signals and team.manager != null and visual != null:
 		visual.action_contact.connect(team.manager._on_action_contact.bind(body))
 		visual.action_finished.connect(team.manager._on_action_finished.bind(body))
-	# мозг (Фаза 1: set_script; Фаза 2 заменит компонентом)
+	# мозг (Фаза 2): Brain-скрипт → дочерний компонент; легаси (extends CharacterBody3D) → set_script.
+	# Автодетект через `is Brain` не требует правки конфигов при конверсии ИИ по одному.
+	var ai_target: Object = body
 	if config.control_mode == PlayerConfig.ControlMode.AI and config.ai_script != null:
-		body.set_script(config.ai_script)
-		body.set_physics_process(true)
-	# общая ссылка на мяч + пер-ролевые поля
+		var inst: Object = config.ai_script.new()
+		if inst is Brain:
+			(inst as Node).name = "Brain"
+			body.add_child(inst)          # Brain._ready кэширует _body = get_parent()
+			ai_target = inst
+		else:
+			(inst as Node).free()         # легаси: проба-инстанс не нужна, идём через set_script
+			body.set_script(config.ai_script)
+			body.set_physics_process(true)
+			ai_target = body
+	# общая ссылка на мяч + пер-ролевые поля — на мозг (компонент) либо тело (легаси)
 	if team.ball != null:
-		body.set(&"ball", team.ball)
+		ai_target.set(&"ball", team.ball)
 	for k in config.extra_fields:
-		body.set(k, config.extra_fields[k])
+		ai_target.set(k, config.extra_fields[k])
 	return body
 
 static func find_visual(body: Node) -> PlayerVisual:

@@ -580,7 +580,7 @@ func _setup_home_player() -> void:
 	}
 	_human_player = PlayerFactory.spawn(cfg, _team_home)
 	controlled_player = _human_player
-	_human_player.set(&"controlled_player", controlled_player)
+	_ai_of(_human_player).set(&"controlled_player", controlled_player)
 
 
 ## Идёт ли празднование гола (вратарь на это время не сейвит/не выбивает мяч).
@@ -671,7 +671,7 @@ func _set_ai_frozen(on: bool, keep_active: Node = null) -> void:
 			continue   # keep_active (вратарь) не трогаем НИКОГДА — сам управляет своим локом/мотором
 		if on and n == controlled_player:
 			continue
-		n.set_physics_process(not on)
+		_ai_of(n).set_physics_process(not on)
 		var m := PlayerMotor.find_on(n)
 		if m != null:
 			m.set_control_locked(on)
@@ -960,8 +960,9 @@ func _sync_ai_controllers() -> void:
 	# Все team_1 с полем controlled_player (включая фабричных home/teammate и заспавненных
 	# штрафным) синхронизируются, чтобы управляемое тело пропускало свой ИИ (гейт self==controlled).
 	for n in get_tree().get_nodes_in_group("team_1"):
-		if &"controlled_player" in n:
-			n.controlled_player = controlled_player
+		var ai := _ai_of(n)
+		if &"controlled_player" in ai:
+			ai.controlled_player = controlled_player
 
 
 func _setup_tackle_area() -> void:
@@ -1528,7 +1529,7 @@ func _maybe_flag_interceptor(from: Vector3, to: Vector3, launch_vel: Vector3) ->
 	var best_time := INF
 	var best_i := -1
 	for i in range(opp_pos.size()):
-		var speed_variant: Variant = opp_nodes[i].get(&"speed")
+		var speed_variant: Variant = _ai_of(opp_nodes[i]).get(&"speed")
 		var opp_speed: float = speed_variant if speed_variant != null else FootballConstants.AI_SPEED
 		var t := PassSystem.interception_time(from, to, ball_speed, opp_pos[i],
 			opp_speed, FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD)
@@ -1540,9 +1541,10 @@ func _maybe_flag_interceptor(from: Vector3, to: Vector3, launch_vel: Vector3) ->
 	if _pass_rng.randf() > FootballConstants.AI_INTERCEPT_CHANCE:
 		return  # соперник «зевнул»
 	var opp: Node3D = opp_nodes[best_i]
-	if opp.has_method(&"begin_intercept"):
+	var opp_ai := _ai_of(opp)
+	if opp_ai.has_method(&"begin_intercept"):
 		var point := from + Vector3(launch_vel.x, 0.0, launch_vel.z).normalized() * (best_time * ball_speed)
-		opp.begin_intercept(point)
+		opp_ai.begin_intercept(point)
 
 
 ## Реальная гравитация мяча (RigidBody под движковую гравитацию, НЕ FootballConstants.GRAVITY).
@@ -1657,15 +1659,15 @@ func _fire_pass(action: ChargeAction, player: CharacterBody3D, charge_ratio: flo
 		controlled_player = receiver
 		_sync_ai_controllers()
 		_manual_swap_cooldown = 30
-	if receiver != null and receiver != controlled_player and receiver.has_method(&"begin_receiving"):
-		receiver.begin_receiving(launch_vel, params.extra_lead)
+	if receiver != null and receiver != controlled_player and _ai_of(receiver).has_method(&"begin_receiving"):
+		_ai_of(receiver).begin_receiving(launch_vel, params.extra_lead)
 	if receiver != null and receiver == controlled_player:
 		_receive_active = true
 		_receiver = receiver
 		_receive_timer = FootballConstants.PASS_RECEIVE_MAX_TIME
-	if params.is_wall and is_instance_valid(player) and player.has_method(&"begin_give_and_go"):
+	if params.is_wall and is_instance_valid(player) and _ai_of(player).has_method(&"begin_give_and_go"):
 		if receiver != null:
-			player.begin_give_and_go(receiver.global_position)
+			_ai_of(player).begin_give_and_go(receiver.global_position)
 		if ball.has_method(&"clear_last_kicker"):
 			# Не await здесь напрямую: это приостановило бы весь _fire_pass (включая
 			# visual.trigger()/ball.launch() ниже) на 0.4с. Запускаем отдельной корутиной.
@@ -1774,6 +1776,17 @@ func _player_motor(player_node: Node) -> PlayerMotor:
 	if player_node == null:
 		return null
 	return PlayerMotor.find_on(player_node)
+
+
+## «ИИ-объект этого тела»: дочерний Brain-компонент, либо само тело (легаси set_script / без ИИ).
+## Единственная точка, где менеджер дотягивается до полей/методов ИИ — работает одинаково для
+## компонентных и легаси-тел, поэтому конверсию ИИ можно делать по одному, не ломая менеджер.
+func _ai_of(body: Node) -> Node:
+	if body != null and body.has_method(&"brain"):
+		var b: Node = body.brain()
+		if b != null:
+			return b
+	return body
 
 
 func _can_tackle(tackler: Node3D) -> bool:
@@ -2230,10 +2243,9 @@ func _celebrate_then_reset(net) -> void:
 
 func _poll_ai_tackles() -> void:
 	for node in get_tree().get_nodes_in_group("team_2"):
-		var ai := node as CharacterBody3D
-		if not ai or not is_instance_valid(ai):
+		if not is_instance_valid(node):
 			continue
-		if "wants_to_tackle" in ai:
-			if ai.wants_to_tackle:
-				_start_tackle(ai)
-				ai.wants_to_tackle = false
+		var ai := _ai_of(node)
+		if "wants_to_tackle" in ai and ai.wants_to_tackle:
+			_start_tackle(node)          # подкат берёт ТЕЛО (node), не мозг
+			ai.wants_to_tackle = false
