@@ -239,7 +239,11 @@ func _release() -> void:
 	if km != null:
 		km.set_face_direction(Vector3.ZERO)   # снова доворот по вектору движения (обычная игра)
 		km.set_control_locked(false)
-	_manager.set_field_ai_active(true)
+	# Гол с пенальти: НЕ размораживаем поле-ИИ — заморозку празднования держит и снимает
+	# _celebrate_then_reset (как при обычном голе с игры). Иначе игроки бегут к мячу посреди
+	# празднования. Пенальти новых тел не спавнит — достаточно просто не трогать заморозку.
+	if not _manager.is_celebrating():
+		_manager.set_field_ai_active(true)
 	_manager.set_penalty_active(false)
 	if _reticle != null:
 		_reticle.visible = false

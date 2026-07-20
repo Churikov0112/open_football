@@ -337,7 +337,13 @@ func _release() -> void:
 		_keeper_brain.clear_freekick_anchor()
 	_convert_bodies()                 # стенка/тиммейты → обычный ИИ
 	_restore_debug_dummies()          # возвращаем спрятанные debug-болванки
-	_manager.set_field_ai_active(true)
+	# Гол со штрафного: замораживаем поле-ИИ (в т.ч. только что сконвертированные стенку/тиммейтов,
+	# которые рождаются активными) — заморозку празднования снимет _celebrate_then_reset, как при
+	# обычном голе с игры. Иначе игроки бегут к мячу посреди празднования.
+	if _manager.is_celebrating():
+		_manager.set_field_ai_active(false)
+	else:
+		_manager.set_field_ai_active(true)
 	_manager.set_free_kick_active(false)
 	_phase = Phase.IDLE
 
