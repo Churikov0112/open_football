@@ -509,6 +509,15 @@ func _convert_bodies() -> void:
 		if b.is_in_group("fallen"):
 			b.remove_from_group("fallen")
 			b.global_position.y = entry["base_y"]
+			entry["jumping"] = false
+			# Прыжок мог оборваться ДО естественного завершения (гол/watch_timer сработали раньше,
+			# чем tt>=1.0 в _update_wall_jumps — тот путь сам зовёт recover()). Без этого AnimationTree
+			# остаётся в состоянии "jumping_wall" (нет auto-return у one-shot) — тело физически уже на
+			# земле и получает живой ИИ-мотор, но модель зависает в позе прыжка / скользит замороженным
+			# кадром, пока не сыграет что-то другое (баг: «висит в воздухе» / «скользит в idle»).
+			var jv := _wall_visual(b)
+			if jv != null:
+				jv.recover()
 		var pm := PlayerMotor.find_on(b)
 		if pm != null:
 			pm.set_control_locked(false)
