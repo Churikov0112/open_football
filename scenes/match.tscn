@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/match/match_manager.gd" id="1"]
 
@@ -28,18 +28,6 @@ material = SubResource(4)
 
 [sub_resource type="BoxShape3D" id=6]
 size = Vector3(68, 1, 105)
-
-[sub_resource type="CapsuleShape3D" id=7]
-height = 1.5
-radius = 0.3
-
-[sub_resource type="StandardMaterial3D" id=8]
-albedo_color = Color(0.1, 0.1, 0.9, 1)
-
-[sub_resource type="CapsuleMesh" id=9]
-height = 1.5
-radius = 0.3
-material = SubResource(8)
 
 [sub_resource type="SphereShape3D" id=10]
 radius = 0.11
@@ -82,16 +70,6 @@ material_override = SubResource(12)
 
 [node name="CollisionShape" type="CollisionShape3D" parent="Ball"]
 shape = SubResource(10)
-
-[node name="PlayerHome" type="CharacterBody3D" parent="."]
-position = Vector3(0, 0.5, 0)
-
-[node name="Mesh" type="MeshInstance3D" parent="PlayerHome"]
-mesh = SubResource(9)
-
-[node name="CollisionShape" type="CollisionShape3D" parent="PlayerHome"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.25, 0)
-shape = SubResource(7)
 
 [node name="CameraPivot" type="Node3D" parent="."]
 position = Vector3(-40, 20, 0)

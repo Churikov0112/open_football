@@ -1,7 +1,8 @@
 extends Node3D
 
 @onready var ball: RigidBody3D = $Ball
-@onready var player_home: CharacterBody3D = $PlayerHome
+var player_home: CharacterBody3D          # алиас на _human_player (удаляется в конце рефактора)
+var _human_player: CharacterBody3D        # тело, которым по умолчанию управляет человек
 @onready var camera_pivot: Node3D = $CameraPivot
 @onready var score_label: Label = $HUD/ScoreLabel
 @onready var power_bar: ProgressBar = $HUD/PowerBar
@@ -131,23 +132,10 @@ func _ready() -> void:
 	_team_away.ball = ball
 	add_child(_team_away)
 	_setup_away_player()
-	controlled_player = player_home
-	player_home.add_to_group("team_1")
-	player_home.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	player_home.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
-	var home_mesh := player_home.get_node_or_null(^"Mesh")
-	if home_mesh:
-		home_mesh.queue_free()
-	var home_visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	player_home.add_child(home_visual)
-	player_home.add_child(PlayerMotor.new())
-	home_visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
-	home_visual.action_contact.connect(_on_action_contact.bind(player_home))
-	home_visual.action_finished.connect(_on_action_finished.bind(player_home))
+	_setup_home_player()
 	_setup_teammate()
 	_setup_keeper()
 	_setup_boundaries()
-	_give_ai_to_player_home()
 	_setup_controlled_indicator()
 	_setup_tackle_area()
 	_setup_power_bar()
@@ -572,14 +560,23 @@ func _setup_boundaries() -> void:
 		add_child(body)
 
 
-func _give_ai_to_player_home() -> void:
-	var ai_script = preload("res://scripts/ai/teammate_ai.gd")
-	player_home.set_script(ai_script)
-	player_home.set_physics_process(true)
-	player_home.ball = ball
-	player_home.controlled_player = controlled_player
-	player_home.speed = 7.0
-	player_home.teammate_home_goal = $GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null
+func _setup_home_player() -> void:
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_1"
+	cfg.role = PlayerConfig.Role.MID
+	cfg.kit_color = Color(0.1, 0.1, 0.9)
+	cfg.spawn_pos = Vector3(0, 0.5, 0)
+	cfg.display_name = "PlayerHome"
+	cfg.ai_script = preload("res://scripts/ai/teammate_ai.gd")
+	cfg.connect_action_signals = true
+	cfg.extra_fields = {
+		&"speed": 7.0,
+		&"teammate_home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),
+	}
+	_human_player = PlayerFactory.spawn(cfg, _team_home)
+	player_home = _human_player
+	controlled_player = _human_player
+	_human_player.set(&"controlled_player", controlled_player)
 
 
 ## Идёт ли празднование гола (вратарь на это время не сейвит/не выбивает мяч).
