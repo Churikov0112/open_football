@@ -896,12 +896,10 @@ func _physics_process(delta: float) -> void:
 			_sync_ai_controllers()
 			_manual_swap_cooldown = 10
 
-	# Set opponent's target_node to whoever on our team is dribbling
+	# Соперник целится в того из НАШЕЙ команды, кто дриблит (по группе, не по именам).
 	if player_away:
-		if ball.has_method(&"set_dribbler") and ball.dribbler:
-			var db: Node3D = ball.dribbler
-			if db == player_home or db == player_teammate:
-				player_away.target_node = db
+		if ball.has_method(&"set_dribbler") and ball.dribbler and ball.dribbler.is_in_group("team_1"):
+			player_away.target_node = ball.dribbler
 		else:
 			player_away.target_node = null
 
@@ -947,14 +945,10 @@ func _setup_controlled_indicator() -> void:
 
 
 func _sync_ai_controllers() -> void:
-	if player_home:
-		player_home.controlled_player = controlled_player
-	if player_teammate:
-		player_teammate.controlled_player = controlled_player
-	# Прочие team_1 с ИИ (напр. заспавненные штрафным тиммейты) — тоже синхронизируем, чтобы
-	# управляемое тело пропускало свой teammate_ai (гейт controlled_player == self).
+	# Все team_1 с полем controlled_player (включая фабричных home/teammate и заспавненных
+	# штрафным) синхронизируются, чтобы управляемое тело пропускало свой ИИ (гейт self==controlled).
 	for n in get_tree().get_nodes_in_group("team_1"):
-		if n != player_home and n != player_teammate and (&"controlled_player" in n):
+		if &"controlled_player" in n:
 			n.controlled_player = controlled_player
 
 
@@ -2192,14 +2186,13 @@ func _reset_ball() -> void:
 	ball.angular_velocity = Vector3.ZERO
 	ball.global_position = Vector3(0, 0.5, -0.6)
 
-	# Reset players to their starting positions
-	player_home.global_position = Vector3(0, 0.5, 0)
-	if player_teammate:
-		player_teammate.global_position = Vector3(10, 0.5, 5)
-	if player_away:
-		player_away.global_position = Vector3(20, 0.5, 0)
+	# Возврат игроков на стартовые позиции — по ростеру обеих команд (home_pos из фабрики).
+	# Вратарь НЕ сбрасывается (как и раньше) — он держит свою позицию через keeper_ai.
+	for body in _team_home.players() + _team_away.outfield():
+		if is_instance_valid(body):
+			body.global_position = body.get_meta(&"home_pos", body.global_position)
 
-	controlled_player = player_home
+	controlled_player = _human_player
 	_sync_ai_controllers()
 
 
