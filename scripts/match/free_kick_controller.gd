@@ -380,7 +380,10 @@ func _clear_opponent_encroachment() -> void:
 	for n in _manager.get_tree().get_nodes_in_group("team_2"):
 		if not is_instance_valid(n) or n == _keeper:
 			continue
-		var adjusted := FreeKickLogic.push_out_of_radius(n.global_position, _spot, FootballConstants.FK_WALL_DIST)
+		# Толкаем ЗА стенку (радиус стенки + запас), а не ровно на её радиус — иначе соперник встаёт
+		# вплотную к стенке и выглядит «в радиусе стенки».
+		var adjusted := FreeKickLogic.push_out_of_radius(n.global_position, _spot,
+			FootballConstants.FK_WALL_DIST + FootballConstants.FK_ENCROACH_MARGIN)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
 

@@ -87,6 +87,8 @@ func _setup() -> void:
 	# Вратарь: пенальти-режим (центр, keeper_idle, реактивный сейв off).
 	if _keeper != null and _keeper.has_method(&"set_penalty_mode"):
 		_keeper.set_penalty_mode(true)
+	# Правило: все, кроме бьющего и вратаря, — за мяч и вне штрафной (радиус 9.15 м от точки).
+	_clear_box()
 	# Прицел в центр створа.
 	_aim = Vector2(0.0, FootballConstants.PEN_RETICLE_START_Y)
 	_charge = 0.0
@@ -95,6 +97,28 @@ func _setup() -> void:
 	_struck_zone = -1
 	_update_camera_pose()
 	_phase = Phase.AIM
+
+## Очистить штрафную: все полевые (обе команды), кроме бьющего и вратаря, отходят ЗА мяч
+## (дальше от ворот) и за радиус 9.15 м от точки — по правилу их до удара не должно быть в
+## штрафной/дуге. Поле-ИИ уже заморожен (set_field_ai_active(false)), так что стоят где поставили.
+func _clear_box() -> void:
+	var bodies := _manager.get_tree().get_nodes_in_group("team_1")
+	bodies += _manager.get_tree().get_nodes_in_group("team_2")
+	var behind := -_forward   # от ворот в поле (за мяч)
+	var right := _forward.cross(Vector3.UP).normalized()
+	var i := 0
+	for n in bodies:
+		if not is_instance_valid(n) or n == _kicker or n == _keeper or not (n is Node3D):
+			continue
+		var lateral := (float(i) - 0.5) * 5.0   # разнести вбок, чтобы не стояли стопкой
+		var pos: Vector3 = _spot + behind * FootballConstants.FK_WALL_DIST + right * lateral
+		pos.y = n.global_position.y
+		n.global_position = pos
+		var m := PlayerMotor.find_on(n)
+		if m != null:
+			m.set_control_locked(true)
+			m.set_move_intent(Vector3.ZERO)
+		i += 1
 
 func update(delta: float) -> void:
 	match _phase:

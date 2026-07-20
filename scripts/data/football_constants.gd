@@ -519,6 +519,8 @@ const FK_LOB_PEAK_MIN := 3.0          # высота дуги навеса пр�
 const FK_LOB_PEAK_MAX := 6.5          # при полном заряде, м
 # Стенка.
 const FK_WALL_DIST := 9.15            # дистанция стенки от мяча, м
+const FK_ENCROACH_MARGIN := 3.0      # соперников (кроме стенки) оттесняем ЗА стенку на этот запас (м),
+									 # чтобы не стояли на радиусе стенки вплотную к ней
 const FK_WALL_FAR_DIST := 40.0        # дальше — стенки нет (0 игроков)
 const FK_WALL_NEAR_DIST := 25.0       # ближе — максимум игроков
 const FK_WALL_MIN_PLAYERS := 2        # на границе far
