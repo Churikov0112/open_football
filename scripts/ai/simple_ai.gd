@@ -1,4 +1,4 @@
-extends CharacterBody3D
+extends Brain
 
 @export var ball: RigidBody3D
 # Было 6.5 — заметно медленнее человека (LOCO_TOP_SPEED=8.0), из-за чего человек почти
@@ -23,9 +23,6 @@ var _intercept_point: Vector3 = Vector3.ZERO
 var _intercept_react_left: float = 0.0
 
 
-func _motor() -> PlayerMotor:
-	return PlayerMotor.find_on(self)
-
 ## Скорость этого ИИ относительно общей максимальной — сохраняет прежний относительный темп.
 func _base_scale() -> float:
 	return speed / FootballConstants.LOCO_TOP_SPEED
@@ -40,15 +37,13 @@ func begin_intercept(point: Vector3) -> void:
 
 func _physics_process(delta: float) -> void:
 	if FootballConstants.DEBUG_DISABLE_OPPONENT:
-		var dm := _motor()
-		if dm != null:
-			dm.set_move_intent(Vector3.ZERO)
+		_stop()
 		return
 
 	if not ball or not is_instance_valid(ball):
 		return
 
-	if is_in_group("fallen"):
+	if _body.is_in_group("fallen"):
 		return
 
 	# Мяч в руках вратаря: не атакуем (иначе подбегали к рукам и ВЫБИВАЛИ мяч ударом — гол).
@@ -56,13 +51,11 @@ func _physics_process(delta: float) -> void:
 	if ball.has_method(&"is_caught") and ball.is_caught():
 		wants_to_tackle = false
 		_intercepting = false
-		var km := _motor()
-		if km != null:
-			var to_center := Vector3(-global_position.x, 0.0, -global_position.z)
-			if to_center.length() > 1.0:
-				km.set_move_intent(to_center.normalized(), _base_scale() * 0.4)  # медленно
-			else:
-				km.set_move_intent(Vector3.ZERO)
+		var to_center := Vector3(-_body.global_position.x, 0.0, -_body.global_position.z)
+		if to_center.length() > 1.0:
+			_drive(to_center.normalized(), _base_scale() * 0.4)  # медленно
+		else:
+			_stop()
 		return
 
 	if wants_to_tackle:
@@ -72,16 +65,14 @@ func _physics_process(delta: float) -> void:
 		_intercept_react_left -= delta
 		if _intercept_react_left > 0.0:
 			return  # задержка реакции — фора игроку
-		var caught: bool = ball.has_method(&"set_dribbler") and ball.dribbler == self
-		var arrived := global_position.distance_to(_intercept_point) < 1.0
+		var caught: bool = ball.has_method(&"set_dribbler") and ball.dribbler == _body
+		var arrived := _body.global_position.distance_to(_intercept_point) < 1.0
 		if caught or arrived:
 			_intercepting = false
 		else:
-			var dir := (_intercept_point - global_position)
+			var dir := (_intercept_point - _body.global_position)
 			dir.y = 0.0
-			var m := _motor()
-			if m != null:
-				m.set_move_intent(dir.normalized(), _base_scale())
+			_drive(dir.normalized(), _base_scale())
 			return
 
 	if FootballConstants.DEBUG_MARK_TEAMMATE:
@@ -106,14 +97,14 @@ func _physics_process(delta: float) -> void:
 		elif ball.has_method(&"get_last_touch") and ball.get_last_touch() and ball.get_last_touch().is_in_group("team_1"):
 			target = ball.get_last_touch()
 		if target:
-			var dist := global_position.distance_to(target.global_position)
+			var dist := _body.global_position.distance_to(target.global_position)
 			if dist < FootballConstants.AI_TACKLE_RANGE:
 				wants_to_tackle = true
 				tackle_cooldown = FootballConstants.AI_TACKLE_COOLDOWN
 
 
 func _is_dribbling() -> bool:
-	return ball.has_method(&"set_dribbler") and is_instance_valid(ball) and ball.dribbler == self
+	return ball.has_method(&"set_dribbler") and is_instance_valid(ball) and ball.dribbler == _body
 
 
 ## DEBUG-маркировка: встаём между мячом и тиммейтом (в линию паса) на DEBUG_MARK_DISTANCE,
@@ -131,27 +122,27 @@ func _mark(delta: float) -> void:
 	else:
 		off = Vector3(0, 0, FootballConstants.DEBUG_MARK_DISTANCE)  # мяч у ног тиммейта → чуть в сторону наших ворот (+Z)
 	var target := tpos + off
-	target.y = global_position.y
-	var dir := (target - global_position)
+	target.y = _body.global_position.y
+	var dir := (target - _body.global_position)
 	dir.y = 0.0
 	_move_or_wander(dir, delta)
 
 
 func _chase_target(target: Node3D, delta: float) -> void:
-	var to_target := target.global_position - global_position
+	var to_target := target.global_position - _body.global_position
 	var dir := to_target.normalized()
 	dir.y = 0.0
 
 	_move_or_wander(dir, delta)
 
 	# If close enough to ball while chasing, attempt to kick
-	var ball_dist := global_position.distance_to(ball.global_position)
+	var ball_dist := _body.global_position.distance_to(ball.global_position)
 	if ball_dist < 1.8 and can_kick:
 		_kick_towards_goal()
 
 
 func _chase_ball(delta: float) -> void:
-	var to_ball := ball.global_position - global_position
+	var to_ball := ball.global_position - _body.global_position
 	var dist := to_ball.length()
 	var dir := to_ball.normalized()
 	dir.y = 0.0
@@ -169,7 +160,7 @@ func _dribble_toward_goal(delta: float) -> void:
 	else:
 		target = Vector3(0, 0, -field_length)
 
-	var to_target := target - global_position
+	var to_target := target - _body.global_position
 	var dist := to_target.length()
 	var dir := to_target.normalized()
 	dir.y = 0.0
@@ -183,9 +174,7 @@ func _dribble_toward_goal(delta: float) -> void:
 
 func _move_or_wander(dir: Vector3, delta: float, speed_multiplier: float = 1.0) -> void:
 	if dir.length() > 0.1:
-		var m := _motor()
-		if m != null:
-			m.set_move_intent(dir, _base_scale() * speed_multiplier)
+		_drive(dir, _base_scale() * speed_multiplier)
 	else:
 		_wander(delta, speed_multiplier)
 
@@ -195,12 +184,10 @@ func _wander(delta: float, speed_multiplier: float = 1.0) -> void:
 	if _wander_timer <= 0.0:
 		_wander_timer = randf_range(0.5, 1.5)
 	# Gentle sinusoidal movement for a natural idling look
-	var wander_x := sin(Time.get_ticks_msec() * 0.001 + global_position.z) * 0.5
-	var wander_z := cos(Time.get_ticks_msec() * 0.001 + global_position.x) * 0.5
+	var wander_x := sin(Time.get_ticks_msec() * 0.001 + _body.global_position.z) * 0.5
+	var wander_z := cos(Time.get_ticks_msec() * 0.001 + _body.global_position.x) * 0.5
 	var wander_dir := Vector3(wander_x, 0, wander_z).normalized()
-	var m := _motor()
-	if m != null:
-		m.set_move_intent(wander_dir, _base_scale() * 0.3 * speed_multiplier)
+	_drive(wander_dir, _base_scale() * 0.3 * speed_multiplier)
 
 
 func _kick_towards_goal() -> void:

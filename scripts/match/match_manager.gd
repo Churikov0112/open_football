@@ -797,7 +797,7 @@ func _setup_teammate() -> void:
 	if FootballConstants.DEBUG_MARK_TEAMMATE:
 		var opp := _away_outfielder()
 		if opp != null and is_instance_valid(opp):
-			opp.set(&"mark_target", new_player)
+			_ai_of(opp).set(&"mark_target", new_player)
 
 
 func _process(delta: float) -> void:
@@ -910,10 +910,11 @@ func _physics_process(delta: float) -> void:
 	# Соперник целится в того из НАШЕЙ команды, кто дриблит (по группе, не по именам).
 	var opp := _away_outfielder()
 	if opp != null:
+		var opp_ai := _ai_of(opp)
 		if ball.has_method(&"set_dribbler") and ball.dribbler and ball.dribbler.is_in_group("team_1"):
-			opp.target_node = ball.dribbler
+			opp_ai.target_node = ball.dribbler
 		else:
-			opp.target_node = null
+			opp_ai.target_node = null
 
 	_handle_tackle(delta)
 	_poll_ai_tackles()

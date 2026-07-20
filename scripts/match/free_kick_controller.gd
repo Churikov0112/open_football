@@ -504,10 +504,11 @@ func _convert_bodies() -> void:
 		var pm := PlayerMotor.find_on(b)
 		if pm != null:
 			pm.set_control_locked(false)
-		b.set_script(ai_script)
-		b.set_physics_process(true)
-		b.ball = _ball
-		b.home_goal = _manager.get_node_or_null("GoalHome/GoalArea")
+		var wb := ai_script.new()          # simple_ai теперь Brain-компонент
+		wb.name = "Brain"
+		b.add_child(wb)
+		wb.ball = _ball
+		wb.home_goal = _manager.get_node_or_null("GoalHome/GoalArea")
 	# Свои (тиммейт/цели) → обычный team_1-ИИ (teammate_ai). _mates НЕ очищаем (спавн чистит на старте).
 	var mate_script := preload("res://scripts/ai/teammate_ai.gd")
 	for entry in _mates:
