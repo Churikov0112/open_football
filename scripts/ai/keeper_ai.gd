@@ -217,10 +217,10 @@ func _position(delta: float) -> void:
 			print("[KEEPER] -> MISS_TOP y=", intercept.y)
 			_begin_miss_top()
 		return
-	# Успеваем добежать по линии до точки пересечения раньше мяча → выходим НАВСТРЕЧУ (скользим
-	# к intercept.x), рефлекс/контакт поймает на подлёте. Иначе — нырок.
+	# Шагом (выход по линии) выходим ТОЛЬКО за близким мячом; на дальний вбок (угол) — НЫРЯЕМ,
+	# даже если формально успели бы дошагать (зрелищнее, и дайв-рэндж покрывает весь створ).
 	var time_to_align := (lateral - FootballConstants.KEEPER_REACH) / FootballConstants.LOCO_TOP_SPEED
-	if is_finite(ttoi) and time_to_align <= ttoi:
+	if lateral <= FootballConstants.KEEPER_SLIDE_MAX_LATERAL and is_finite(ttoi) and time_to_align <= ttoi:
 		var tx := clampf(intercept.x, -FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_WIDTH * 0.5)
 		m.set_move_intent(Vector3(signf(tx - global_position.x), 0.0, 0.0), 1.0)
 		return

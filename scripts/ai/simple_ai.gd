@@ -51,6 +51,20 @@ func _physics_process(delta: float) -> void:
 	if is_in_group("fallen"):
 		return
 
+	# Мяч в руках вратаря: не атакуем (иначе подбегали к рукам и ВЫБИВАЛИ мяч ударом — гол).
+	# Медленно отходим к центру поля, пока вратарь не разыграет; дальше — как обычно.
+	if ball.has_method(&"is_caught") and ball.is_caught():
+		wants_to_tackle = false
+		_intercepting = false
+		var km := _motor()
+		if km != null:
+			var to_center := Vector3(-global_position.x, 0.0, -global_position.z)
+			if to_center.length() > 1.0:
+				km.set_move_intent(to_center.normalized(), _base_scale() * 0.4)  # медленно
+			else:
+				km.set_move_intent(Vector3.ZERO)
+		return
+
 	if wants_to_tackle:
 		return
 
@@ -194,6 +208,8 @@ func _kick_towards_goal() -> void:
 		return
 	if not ball.has_method(&"kick"):
 		return
+	if ball.has_method(&"is_caught") and ball.is_caught():
+		return  # мяч в руках вратаря — не выбиваем
 	var target: Vector3
 	if home_goal:
 		target = home_goal.global_position
