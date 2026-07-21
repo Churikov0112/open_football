@@ -365,6 +365,7 @@ func trigger(action: String) -> bool:
 	if state == "":
 		push_warning("PlayerVisual.trigger('%s'): нет клипа под это действие" % action)
 		return false
+	_fall_lock = false   # trigger снимает hold_pose-заморозку (см. hold_pose)
 	_playback.travel(StringName(state))
 	# root motion — только для клипов удара пенальти (разбег), у остальных трек снят (иначе
 	# извлечение Hips ломает вертикаль их поз).
@@ -392,6 +393,22 @@ func trigger(action: String) -> bool:
 	_action_lock_at = lock
 	_action_contact_done = false
 	_action_post_speed = post_speed
+	return true
+
+## Встать в позу первого кадра клипа-действия и замереть (стойка вброса с мячом в руках).
+## Мгновенный переход на кадр 0 (_playback.start, без кроссфейда) + заморозка времени
+## (TimeScale=0) + _fall_lock (чтобы селектор локомоции не сдёрнул обратно в idle). Снимается
+## вызовом trigger() (сбрасывает _fall_lock и восстанавливает скорость → клип идёт с кадра 0).
+func hold_pose(clip: String) -> bool:
+	if _playback == null:
+		return false
+	var state := _resolve_action(clip)
+	if state == "" or not _states.has(state):
+		return false
+	_fall_lock = true
+	_active_action = ""
+	_set_action_speed(0.0)
+	_playback.start(StringName(state))
 	return true
 
 ## Отменить текущее действие без сигнала касания (напр., игрока сбили на замахе).
