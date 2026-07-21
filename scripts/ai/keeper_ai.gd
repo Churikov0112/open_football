@@ -323,7 +323,9 @@ func set_goalkick_mode(on: bool) -> void:
 		var vis := _visual()
 		if vis != null:
 			vis.recover()   # выйти из любого one-shot (нырок/idle_ball) в локомоцию
-			vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+			# Обычный idle, не вратарская стойка — вратарь тут ведёт себя как полевой бьющий
+			# (разбег/удар как у штрафного/пенальти), вратарская стойка тут неуместна.
+			vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)
 	else:
 		_state = State.POSITION
 
