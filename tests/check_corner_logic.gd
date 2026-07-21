@@ -93,25 +93,28 @@ func _check_short_start() -> bool:
 	return true
 
 func _check_runup() -> bool:
-	# Правый угол Home (side=1, into=1). Две ноги дают РАЗНЫЕ направления захода (зеркально
-	# вокруг базы), обе горизонтальные (y≈0) и единичные.
-	var r := CornerLogic.runup_dir(1.0, 1.0, "penalty_r", 35.0)
-	var l := CornerLogic.runup_dir(1.0, 1.0, "penalty_l", 35.0)
-	if not (is_equal_approx(r.y, 0.0) and is_equal_approx(l.y, 0.0)):
-		print("  FAIL runup not horizontal: ", r, " ", l)
+	# Правый угол Home (side=1, into=1): x=33.5, z=-52.0. Боковая линия x=34, линия ворот z=-52.5.
+	var spot := CornerLogic.corner_spot(1.0, 34.0, -52.5, 0.5, 0.11)
+	var runup := 2.8
+	var dr := CornerLogic.runup_dir(1.0, 1.0, "penalty_r", 30.0)
+	var dl := CornerLogic.runup_dir(1.0, 1.0, "penalty_l", 30.0)
+	# Обе горизонтальные и единичные.
+	if not (is_equal_approx(dr.y, 0.0) and is_equal_approx(dl.y, 0.0)
+			and is_equal_approx(dr.length(), 1.0) and is_equal_approx(dl.length(), 1.0)):
+		print("  FAIL runup unit/horizontal: ", dr, " ", dl)
 		return false
-	if not (is_equal_approx(r.length(), 1.0) and is_equal_approx(l.length(), 1.0)):
-		print("  FAIL runup not unit: ", r.length(), " ", l.length())
+	# Правая нога: старт (spot - dir*runup) ЗА боковой линией (x>34) и ПЕРЕД линией ворот (z>-52.5).
+	var sr := spot - dr * runup
+	if not (sr.x > 34.0 and sr.z > -52.5):
+		print("  FAIL runup R region (ожидалось x>34, z>-52.5): ", sr)
 		return false
-	# Ноги заходят с разных сторон: угол между направлениями ≈ 2*35 = 70°, а не 0.
-	if r.angle_to(l) < deg_to_rad(60.0):
-		print("  FAIL runup feet not split: angle=", rad_to_deg(r.angle_to(l)))
+	# Левая нога: старт ЗА линией ворот (z<-52.5).
+	var sl := spot - dl * runup
+	if sl.z >= -52.5:
+		print("  FAIL runup L region (ожидалось z<-52.5): ", sl)
 		return false
-	# База (angle=0) лежит МЕЖДУ двумя ногами (по знаку signed_angle вокруг UP — противоположны).
-	var base := Vector3(1.0, 0.0, -1.0).normalized()
-	var sr := base.signed_angle_to(r, Vector3.UP)
-	var sl := base.signed_angle_to(l, Vector3.UP)
-	if sign(sr) == sign(sl):
-		print("  FAIL runup feet same side of base: ", sr, " ", sl)
+	# Ноги заходят с явно разных сторон.
+	if dr.angle_to(dl) < deg_to_rad(30.0):
+		print("  FAIL runup feet too similar: angle=", rad_to_deg(dr.angle_to(dl)))
 		return false
 	return true
