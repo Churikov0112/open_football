@@ -29,20 +29,21 @@ func _tick() -> void:
 	if ball.is_caught():
 		_caught_seen = true
 	if _frames % 30 == 0:
-		var keeper := _match_root.get_node_or_null("Keeper")
-		var kst = keeper.get(&"_state") if keeper != null else -1
+		var kbrain = _match_root.get(&"_keeper_brain")   # состояние теперь на дочернем Brain
+		var kst = kbrain.get(&"_state") if kbrain != null else -1
 		print("[T] f=", _frames, " keeper_state=", kst, " ball_state=", ball.state,
 			" celebrating=", _match_root.is_celebrating(), " ball=", ball.global_position)
 	# Через ~6 секунд весь сценарий (ловля ~0.5с + HOLD 1с + THROWING ~1с + полёт навеса) обязан
 	# завершиться: мяч не в руках/не ведётся и унесён броском от ворот в поле.
 	if _frames >= 10 + 360:
-		var keeper := _match_root.get_node_or_null("Keeper")
-		var kst = keeper.get(&"_state") if keeper != null else -1
+		var kbrain = _match_root.get(&"_keeper_brain")   # состояние теперь на дочернем Brain
+		var kst = kbrain.get(&"_state") if kbrain != null else -1
 		if not _caught_seen:
 			print("CHECK FAIL: keeper never caught the ball")
 			quit(1)
 			return
-		if ball.is_caught() or ball.dribbler == keeper:
+		var keeper_body = _match_root.get(&"_keeper")
+		if ball.is_caught() or ball.dribbler == keeper_body:
 			print("CHECK FAIL: ball still held/dribbled after cycle; pos=", ball.global_position)
 			quit(1)
 			return

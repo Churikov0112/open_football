@@ -13,6 +13,7 @@ var _ball: RigidBody3D
 var _camera_pivot: Node3D
 var _power_bar: ProgressBar
 var _keeper: CharacterBody3D
+var _keeper_brain: Node
 
 var _phase: int = Phase.IDLE
 var _kicker: CharacterBody3D
@@ -41,6 +42,7 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
 	_keeper = keeper
+	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_pen_rng.randomize()
 	_build_reticle()
 
@@ -71,8 +73,25 @@ func _setup() -> void:
 	_ball.angular_velocity = Vector3.ZERO
 	_ball.global_position = _spot
 	# Бьющий за мячом (в сторону от ворот) на длину разбега, лицом к воротам; в обычном idle.
-	# Латеральный сдвиг под опорную ногу: правая нога → чуть ЛЕВЕЕ (от камеры), левая → зеркально.
-	# «Лево» игрока при взгляде на ворота = -_into по X.
+	_place_kicker()
+	# Вратарь: пенальти-режим (центр, keeper_idle, реактивный сейв off).
+	if _keeper_brain != null and _keeper_brain.has_method(&"set_penalty_mode"):
+		_keeper_brain.set_penalty_mode(true)
+	# Правило: все, кроме бьющего и вратаря, — за мяч и вне штрафной (радиус 9.15 м от точки).
+	_clear_box()
+	# Прицел в центр створа.
+	_aim = Vector2(0.0, FootballConstants.PEN_RETICLE_START_Y)
+	_charge = 0.0
+	_charging = false
+	_chip = false
+	_struck_zone = -1
+	_update_camera_pose()
+	_phase = Phase.AIM
+
+## Расстановка бьющего за мячом лицом к воротам, латеральный сдвиг под опорную ногу.
+## Латеральный сдвиг под опорную ногу: правая нога → чуть ЛЕВЕЕ (от камеры), левая → зеркально.
+## «Лево» игрока при взгляде на ворота = -_into по X.
+func _place_kicker() -> void:
 	var side := -_into if _foot == "penalty_r" else _into
 	_kicker.global_position = _spot - _forward * FootballConstants.PEN_RUNUP_DIST \
 		+ Vector3(side * FootballConstants.PEN_FOOT_LATERAL, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
@@ -84,17 +103,28 @@ func _setup() -> void:
 		km.set_control_locked(true)
 		km.set_move_intent(Vector3.ZERO)
 		km.set_face_direction(_forward)
-	# Вратарь: пенальти-режим (центр, keeper_idle, реактивный сейв off).
-	if _keeper != null and _keeper.has_method(&"set_penalty_mode"):
-		_keeper.set_penalty_mode(true)
-	# Прицел в центр створа.
-	_aim = Vector2(0.0, FootballConstants.PEN_RETICLE_START_Y)
-	_charge = 0.0
-	_charging = false
-	_chip = false
-	_struck_zone = -1
-	_update_camera_pose()
-	_phase = Phase.AIM
+
+## Очистить штрафную: все полевые (обе команды), кроме бьющего и вратаря, отходят ЗА мяч
+## (дальше от ворот) и за радиус 9.15 м от точки — по правилу их до удара не должно быть в
+## штрафной/дуге. Поле-ИИ уже заморожен (set_field_ai_active(false)), так что стоят где поставили.
+func _clear_box() -> void:
+	var bodies := _manager.get_tree().get_nodes_in_group("team_1")
+	bodies += _manager.get_tree().get_nodes_in_group("team_2")
+	var behind := -_forward   # от ворот в поле (за мяч)
+	var right := _forward.cross(Vector3.UP).normalized()
+	var i := 0
+	for n in bodies:
+		if not is_instance_valid(n) or n == _kicker or n == _keeper or not (n is Node3D):
+			continue
+		var lateral := (float(i) - 0.5) * 5.0   # разнести вбок, чтобы не стояли стопкой
+		var pos: Vector3 = _spot + behind * FootballConstants.FK_WALL_DIST + right * lateral
+		pos.y = n.global_position.y
+		n.global_position = pos
+		var m := PlayerMotor.find_on(n)
+		if m != null:
+			m.set_control_locked(true)
+			m.set_move_intent(Vector3.ZERO)
+		i += 1
 
 func update(delta: float) -> void:
 	match _phase:
@@ -111,6 +141,13 @@ func update(delta: float) -> void:
 	_update_camera_pose()
 
 func _aim_update(delta: float) -> void:
+	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
+	if Input.is_action_just_pressed(&"foot_left") and _foot != "penalty_l":
+		_foot = "penalty_l"
+		_place_kicker()
+	elif Input.is_action_just_pressed(&"foot_right") and _foot != "penalty_r":
+		_foot = "penalty_r"
+		_place_kicker()
 	# Прицел стиком/стрелками: X = ширина, вверх стика = выше в воротах (инвертируем Y).
 	var aim_stick := Vector2(
 		Input.get_axis(&"move_left", &"move_right"),
@@ -195,8 +232,12 @@ func _on_kicker_contact(_action: String) -> void:
 	_contact_connected = false
 	if _ball.has_method(&"launch"):
 		_ball.launch(_pending_launch, false)
-	if _keeper != null and _keeper.has_method(&"begin_penalty_dive"):
-		_keeper.begin_penalty_dive(_struck_zone)
+	# Мяч лежал на точке (dribbler=null) → launch пометил last_kicker=null. Помечаем бьющего явно
+	# (анти-самоблок/кулдаун) — иначе бьющий мог бы блокировать/трогать собственный удар.
+	if _ball.has_method(&"note_kicker"):
+		_ball.note_kicker(_kicker)
+	if _keeper_brain != null and _keeper_brain.has_method(&"begin_penalty_dive"):
+		_keeper_brain.begin_penalty_dive(_struck_zone)
 	struck.emit()
 	if release_after_strike:
 		# Не переключаем камеру сразу (иначе рывок на самом ударе) — держим пенальти-вид PEN_WATCH_TIME,
@@ -213,7 +254,11 @@ func _release() -> void:
 	if km != null:
 		km.set_face_direction(Vector3.ZERO)   # снова доворот по вектору движения (обычная игра)
 		km.set_control_locked(false)
-	_manager.set_field_ai_active(true)
+	# Гол с пенальти: НЕ размораживаем поле-ИИ — заморозку празднования держит и снимает
+	# _celebrate_then_reset (как при обычном голе с игры). Иначе игроки бегут к мячу посреди
+	# празднования. Пенальти новых тел не спавнит — достаточно просто не трогать заморозку.
+	if not _manager.is_celebrating():
+		_manager.set_field_ai_active(true)
 	_manager.set_penalty_active(false)
 	if _reticle != null:
 		_reticle.visible = false

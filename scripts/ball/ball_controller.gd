@@ -242,6 +242,17 @@ func clear_last_kicker() -> void:
 	_last_kick_time = 0
 
 
+## Явно пометить бьющего сет-писа (штрафной/угловой/пенальти). Там мяч ЛЕЖИТ на точке
+## (dribbler=null), поэтому launch()/launch_curl() записывают last_kicker=null — и ни грейс
+## (анти-самоблок), ни кулдаун перехвата не защищают реального бьющего: мяч запускается прямо
+## из его капсулы, и он же его блокирует/перехватывает собственный пас. Зовётся СРАЗУ ПОСЛЕ
+## launch()/launch_curl(): пасующий не трогает мяч _kick_cooldown_msec, а мяч летит к цели.
+func note_kicker(node: Node3D) -> void:
+	last_kicker = node
+	_last_kick_time = Time.get_ticks_msec()
+	_begin_kick_grace(node)
+
+
 func get_dribble_direction() -> Vector3:
 	if not dribbler or not is_instance_valid(dribbler):
 		return Vector3.FORWARD

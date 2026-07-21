@@ -1,4 +1,4 @@
-extends CharacterBody3D
+extends Brain
 ## AI-вратарь: позиционирование на линии + сейв (ловля/нырок/отбой) + вынос мяча.
 ## Движение — через PlayerMotor; нырок — свой move_and_collide при заблокированном моторе
 ## (как подкат). Вся математика — в KeeperLogic (чистые функции).
@@ -41,11 +41,11 @@ var _pen_struck: bool = false
 
 
 func _motor() -> PlayerMotor:
-	return PlayerMotor.find_on(self)
+	return PlayerMotor.find_on(_body)
 
 
 func _visual() -> PlayerVisual:
-	for c in get_children():
+	for c in _body.get_children():
 		if c is PlayerVisual:
 			return c
 	return null
@@ -61,7 +61,7 @@ func _ensure_wired() -> void:
 	if _wired:
 		return
 	_wired = true
-	_ground_y = global_position.y   # запоминаем уровень газона (высоту стойки)
+	_ground_y = _body.global_position.y   # запоминаем уровень газона (высоту стойки)
 	var v := _visual()
 	if v != null:
 		v.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
@@ -89,7 +89,7 @@ func _physics_process(delta: float) -> void:
 			return
 		if _state in [State.HOLD, State.DISTRIBUTE, State.PLACING, State.CARRY, State.FIELD_PASS, State.THROWING]:
 			# Страховка: не уносить пойманный/ведомый мяч в стойку — отпустить и в POSITION.
-			if ball.dribbler == self:
+			if ball.dribbler == _body:
 				ball.release_dribble()
 			_finish_dive()   # мяч во время празднования не трогаем — в стойку
 		var mm := _motor()
@@ -138,9 +138,9 @@ func _position(delta: float) -> void:
 	# кадр, надёжно (не зависит от выравнивания с точкой удара). Это чинит scoop/catch «во вратаря».
 	if ball.is_flight() and _heading_at_goal() and _catch_radius_hit():
 		var by := ball.global_position.y
-		print("[KEEPER] REFLEX hit: ball=", ball.global_position, " kpr=", global_position, " y=", by)
+		print("[KEEPER] REFLEX hit: ball=", ball.global_position, " kpr=", _body.global_position, " y=", by)
 		if _should_catch_high(by):
-			ball.catch(self, hold_point)
+			ball.catch(_body, hold_point)
 			_begin_central_catch(by)
 		else:
 			_begin_miss_top()
@@ -149,11 +149,21 @@ func _position(delta: float) -> void:
 	# разворачивается вслед залетевшему мячу и ныряет спиной. Доминанта — направление поля,
 	# с лёгким доворотом к X мяча.
 	var into := -1.0 if goal_line_z > 0.0 else 1.0
-	m.set_face_direction(Vector3(ball.global_position.x - global_position.x, 0.0, into * 4.0))
-	var target := _freekick_anchor if _freekick_mode else KeeperLogic.line_position(
-		ball.global_position, goal_line_z, FootballConstants.GOAL_WIDTH * 0.5,
-		FootballConstants.KEEPER_LINE_NARROW_GAIN, FootballConstants.KEEPER_MAX_OFF_LINE)
-	var to := target - global_position
+	m.set_face_direction(Vector3(ball.global_position.x - _body.global_position.x, 0.0, into * 4.0))
+	var target: Vector3
+	if _freekick_mode:
+		target = _freekick_anchor
+	else:
+		target = KeeperLogic.line_position(ball.global_position, goal_line_z, FootballConstants.GOAL_WIDTH * 0.5,
+			FootballConstants.KEEPER_LINE_NARROW_GAIN, FootballConstants.KEEPER_MAX_OFF_LINE)
+		# «Выход из ворот» (off-line advance) — ТОЛЬКО против реальной угрозы (мяч летит В створ
+		# прямо сейчас), а не по голой дистанции мяча до линии. Раньше line_position реагировала
+		# на любую близость мяча к линии — включая обычный пас между СВОИМИ игроками рядом со
+		# штрафной (мяч ничем не угрожает воротам), и вратарь всё равно рвался вперёд на 2.5м.
+		# Без угрозы держим X (следим за мячом по горизонтали) но Z фиксируем на линии ворот.
+		if not (ball.is_flight() and _heading_at_goal()):
+			target.z = goal_line_z + into * 0.5
+	var to := target - _body.global_position
 	to.y = 0.0
 	if to.length() > 0.15:
 		m.set_move_intent(to.normalized(), _base_scale())
@@ -182,9 +192,9 @@ func _position(delta: float) -> void:
 	var engage_w := FootballConstants.GOAL_WIDTH * 0.5 + FootballConstants.KEEPER_ENGAGE_MARGIN
 	var ont := KeeperLogic.is_on_target(intercept, engage_w, FootballConstants.GOAL_HEIGHT + FootballConstants.KEEPER_ENGAGE_MARGIN)
 	if not _reacting:
-		var dball := ball.global_position.distance_to(global_position)
+		var dball := ball.global_position.distance_to(_body.global_position)
 		var tt := KeeperLogic.time_to_intercept(ball.global_position, ball.linear_velocity, intercept)
-		print("[KEEPER] shot detected intercept=", intercept, " onTarget=", ont, " dx=", intercept.x - global_position.x, " kpr_x=", global_position.x, " speed=", ball.linear_velocity.length(), " ttoi=", tt, " dist=", dball)
+		print("[KEEPER] shot detected intercept=", intercept, " onTarget=", ont, " dx=", intercept.x - _body.global_position.x, " kpr_x=", _body.global_position.x, " speed=", ball.linear_velocity.length(), " ttoi=", tt, " dist=", dball)
 	if not ont:
 		_reacting = false
 		return
@@ -197,7 +207,7 @@ func _position(delta: float) -> void:
 		return
 	# Мяч летит ВО ВРАТАРЯ (по горизонтали в пределах досягаемости) — нырок вбок не нужен,
 	# ловим/пропускаем скриптованно, надёжно (без Area3D). Выше досягаемости прыжка → miss_top.
-	var lateral := absf(intercept.x - global_position.x)
+	var lateral := absf(intercept.x - _body.global_position.x)
 	var ttoi := KeeperLogic.time_to_intercept(ball.global_position, ball.linear_velocity, intercept)
 	# Уже в створе перед мячом → ловим на месте (или пропускаем верхом). Упреждение: пока мяч
 	# дальше окна CATCH_LEAD — стоим наготове (лицо к мячу уже задано выше), клип запускаем ровно
@@ -217,14 +227,14 @@ func _position(delta: float) -> void:
 			print("[KEEPER] -> MISS_TOP y=", intercept.y)
 			_begin_miss_top()
 		return
-	# Успеваем добежать по линии до точки пересечения раньше мяча → выходим НАВСТРЕЧУ (скользим
-	# к intercept.x), рефлекс/контакт поймает на подлёте. Иначе — нырок.
+	# Шагом (выход по линии) выходим ТОЛЬКО за близким мячом; на дальний вбок (угол) — НЫРЯЕМ,
+	# даже если формально успели бы дошагать (зрелищнее, и дайв-рэндж покрывает весь створ).
 	var time_to_align := (lateral - FootballConstants.KEEPER_REACH) / FootballConstants.LOCO_TOP_SPEED
-	if is_finite(ttoi) and time_to_align <= ttoi:
+	if lateral <= FootballConstants.KEEPER_SLIDE_MAX_LATERAL and is_finite(ttoi) and time_to_align <= ttoi:
 		var tx := clampf(intercept.x, -FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_WIDTH * 0.5)
-		m.set_move_intent(Vector3(signf(tx - global_position.x), 0.0, 0.0), 1.0)
+		m.set_move_intent(Vector3(signf(tx - _body.global_position.x), 0.0, 0.0), 1.0)
 		return
-	var dec := KeeperLogic.save_decision(intercept, global_position,
+	var dec := KeeperLogic.save_decision(intercept, _body.global_position,
 		FootballConstants.KEEPER_REACH,
 		FootballConstants.KEEPER_DIVE_RANGE + FootballConstants.KEEPER_ENGAGE_MARGIN,
 		FootballConstants.KEEPER_HIGH_THRESHOLD)
@@ -250,9 +260,9 @@ func set_freekick_anchor(pos: Vector3) -> void:
 	_pass_through = false
 	_current_action = KeeperLogic.SaveAction.NONE
 	_state = State.POSITION
-	if ball != null and is_instance_valid(ball) and ball.dribbler == self:
+	if ball != null and is_instance_valid(ball) and ball.dribbler == _body:
 		ball.release_dribble()
-	global_position = Vector3(pos.x, _ground_y, pos.z)
+	_body.global_position = Vector3(pos.x, _ground_y, pos.z)
 	var m := _motor()
 	if m != null:
 		m.set_control_locked(false)
@@ -277,11 +287,12 @@ func set_penalty_mode(on: bool) -> void:
 		_pass_through = false
 		_current_action = KeeperLogic.SaveAction.NONE
 		_state = State.POSITION
-		if ball != null and is_instance_valid(ball) and ball.dribbler == self:
+		if ball != null and is_instance_valid(ball) and ball.dribbler == _body:
 			ball.release_dribble()
 		# На линию по центру створа (как в _setup_keeper).
 		var into := 1.0 if goal_line_z < 0.0 else -1.0
-		global_position = Vector3(0.0, _ground_y, goal_line_z + into * 0.5)
+		_body.global_position = Vector3(0.0, _ground_y, goal_line_z + into * 0.5)
+		_body.velocity = Vector3.ZERO   # гасим остаточный импульс (вратарь мог выходить/двигаться), иначе унесёт с линии
 		var m := _motor()
 		if m != null:
 			m.set_control_locked(false)
@@ -327,17 +338,25 @@ func _pen_zone_to_action(zone: int) -> int:
 ## миновала (пойман/за линией/улетел), авто-снимаем пенальти-режим → обычная игра.
 func _penalty_hold(delta: float, m: PlayerMotor) -> void:
 	var into := -1.0 if goal_line_z > 0.0 else 1.0
-	m.set_face_direction(Vector3(ball.global_position.x - global_position.x, 0.0, into * 4.0))
-	var to := Vector3(-global_position.x, 0.0, 0.0)  # к центру створа (x=0)
-	if to.length() > 0.15:
-		m.set_move_intent(to.normalized(), 1.0)
+	m.set_face_direction(Vector3(ball.global_position.x - _body.global_position.x, 0.0, into * 4.0))
+	# Держим ПОЛНУЮ позицию на линии — центр створа (X=0) И глубину линии (Z=goal_line_z+into*0.5,
+	# та же точка, куда телепортирует set_penalty_mode). Раньше корректировали только X: если вратарь
+	# в момент нажатия P выходил навстречу удару, остаточная Z-скорость уносила его вперёд с линии, и
+	# вернуть было некому (Z не правился) — «вратарь не на линии». Теперь возвращаем по обеим осям.
+	var anchor_z := goal_line_z + into * 0.5
+	var to := Vector3(-_body.global_position.x, 0.0, anchor_z - _body.global_position.z)
+	var d := to.length()
+	if d > 0.15:
+		# Проп. скорость: тормозим у якоря, чтобы инерция мотора не проносила вратаря сквозь линию
+		# (иначе — качание туда-сюда). Далеко — полный ход, близко — плавно к нулю.
+		m.set_move_intent(to / d, clampf(d * 0.7, 0.15, 1.0))
 	else:
 		m.set_move_intent(Vector3.ZERO)
 	# Рефлекс центрального мяча: по высоте прилёта — scoop/catch/catch_head/catch_top / miss_top.
 	if ball.is_flight() and _heading_at_goal() and _catch_radius_hit():
 		var by := ball.global_position.y
 		if _should_catch_high(by):
-			ball.catch(self, hold_point)
+			ball.catch(_body, hold_point)
 			_begin_central_catch(by)
 		else:
 			_begin_miss_top()
@@ -362,7 +381,7 @@ func _begin_save(dec: Dictionary, ball_speed: float, ttoi: float) -> void:
 	var vis := _visual()
 	var is_catch := _is_catch_action(dec.action)
 	var is_high: bool = dec.action == KeeperLogic.SaveAction.DIVE_HIGH_L or dec.action == KeeperLogic.SaveAction.DIVE_HIGH_R
-	var clip := _catch_clip_for_height(dec.target.y) if is_catch else _dive_clip_for(dec.target - global_position, is_high)
+	var clip := _catch_clip_for_height(dec.target.y) if is_catch else _dive_clip_for(dec.target - _body.global_position, is_high)
 	# Клип нырка — фиксированная (натуральная) скорость, как в OpenSoccer; ловля на месте — 1.0.
 	var spd := 1.0 if is_catch else FootballConstants.KEEPER_DIVE_ANIM_SPEED
 	var clip_len := 0.0
@@ -379,7 +398,7 @@ func _begin_save(dec: Dictionary, ball_speed: float, ttoi: float) -> void:
 	else:
 		var target: Vector3 = dec.target
 		target.x += randf_range(-1.0, 1.0) * FootballConstants.KEEPER_SAVE_ERROR
-		var to := target - global_position
+		var to := target - _body.global_position
 		# Импульс ПРОПОРЦИОНАЛЕН смещению (divevel = смещение × gain) — как OpenSoccer:
 		# близкий/дальний нырок доезжают за ~одинаковое время → синхрон с фикс. клипом.
 		# ТОЛЬКО горизонталь: прыжок вверх/опускание делает сам клип (вертикаль корня живая),
@@ -390,16 +409,16 @@ func _begin_save(dec: Dictionary, ball_speed: float, ttoi: float) -> void:
 
 func _dive(delta: float) -> void:
 	# Только горизонталь (вертикаль — в клипе). Тело держится на уровне газона.
-	move_and_collide(_dive_vel * delta)
+	_body.move_and_collide(_dive_vel * delta)
 	_dive_vel.x *= FootballConstants.KEEPER_DIVE_DECAY
 	_dive_vel.z *= FootballConstants.KEEPER_DIVE_DECAY
-	global_position.y = _ground_y   # капсула не покидает газон — прыжок делает анимация
+	_body.global_position.y = _ground_y   # капсула не покидает газон — прыжок делает анимация
 	# Геометрический контакт: мяч дотянулся до вратаря → ловим (по _current_action) или отбиваем.
 	if ball.is_flight() and _catch_radius_hit():
 		_resolve_dive_contact()
 	_dive_time_left -= delta
 	if _dive_time_left <= 0.0:
-		if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == self:
+		if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body:
 			_to_hold()   # поймали в нырке — мяч в руках, держим и выносим
 		else:
 			_finish_dive()
@@ -427,7 +446,7 @@ func on_ball_contact() -> void:
 		out.y = 0.0
 		ball.parry(out, FootballConstants.KEEPER_PARRY_DAMP)
 		return
-	ball.catch(self, hold_point)
+	ball.catch(_body, hold_point)
 	if _state != State.CATCHING and _state != State.DIVE:
 		_begin_central_catch(by)
 
@@ -461,7 +480,7 @@ func _should_catch_high(y: float) -> bool:
 ## Мяч в радиусе досягаемости вратаря (по горизонтали, ниже прыжка)? Геометрический детектор
 ## контакта вместо ненадёжной Area3D.
 func _catch_radius_hit() -> bool:
-	var flat := Vector2(ball.global_position.x - global_position.x, ball.global_position.z - global_position.z)
+	var flat := Vector2(ball.global_position.x - _body.global_position.x, ball.global_position.z - _body.global_position.z)
 	return flat.length() <= FootballConstants.KEEPER_REACH \
 		and ball.global_position.y <= FootballConstants.KEEPER_JUMP_REACH + 0.3
 
@@ -471,7 +490,7 @@ func _resolve_dive_contact() -> void:
 	var is_catch := KeeperLogic.resolve_save(_current_action, ball.linear_velocity.length(),
 		FootballConstants.KEEPER_CATCH_MAX_SPEED)
 	if is_catch:
-		ball.catch(self, hold_point)
+		ball.catch(_body, hold_point)
 	else:
 		var out := ball.global_position - Vector3(0, 0, goal_line_z)
 		out.y = 0.0
@@ -545,7 +564,7 @@ func _do_overhand_throw() -> void:
 	if _distribute_fired:
 		return
 	_distribute_fired = true
-	if ball.dribbler == self or ball.is_caught():
+	if ball.dribbler == _body or ball.is_caught():
 		var into := signf(-goal_line_z)   # от ворот в поле (к центру)
 		var g := _ball_gravity()
 		# Дуга: vy из высоты пика; время полёта T до возврата на ту же высоту.
@@ -601,7 +620,7 @@ func _begin_carry() -> void:
 		return
 	_place_fired = true
 	# Из рук (CAUGHT) прямо в дриблинг (TRAPPED), force=true — мимо кулдаунов; мяч уже у ног.
-	ball.set_dribbler(self, true)
+	ball.set_dribbler(_body, true)
 	_state = State.CARRY
 	_carry_wait = 0.25   # остаток клипа keeper_placing_ball после contact (0.95с) до lock (1.17с)
 	print("[KEEPER] CARRY wait (ball placed, finishing anim)")
@@ -625,7 +644,7 @@ func _carry(delta: float) -> void:
 		if _carry_wait <= 0.0:
 			if m != null:
 				m.set_control_locked(false)   # клип кончился — свободен, стартуем движение
-			_carry_start = global_position    # отсчёт дистанции от точки старта движения
+			_carry_start = _body.global_position    # отсчёт дистанции от точки старта движения
 			print("[KEEPER] CARRY move (start=", _carry_start, ")")
 		return
 	# Фаза 2: движение вперёд + дриблинг.
@@ -635,10 +654,10 @@ func _carry(delta: float) -> void:
 		m.set_face_direction(Vector3.ZERO)   # полевой режим: корпус смотрит по движению
 		m.set_move_intent(dir, 1.0)
 	# Мяч потерян (отобрали/улетел) — не зависаем, назад в стойку.
-	if ball.dribbler != self:
+	if ball.dribbler != _body:
 		_finish_dive()
 		return
-	if global_position.distance_to(_carry_start) >= FootballConstants.KEEPER_PLACE_DRIBBLE_DIST:
+	if _body.global_position.distance_to(_carry_start) >= FootballConstants.KEEPER_PLACE_DRIBBLE_DIST:
 		_begin_field_pass()
 
 
@@ -681,7 +700,7 @@ func _do_field_pass_launch() -> void:
 	if _field_pass_fired:
 		return
 	_field_pass_fired = true
-	if ball.dribbler == self:
+	if ball.dribbler == _body:
 		print("[KEEPER] FIELD PASS launch vel=", _field_pass_vel)
 		ball.launch(_field_pass_vel)
 	var into := signf(-goal_line_z)
@@ -711,7 +730,7 @@ func _distribute(delta: float) -> void:
 	if not _distribute_fired and _state_timer <= 0.0:
 		print("[KEEPER] DISTRIBUTE fallback roll (no action_contact)")
 		_do_pass_roll()
-	if _distribute_fired and ball.dribbler != self:
+	if _distribute_fired and ball.dribbler != _body:
 		print("[KEEPER] -> back to POSITION (cleared)")
 		_state = State.POSITION
 
@@ -737,7 +756,7 @@ func _on_visual_contact(action: String) -> void:
 ## flat=true — катится низом, без подскока).
 func _do_pass_roll() -> void:
 	_distribute_fired = true
-	if ball.dribbler == self or ball.is_caught():
+	if ball.dribbler == _body or ball.is_caught():
 		var into := signf(-goal_line_z)   # от ворот в поле (к центру)
 		var dir := Vector3(0.0, 0.0, into)
 		var dt := 1.0 / float(Engine.physics_ticks_per_second)
@@ -758,7 +777,7 @@ func _do_clear() -> void:
 	_distribute_fired = true
 	var out_z := signf(-goal_line_z)   # от ворот к центру поля
 	var vel := Vector3(0, 0, out_z) * FootballConstants.KEEPER_CLEAR_SPEED + Vector3.UP * FootballConstants.KEEPER_CLEAR_LIFT
-	if ball.dribbler == self or ball.is_caught():
+	if ball.dribbler == _body or ball.is_caught():
 		print("[KEEPER] clear! launch vel=", vel)
 		ball.launch(vel)
 	var m := _motor()
@@ -775,7 +794,7 @@ func _is_catch_action(a: int) -> bool:
 ## (basis.x), а не мировой осью X — иначе при смене ворот (вратарь смотрит в другую сторону)
 ## лево/право инвертируются, и поза нырка идёт не в ту сторону.
 func _dive_clip_for(to: Vector3, is_high: bool) -> StringName:
-	var right := global_transform.basis.x
+	var right := _body.global_transform.basis.x
 	var to_right := right.dot(Vector3(to.x, 0.0, to.z))
 	var r_side := to_right >= 0.0   # мяч со стороны правой руки вратаря
 	if is_high:
@@ -842,11 +861,11 @@ func _catching(delta: float) -> void:
 	var m := _motor()
 	if m != null:
 		var into := -1.0 if goal_line_z > 0.0 else 1.0
-		m.set_face_direction(Vector3(ball.global_position.x - global_position.x, 0.0, into * 4.0))
+		m.set_face_direction(Vector3(ball.global_position.x - _body.global_position.x, 0.0, into * 4.0))
 	# Геометрический захват: мяч дотянулся → приклеиваем к рукам.
 	if ball.is_flight() and _catch_radius_hit():
-		ball.catch(self, hold_point)
-	if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == self:
+		ball.catch(_body, hold_point)
+	if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body:
 		if _state_timer <= 0.0:
 			_to_hold()   # клип доиграл — держим мяч и выносим
 		return

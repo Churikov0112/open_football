@@ -12,6 +12,7 @@ var _ball: RigidBody3D
 var _camera_pivot: Node3D
 var _power_bar: ProgressBar
 var _keeper: CharacterBody3D
+var _keeper_brain: Node
 
 var _phase: int = Phase.IDLE
 var _kicker: CharacterBody3D
@@ -48,6 +49,7 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
 	_keeper = keeper
+	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_fk_rng.randomize()
 
 func is_active() -> bool:
@@ -83,6 +85,43 @@ func _setup() -> void:
 	_ball.angular_velocity = Vector3.ZERO
 	_ball.global_position = _spot
 	# Бьющий за мячом на длину разбега, лицом по heading; латеральный сдвиг под опорную ногу.
+	_place_kicker()
+	# Бьющий — в чистый idle: сбрасываем любое текущее действие/one-shot (если перед штрафным
+	# делали что-то другое — подкат/пас/удар — иначе бьющий стоит в чужой позе до разбега).
+	var kvis := _kicker_visual()
+	if kvis != null:
+		kvis.cancel_action()
+		kvis.recover()
+	# Вратарь: реактивный режим штрафного (позиция-якорь, сейв ВКЛ).
+	if _keeper_brain != null and _keeper_brain.has_method(&"set_freekick_anchor"):
+		var nf := FreeKickLogic.near_far_posts(_spot, 0.0, FootballConstants.GOAL_WIDTH * 0.5, _goal_line_z)
+		var kpos := FreeKickLogic.keeper_position(_spot, nf[0], nf[1], FootballConstants.GOAL_WIDTH * 0.5,
+			FootballConstants.FK_KEEPER_STEP_OUT, _goal_line_z, 0.5)
+		_keeper_brain.set_freekick_anchor(kpos)
+	# Прячем debug-болванки стенки (тестовое scaffolding), чтобы не засоряли розыгрыш.
+	_hide_debug_dummies()
+	# Правило 9.15 м: соперники (кроме вратаря) не должны стоять ближе к мячу ВООБЩЕ, по
+	# любому направлению — не только в коридоре удара (официальное правило IFAB, действует
+	# всегда, даже на дальних штрафных без формальной стенки).
+	_clear_opponent_encroachment()
+	# Оборона (стенка) + атакующие (тиммейт/цели).
+	_spawn_defense()
+	_spawn_mates()
+	# Никто (свои/чужие, кроме бьющего, вратаря и самой стенки) не должен стоять в КОНУСЕ мяч→крайние
+	# игроки стенки. Расчищаем ПОСЛЕ спавна (иначе только что заспавненные атакующие цели, стоящие на
+	# FK_TARGET_DEPTH от ворот, при близком штрафном оказывались между мячом и стенкой и не убирались).
+	# Тела стенки пропускаем — они намеренно стоят на границе конуса.
+	_clear_ball_to_wall_cone()
+	_charging = false
+	_charge = 0.0
+	_curl_accum = 0.0
+	_locked = false
+	_ball_in_flight_watch = false
+	_update_camera_pose()
+	_phase = Phase.AIM
+
+## Расстановка бьющего за мячом на разбег, лицом по base_heading, сдвиг под опорную ногу.
+func _place_kicker() -> void:
 	var side := 1.0 if _foot == "penalty_r" else -1.0
 	var right := _base_heading.cross(Vector3.UP).normalized()
 	_kicker.global_position = _spot - _base_heading * FootballConstants.FK_RUNUP_DIST \
@@ -94,42 +133,11 @@ func _setup() -> void:
 		km.set_control_locked(true)
 		km.set_move_intent(Vector3.ZERO)
 		km.set_face_direction(_base_heading)
-	# Бьющий — в чистый idle: сбрасываем любое текущее действие/one-shot (если перед штрафным
-	# делали что-то другое — подкат/пас/удар — иначе бьющий стоит в чужой позе до разбега).
-	var kvis := _kicker_visual()
-	if kvis != null:
-		kvis.cancel_action()
-		kvis.recover()
-	# Вратарь: реактивный режим штрафного (позиция-якорь, сейв ВКЛ).
-	if _keeper != null and _keeper.has_method(&"set_freekick_anchor"):
-		var nf := FreeKickLogic.near_far_posts(_spot, 0.0, FootballConstants.GOAL_WIDTH * 0.5, _goal_line_z)
-		var kpos := FreeKickLogic.keeper_position(_spot, nf[0], nf[1], FootballConstants.GOAL_WIDTH * 0.5,
-			FootballConstants.FK_KEEPER_STEP_OUT, _goal_line_z, 0.5)
-		_keeper.set_freekick_anchor(kpos)
-	# Прячем debug-болванки стенки (тестовое scaffolding), чтобы не засоряли розыгрыш.
-	_hide_debug_dummies()
-	# Правило 9.15 м: соперники (кроме вратаря) не должны стоять ближе к мячу ВООБЩЕ, по
-	# любому направлению — не только в коридоре удара (официальное правило IFAB, действует
-	# всегда, даже на дальних штрафных без формальной стенки).
-	_clear_opponent_encroachment()
-	# Никто (свои/чужие, кроме бьющего и вратаря) не должен стоять в КОНУСЕ мяч→крайние игроки
-	# стенки (по всей её ширине, а не узкому коридору к центру) — расчищаем ПОСЛЕ радиального
-	# оттеснения и ДО спавна стенки/своих (сама стенка намеренно встаёт на границе этого конуса).
-	_clear_ball_to_wall_cone()
-	# Оборона (стенка) + атакующие (тиммейт/цели).
-	_spawn_defense()
-	_spawn_mates()
-	_charging = false
-	_charge = 0.0
-	_curl_accum = 0.0
-	_locked = false
-	_ball_in_flight_watch = false
-	_update_camera_pose()
-	_phase = Phase.AIM
 
 func update(delta: float) -> void:
 	match _phase:
 		Phase.AIM:
+			_pin_ball()
 			_aim_update(delta)
 		Phase.STRIKE:
 			_strike_update(delta)
@@ -145,7 +153,22 @@ func update(delta: float) -> void:
 				_release()
 	_update_camera_pose()
 
+## Держим мяч неподвижно на точке до удара (как пойманный вратарём). Иначе остаточная скорость
+## (штрафной берут «с ноги», ведя мяч) укатывает мяч драгом на несколько метров — на пенальти
+## этого нет, т.к. точка расчищена и мяч из чистого сброса. Снимается сама при переходе в STRIKE.
+func _pin_ball() -> void:
+	_ball.linear_velocity = Vector3.ZERO
+	_ball.angular_velocity = Vector3.ZERO
+	_ball.global_position = _spot
+
 func _aim_update(delta: float) -> void:
+	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
+	if Input.is_action_just_pressed(&"foot_left") and _foot != "penalty_l":
+		_foot = "penalty_l"
+		_place_kicker()
+	elif Input.is_action_just_pressed(&"foot_right") and _foot != "penalty_r":
+		_foot = "penalty_r"
+		_place_kicker()
 	var stick_x := Input.get_axis(&"move_left", &"move_right")
 	# До нажатия kick: стик крутит heading (камера едет). После нажатия: heading зафиксирован,
 	# боковой ввод копится в закрутку.
@@ -272,9 +295,18 @@ func _on_kicker_contact(_action: String) -> void:
 		_pending_curl = FreeKickLogic.curl_from_stick(_curl_accum, FootballConstants.FK_CURL_SCALE, FootballConstants.FK_CURL_MAX)
 	match _pending_kind:
 		"ground":
-			# Наземный пас в направлении камеры (heading), настильно; сила = скорость (заряд).
-			var speed := lerpf(FootballConstants.FK_PASS_MIN_SPEED, FootballConstants.FK_PASS_MAX_SPEED, _pending_ratio)
-			var vel := PassSystem.launch_ground(from, from + flat, speed)
+			# Наземный пас ВСЕГДА доходит до получателя: скорость выводится из ДИСТАНЦИИ (не фикс),
+			# заряд лишь меняет скорость/жёсткость. Прицел — в получателя, иначе вдоль heading на дефолт.
+			var to: Vector3
+			if is_instance_valid(receiver):
+				to = Vector3(receiver.global_position.x, from.y, receiver.global_position.z)
+			else:
+				to = from + flat * FootballConstants.FK_MATE_LATERAL
+			var dist := Vector2(to.x - from.x, to.z - from.z).length()
+			var speed := PassSystem.ground_pass_speed(dist, _pending_ratio,
+				FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+				FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
+			var vel := PassSystem.launch_ground(from, to, speed)
 			if _ball.has_method(&"launch"):
 				_ball.launch(vel, true)
 		"lob":
@@ -301,6 +333,10 @@ func _on_kicker_contact(_action: String) -> void:
 			else:
 				if _ball.has_method(&"launch"):
 					_ball.launch(_pending_launch, false)
+	# Мяч лежал на точке (dribbler=null) → launch пометил last_kicker=null. Помечаем бьющего явно,
+	# иначе он сам блокирует/перехватывает свой пас (нет грейса/кулдауна). Мяч летит к цели.
+	if _ball.has_method(&"note_kicker"):
+		_ball.note_kicker(_kicker)
 	_ball_in_flight_watch = true      # включаем наблюдение за прыжком стенки
 	struck.emit()
 	var km := PlayerMotor.find_on(_kicker)
@@ -331,11 +367,17 @@ func _release() -> void:
 	if km != null:
 		km.set_face_direction(Vector3.ZERO)
 		km.set_control_locked(false)
-	if _keeper != null and _keeper.has_method(&"clear_freekick_anchor"):
-		_keeper.clear_freekick_anchor()
+	if _keeper_brain != null and _keeper_brain.has_method(&"clear_freekick_anchor"):
+		_keeper_brain.clear_freekick_anchor()
 	_convert_bodies()                 # стенка/тиммейты → обычный ИИ
 	_restore_debug_dummies()          # возвращаем спрятанные debug-болванки
-	_manager.set_field_ai_active(true)
+	# Гол со штрафного: замораживаем поле-ИИ (в т.ч. только что сконвертированные стенку/тиммейтов,
+	# которые рождаются активными) — заморозку празднования снимет _celebrate_then_reset, как при
+	# обычном голе с игры. Иначе игроки бегут к мячу посреди празднования.
+	if _manager.is_celebrating():
+		_manager.set_field_ai_active(false)
+	else:
+		_manager.set_field_ai_active(true)
 	_manager.set_free_kick_active(false)
 	_phase = Phase.IDLE
 
@@ -380,7 +422,10 @@ func _clear_opponent_encroachment() -> void:
 	for n in _manager.get_tree().get_nodes_in_group("team_2"):
 		if not is_instance_valid(n) or n == _keeper:
 			continue
-		var adjusted := FreeKickLogic.push_out_of_radius(n.global_position, _spot, FootballConstants.FK_WALL_DIST)
+		# Толкаем ЗА стенку (радиус стенки + запас), а не ровно на её радиус — иначе соперник встаёт
+		# вплотную к стенке и выглядит «в радиусе стенки».
+		var adjusted := FreeKickLogic.push_out_of_radius(n.global_position, _spot,
+			FootballConstants.FK_WALL_DIST + FootballConstants.FK_ENCROACH_MARGIN)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
 
@@ -406,9 +451,18 @@ func _clear_ball_to_wall_cone() -> void:
 	for n in bodies:
 		if not is_instance_valid(n) or n == _kicker or n == _keeper or not (n is Node3D):
 			continue
+		if _is_wall_body(n):
+			continue   # стенка намеренно стоит на границе конуса — не выталкиваем её саму
 		var adjusted := FreeKickLogic.push_out_of_cone(n.global_position, _spot, edge_l, edge_r, FootballConstants.FK_CONE_MARGIN_DEG)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
+
+## Тело n — член стенки (заспавнен _spawn_defense)?
+func _is_wall_body(n: Node) -> bool:
+	for entry in _wall_bodies:
+		if entry["body"] == n:
+			return true
+	return false
 
 # ── Стенка ────────────────────────────────────────────────────────────────────
 func _spawn_defense() -> void:
@@ -427,31 +481,18 @@ func _spawn_defense() -> void:
 
 ## Создать статичное тело стенки (team_2, лицом к мячу), пока без ИИ-скрипта.
 func _make_wall_body(pos: Vector3) -> CharacterBody3D:
-	var p := CharacterBody3D.new()
-	p.name = "WallMember"
-	p.global_position = pos
-	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	p.add_child(visual)
-	p.add_child(PlayerMotor.new())
-	visual.apply_appearance({"kit_color": Color(0.9, 0.1, 0.1)})
-	# Полноценный игрок: подключаем сигналы удара/паса, как штатные игроки (иначе система
-	# deferred-impulse ждёт action_contact, который не приходит → пас летит по фолбэку с другой
-	# силой/направлением и без анимации, когда этим телом управляют).
-	visual.action_contact.connect(_manager._on_action_contact.bind(p))
-	visual.action_finished.connect(_manager._on_action_finished.bind(p))
-	var col := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.height = 1.5
-	shape.radius = 0.3
-	col.shape = shape
-	col.position = Vector3(0, 0.25, 0)
-	p.add_child(col)
-	_manager.add_child(p)
-	p.add_to_group("team_2")
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_2"
+	cfg.role = PlayerConfig.Role.DEF
+	cfg.kit_color = Color(0.9, 0.1, 0.1)
+	cfg.spawn_pos = pos
+	cfg.display_name = "WallMember"
+	cfg.control_mode = PlayerConfig.ControlMode.AI
+	cfg.ai_script = null                 # пока без ИИ — стоит на месте; _convert_bodies даст simple_ai
+	cfg.connect_action_signals = true    # полноценный игрок: сигналы удара/паса как у штатных
+	var p := PlayerFactory.spawn(cfg, _manager._team_away)
 	p.add_to_group("fk_spawned")
-	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
-	# Лицом к мячу, мотор залочен (стоит на месте).
+	# лицом к мячу, мотор залочен (стоит на месте)
 	p.look_at(Vector3(_spot.x, pos.y, _spot.z), Vector3.UP)
 	var pm := PlayerMotor.find_on(p)
 	if pm != null:
@@ -482,7 +523,11 @@ func _update_wall_jumps(delta: float) -> void:
 		else:
 			entry["jump_t"] += delta
 			var tt: float = entry["jump_t"] / FootballConstants.FK_WALL_JUMP_TIME
-			if tt >= 1.0:
+			# Гол уже засчитан (мяч в сетке) РАНЬШЕ, чем прыжок доиграл естественно: обрываем прыжок
+			# СРАЗУ, а не ждём _release() (это может занять ещё секунду-две WATCH-фазы — весь этот
+			# промежуток тело висело бы в воздухе с застрявшей анимацией). Тот же клинап, что и при
+			# tt>=1.0 — просто триггерится досрочно.
+			if tt >= 1.0 or _manager.is_celebrating():
 				b.global_position.y = entry["base_y"]
 				b.remove_from_group("fallen")
 				entry["jumping"] = false
@@ -511,13 +556,23 @@ func _convert_bodies() -> void:
 		if b.is_in_group("fallen"):
 			b.remove_from_group("fallen")
 			b.global_position.y = entry["base_y"]
+			entry["jumping"] = false
+			# Прыжок мог оборваться ДО естественного завершения (гол/watch_timer сработали раньше,
+			# чем tt>=1.0 в _update_wall_jumps — тот путь сам зовёт recover()). Без этого AnimationTree
+			# остаётся в состоянии "jumping_wall" (нет auto-return у one-shot) — тело физически уже на
+			# земле и получает живой ИИ-мотор, но модель зависает в позе прыжка / скользит замороженным
+			# кадром, пока не сыграет что-то другое (баг: «висит в воздухе» / «скользит в idle»).
+			var jv := _wall_visual(b)
+			if jv != null:
+				jv.recover()
 		var pm := PlayerMotor.find_on(b)
 		if pm != null:
 			pm.set_control_locked(false)
-		b.set_script(ai_script)
-		b.set_physics_process(true)
-		b.ball = _ball
-		b.home_goal = _manager.get_node_or_null("GoalHome/GoalArea")
+		var wb := ai_script.new()          # simple_ai теперь Brain-компонент
+		wb.name = "Brain"
+		b.add_child(wb)
+		wb.ball = _ball
+		wb.home_goal = _manager.get_node_or_null("GoalHome/GoalArea")
 	# Свои (тиммейт/цели) → обычный team_1-ИИ (teammate_ai). _mates НЕ очищаем (спавн чистит на старте).
 	var mate_script := preload("res://scripts/ai/teammate_ai.gd")
 	for entry in _mates:
@@ -527,10 +582,11 @@ func _convert_bodies() -> void:
 		var mpm := PlayerMotor.find_on(mb)
 		if mpm != null:
 			mpm.set_control_locked(false)
-		mb.set_script(mate_script)
-		mb.set_physics_process(true)
-		mb.ball = _ball
-		mb.controlled_player = _manager.controlled_player
+		var mbrain := mate_script.new()      # teammate_ai теперь Brain-компонент
+		mbrain.name = "Brain"
+		mb.add_child(mbrain)
+		mbrain.ball = _ball
+		mbrain.controlled_player = _manager.controlled_player
 
 # ── Пас/навес ─────────────────────────────────────────────────────────────────
 func _spawn_mates() -> void:
@@ -540,38 +596,32 @@ func _spawn_mates() -> void:
 	var mate_pos := _spot + right * FootballConstants.FK_MATE_LATERAL - _heading * FootballConstants.FK_MATE_BACK
 	mate_pos.y = 0.5
 	_mates.append({"body": _make_mate_body(mate_pos), "is_target": false})
-	# 1-2 атакующих у ворот (цель для навеса), по разные стороны от центра.
+	# 1-2 атакующих у ворот (цель для навеса), по разные стороны от центра. Глубину ограничиваем так,
+	# чтобы цель ВСЕГДА была ЗА стенкой (ближе к воротам), а не между мячом и стенкой — иначе на
+	# близком штрафном цель на фикс. FK_TARGET_DEPTH попадала в разрыв мяч→стенка (баг: тиммейт стоит
+	# между мячом и стенкой). Стенка стоит в FK_WALL_DIST от мяча → её удаление от ворот = дистанция
+	# мяча до ворот минус FK_WALL_DIST; цель ставим ещё на 2 м ближе к воротам.
 	var into := signf(_goal_line_z) * -1.0   # от ворот в поле (к центру)
-	var depth_z := _goal_line_z + into * FootballConstants.FK_TARGET_DEPTH
+	var wall_dist_from_goal := maxf(0.0, absf(_spot.z - _goal_line_z) - FootballConstants.FK_WALL_DIST)
+	var target_depth := clampf(wall_dist_from_goal - 2.0, 2.0, FootballConstants.FK_TARGET_DEPTH)
+	var depth_z := _goal_line_z + into * target_depth
 	for sx in [-1.0, 1.0]:
 		var tp := Vector3(sx * FootballConstants.FK_TARGET_LATERAL, 0.5, depth_z)
 		_mates.append({"body": _make_mate_body(tp), "is_target": true})
 
 ## Создать статичное тело своей команды (team_1), пока без ИИ-скрипта.
 func _make_mate_body(pos: Vector3) -> CharacterBody3D:
-	var p := CharacterBody3D.new()
-	p.name = "FKMate"
-	p.global_position = pos
-	var visual: PlayerVisual = preload("res://scenes/player_visual.tscn").instantiate()
-	p.add_child(visual)
-	p.add_child(PlayerMotor.new())
-	visual.apply_appearance({"kit_color": Color(0.1, 0.1, 0.9)})
-	# Полноценный игрок: сигналы удара/паса как у штатных (иначе при управлении этим телом пас
-	# идёт по фолбэку — другая сила/направление, без анимации). См. _make_wall_body.
-	visual.action_contact.connect(_manager._on_action_contact.bind(p))
-	visual.action_finished.connect(_manager._on_action_finished.bind(p))
-	var col := CollisionShape3D.new()
-	var shape := CapsuleShape3D.new()
-	shape.height = 1.5
-	shape.radius = 0.3
-	col.shape = shape
-	col.position = Vector3(0, 0.25, 0)
-	p.add_child(col)
-	_manager.add_child(p)
-	p.add_to_group("team_1")
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_1"
+	cfg.role = PlayerConfig.Role.FWD
+	cfg.kit_color = Color(0.1, 0.1, 0.9)
+	cfg.spawn_pos = pos
+	cfg.display_name = "FKMate"
+	cfg.control_mode = PlayerConfig.ControlMode.AI
+	cfg.ai_script = null                 # без ИИ до _convert_bodies (даст teammate_ai)
+	cfg.connect_action_signals = true
+	var p := PlayerFactory.spawn(cfg, _manager._team_home)
 	p.add_to_group("fk_spawned")
-	p.collision_layer = FootballConstants.PLAYER_COLLISION_MASK
-	p.collision_mask = FootballConstants.PLAYER_COLLISION_MASK | FootballConstants.BOUNDARY_COLLISION_LAYER
 	var pm := PlayerMotor.find_on(p)
 	if pm != null:
 		pm.set_control_locked(true)
