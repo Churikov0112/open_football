@@ -36,6 +36,7 @@ var _high_roll: int = -1   # бросок «взять/пропустить» в
 # Пенальти-подрежим (Фаза A): держим центр, реактивный боковой сейв off; нырок — по команде.
 var _penalty_mode: bool = false
 var _freekick_mode: bool = false
+var _goalkick_mode: bool = false
 var _freekick_anchor: Vector3 = Vector3.ZERO
 var _pen_struck: bool = false
 
@@ -80,6 +81,10 @@ func _physics_process(delta: float) -> void:
 	if not ball or not is_instance_valid(ball):
 		return
 	_ensure_wired()
+	# Удар от ворот: вратарь — марионетка контроллера (тот лочит мотор и ведёт разбег root-motion).
+	# Собственную логику сейва/позиции глушим полностью.
+	if _goalkick_mode:
+		return
 	# Празднование гола: новых сейвов/выносов не начинаем (иначе вратарь ловит осевший в сетке
 	# мяч и выносит его уже ПОСЛЕ гола). Но ТЕКУЩИЙ нырок доигрываем до конца анимации —
 	# не дёргаем в idle посреди прыжка.
@@ -301,6 +306,26 @@ func set_penalty_mode(on: bool) -> void:
 		if vis != null:
 			vis.recover()   # выйти из любого one-shot (нырок/idle_ball) в локомоцию-хаб
 			vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+
+
+## Пассивный режим бьющего для удара от ворот. Тело/разбег/удар ведёт GoalKickController;
+## вратарь чистит своё состояние, отпускает мяч и не запускает собственную логику. При off —
+## возврат в POSITION (снова держит линию). НЕ телепортирует тело — расстановку делает контроллер.
+func set_goalkick_mode(on: bool) -> void:
+	_goalkick_mode = on
+	if on:
+		_reacting = false
+		_pass_through = false
+		_current_action = KeeperLogic.SaveAction.NONE
+		_state = State.POSITION
+		if ball != null and is_instance_valid(ball) and ball.dribbler == _body:
+			ball.release_dribble()
+		var vis := _visual()
+		if vis != null:
+			vis.recover()   # выйти из любого one-shot (нырок/idle_ball) в локомоцию
+			vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+	else:
+		_state = State.POSITION
 
 
 ## Слепой нырок пенальти по выбранной зоне. Угловые — существующий _begin_save (клип/контакт/отбой
@@ -738,6 +763,8 @@ func _distribute(delta: float) -> void:
 ## Момент касания в раздаче: placing_ball (ставит мяч → дриблинг) — активный путь;
 ## keeper_pass (раскат) сохранён, но сейчас не подключён.
 func _on_visual_contact(action: String) -> void:
+	if _goalkick_mode:
+		return   # контактом на ударе от ворот владеет GoalKickController, не распас вратаря
 	if action == "keeper_placing_ball" and _state == State.PLACING and not _place_fired:
 		_begin_carry()
 		return
