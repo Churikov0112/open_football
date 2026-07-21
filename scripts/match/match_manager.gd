@@ -939,10 +939,13 @@ func _physics_process(delta: float) -> void:
 				controlled_player = db
 				_sync_ai_controllers()
 
-	# Смена игрока — только в защите (мяч не у нас). В атаке combo_modifier = модификатор паса.
-	# Переключаем на БЛИЖАЙШЕГО к мячу из team_1 (человек + тиммейт + заспавненные штрафным).
-	# Если ближайший уже выбран — на второго ближайшего (иначе кнопка не давала бы эффекта).
-	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess():
+	# Смена игрока — только в ЗАЩИТЕ: мяч не у нас И (им владеет соперник ИЛИ соперник ближе к мячу).
+	# Иначе рывок-брейк-эвей (мяч вырвался в спринте, но мы к нему ближе всех — он всё ещё наш) по
+	# combo_modifier ошибочно переключал управление на тиммейта. В атаке combo_modifier = модификатор
+	# паса/удара, не свап. Переключаем на БЛИЖАЙШЕГО к мячу из team_1; если он уже выбран — на второго.
+	var opp_has_ball: bool = ball.has_method(&"set_dribbler") and ball.dribbler and ball.dribbler.is_in_group("team_2")
+	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess() \
+			and (opp_has_ball or _opponent_closer_to_ball(controlled_player)):
 		var team := get_tree().get_nodes_in_group("team_1")
 		if team.size() > 1:
 			var ball_pos := ball.global_position

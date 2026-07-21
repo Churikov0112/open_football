@@ -104,13 +104,14 @@ func _setup() -> void:
 	# любому направлению — не только в коридоре удара (официальное правило IFAB, действует
 	# всегда, даже на дальних штрафных без формальной стенки).
 	_clear_opponent_encroachment()
-	# Никто (свои/чужие, кроме бьющего и вратаря) не должен стоять в КОНУСЕ мяч→крайние игроки
-	# стенки (по всей её ширине, а не узкому коридору к центру) — расчищаем ПОСЛЕ радиального
-	# оттеснения и ДО спавна стенки/своих (сама стенка намеренно встаёт на границе этого конуса).
-	_clear_ball_to_wall_cone()
 	# Оборона (стенка) + атакующие (тиммейт/цели).
 	_spawn_defense()
 	_spawn_mates()
+	# Никто (свои/чужие, кроме бьющего, вратаря и самой стенки) не должен стоять в КОНУСЕ мяч→крайние
+	# игроки стенки. Расчищаем ПОСЛЕ спавна (иначе только что заспавненные атакующие цели, стоящие на
+	# FK_TARGET_DEPTH от ворот, при близком штрафном оказывались между мячом и стенкой и не убирались).
+	# Тела стенки пропускаем — они намеренно стоят на границе конуса.
+	_clear_ball_to_wall_cone()
 	_charging = false
 	_charge = 0.0
 	_curl_accum = 0.0
@@ -450,9 +451,18 @@ func _clear_ball_to_wall_cone() -> void:
 	for n in bodies:
 		if not is_instance_valid(n) or n == _kicker or n == _keeper or not (n is Node3D):
 			continue
+		if _is_wall_body(n):
+			continue   # стенка намеренно стоит на границе конуса — не выталкиваем её саму
 		var adjusted := FreeKickLogic.push_out_of_cone(n.global_position, _spot, edge_l, edge_r, FootballConstants.FK_CONE_MARGIN_DEG)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
+
+## Тело n — член стенки (заспавнен _spawn_defense)?
+func _is_wall_body(n: Node) -> bool:
+	for entry in _wall_bodies:
+		if entry["body"] == n:
+			return true
+	return false
 
 # ── Стенка ────────────────────────────────────────────────────────────────────
 func _spawn_defense() -> void:
@@ -586,9 +596,15 @@ func _spawn_mates() -> void:
 	var mate_pos := _spot + right * FootballConstants.FK_MATE_LATERAL - _heading * FootballConstants.FK_MATE_BACK
 	mate_pos.y = 0.5
 	_mates.append({"body": _make_mate_body(mate_pos), "is_target": false})
-	# 1-2 атакующих у ворот (цель для навеса), по разные стороны от центра.
+	# 1-2 атакующих у ворот (цель для навеса), по разные стороны от центра. Глубину ограничиваем так,
+	# чтобы цель ВСЕГДА была ЗА стенкой (ближе к воротам), а не между мячом и стенкой — иначе на
+	# близком штрафном цель на фикс. FK_TARGET_DEPTH попадала в разрыв мяч→стенка (баг: тиммейт стоит
+	# между мячом и стенкой). Стенка стоит в FK_WALL_DIST от мяча → её удаление от ворот = дистанция
+	# мяча до ворот минус FK_WALL_DIST; цель ставим ещё на 2 м ближе к воротам.
 	var into := signf(_goal_line_z) * -1.0   # от ворот в поле (к центру)
-	var depth_z := _goal_line_z + into * FootballConstants.FK_TARGET_DEPTH
+	var wall_dist_from_goal := maxf(0.0, absf(_spot.z - _goal_line_z) - FootballConstants.FK_WALL_DIST)
+	var target_depth := clampf(wall_dist_from_goal - 2.0, 2.0, FootballConstants.FK_TARGET_DEPTH)
+	var depth_z := _goal_line_z + into * target_depth
 	for sx in [-1.0, 1.0]:
 		var tp := Vector3(sx * FootballConstants.FK_TARGET_LATERAL, 0.5, depth_z)
 		_mates.append({"body": _make_mate_body(tp), "is_target": true})
