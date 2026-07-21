@@ -232,6 +232,10 @@ func _on_kicker_contact(_action: String) -> void:
 	_contact_connected = false
 	if _ball.has_method(&"launch"):
 		_ball.launch(_pending_launch, false)
+	# Мяч лежал на точке (dribbler=null) → launch пометил last_kicker=null. Помечаем бьющего явно
+	# (анти-самоблок/кулдаун) — иначе бьющий мог бы блокировать/трогать собственный удар.
+	if _ball.has_method(&"note_kicker"):
+		_ball.note_kicker(_kicker)
 	if _keeper_brain != null and _keeper_brain.has_method(&"begin_penalty_dive"):
 		_keeper_brain.begin_penalty_dive(_struck_zone)
 	struck.emit()

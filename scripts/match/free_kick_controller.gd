@@ -323,6 +323,10 @@ func _on_kicker_contact(_action: String) -> void:
 			else:
 				if _ball.has_method(&"launch"):
 					_ball.launch(_pending_launch, false)
+	# Мяч лежал на точке (dribbler=null) → launch пометил last_kicker=null. Помечаем бьющего явно,
+	# иначе он сам блокирует/перехватывает свой пас (нет грейса/кулдауна). Мяч летит к цели.
+	if _ball.has_method(&"note_kicker"):
+		_ball.note_kicker(_kicker)
 	_ball_in_flight_watch = true      # включаем наблюдение за прыжком стенки
 	struck.emit()
 	var km := PlayerMotor.find_on(_kicker)
