@@ -9,6 +9,7 @@ func _init() -> void:
 	ok = _check_peak() and ok
 	ok = _check_targets() and ok
 	ok = _check_short() and ok
+	ok = _check_short_start() and ok
 	if ok:
 		print("CHECK PASS: corner_logic")
 		quit(0)
@@ -74,5 +75,18 @@ func _check_short() -> bool:
 	var p := CornerLogic.short_option_pos(spot, 1.0, 1.0, 7.0, 0.5)
 	if not (p.z > spot.z and absf(p.x) < absf(spot.x) and is_equal_approx(p.y, 0.5)):
 		print("  FAIL short: ", p)
+		return false
+	return true
+
+func _check_short_start() -> bool:
+	# Правый угол (side=1) атакуемой линии Home (z=-52.5): старт в штрафной, на стороне угла (x>0),
+	# в поле от линии (z > goal_line_z).
+	var p := CornerLogic.short_mate_start_pos(1.0, -52.5, 1.0, 3.0, 6.0, 0.5)
+	if not (is_equal_approx(p.x, 3.0) and is_equal_approx(p.z, -46.5) and is_equal_approx(p.y, 0.5)):
+		print("  FAIL short_start: ", p)
+		return false
+	var l := CornerLogic.short_mate_start_pos(-1.0, -52.5, 1.0, 3.0, 6.0, 0.5)
+	if l.x >= 0.0:
+		print("  FAIL short_start left side: ", l)
 		return false
 	return true

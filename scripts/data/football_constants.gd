@@ -574,3 +574,5 @@ const CORNER_CURL_MAX := 3.5          # кламп |curl.z|
 const CORNER_TARGET_LATERAL := 6.0    # цели навеса: сдвиг по X от центра, м
 const CORNER_TARGET_DEPTH := 11.0     # цели навеса: отступ в поле от линии ворот, м
 const CORNER_SHORT_DIST := 7.0        # короткая опция: партнёр вглубь поля вдоль линии, м
+const CORNER_SHORT_START_LATERAL := 3.0  # старт партнёра в штрафной: сдвиг по X от центра (сторона угла), м
+const CORNER_SHORT_START_DEPTH := 6.0    # старт партнёра в штрафной: отступ в поле от линии ворот, м

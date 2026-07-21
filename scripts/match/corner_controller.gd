@@ -252,7 +252,7 @@ func _on_kicker_contact(_action: String) -> void:
 	# Управление получателю ДО _release()/конверта тел (та же причина, что в FK).
 	if is_instance_valid(receiver) and _manager.has_method(&"assign_controlled_player"):
 		_manager.assign_controlled_player(receiver)
-	_release()
+	_release(receiver)
 	if is_instance_valid(receiver) and _manager.has_method(&"begin_pass_receive"):
 		_manager.begin_pass_receive(receiver)
 
@@ -309,9 +309,10 @@ func _spawn_targets() -> void:
 		FootballConstants.CORNER_TARGET_LATERAL, FootballConstants.CORNER_TARGET_DEPTH, 0.5)
 	for pos in positions:
 		_spawned.append({"body": _make_body(&"team_1", Color(0.1, 0.1, 0.9), pos), "team_group": &"team_1"})
-	# Короткая опция — отдельное тело team_1 рядом с углом (стоит, пока не позвали RB).
-	var short_pos := _spot - _base_heading * 3.0 + _base_heading.cross(Vector3.UP).normalized() * 4.0
-	short_pos.y = 0.5
+	# Короткая опция — атакующий В ШТРАФНОЙ (у ближней штанги, на стороне угла), пока не позвали
+	# RB — оттуда выбегает к бьющему (short_option_pos), а не наоборот.
+	var short_pos := CornerLogic.short_mate_start_pos(_side, _goal_line_z, _into,
+		FootballConstants.CORNER_SHORT_START_LATERAL, FootballConstants.CORNER_SHORT_START_DEPTH, 0.5)
 	_short_mate = _make_body(&"team_1", Color(0.1, 0.1, 0.9), short_pos)
 	_spawned.append({"body": _short_mate, "team_group": &"team_1"})
 
@@ -348,38 +349,38 @@ func _cleanup_spawned() -> void:
 	_spawned.clear()
 	_short_mate = null
 
-func _convert_bodies() -> void:
-	var simple := preload("res://scripts/ai/simple_ai.gd")
+## Только реальный получатель (если был) остаётся в матче — конвертируется в постоянного
+## ИИ-тиммейта и снимается с группы corner_spawned (иначе следующий угловой его деспавнит или,
+## если он же станет бьющим следующего углового, «застрянет» навсегда защищённым от очистки).
+## Все остальные заспавненные тела (незадействованные цели/защитники) — деспавнятся сразу, иначе
+## состав матча растёт без ограничения с каждым угловым.
+func _convert_bodies(receiver: CharacterBody3D) -> void:
 	var mate := preload("res://scripts/ai/teammate_ai.gd")
 	for entry in _spawned:
 		var b: CharacterBody3D = entry["body"]
 		if not is_instance_valid(b):
 			continue
-		var pm := PlayerMotor.find_on(b)
-		if pm != null:
-			pm.set_control_locked(false)
-		var brain: Node
-		if entry["team_group"] == &"team_2":
-			brain = simple.new()
-			brain.name = "Brain"
-			b.add_child(brain)
-			brain.ball = _ball
-			brain.home_goal = _manager.get_node_or_null("GoalHome/GoalArea")
-		else:
-			brain = mate.new()
+		if b == receiver:
+			b.remove_from_group("corner_spawned")
+			var pm := PlayerMotor.find_on(b)
+			if pm != null:
+				pm.set_control_locked(false)
+			var brain := mate.new()
 			brain.name = "Brain"
 			b.add_child(brain)
 			brain.ball = _ball
 			brain.controlled_player = _manager.controlled_player
+		else:
+			b.queue_free()
 
-func _release() -> void:
+func _release(receiver: CharacterBody3D) -> void:
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
 		km.set_face_direction(Vector3.ZERO)
 		km.set_control_locked(false)
 	if _keeper_brain != null and _keeper_brain.has_method(&"clear_freekick_anchor"):
 		_keeper_brain.clear_freekick_anchor()
-	_convert_bodies()
+	_convert_bodies(receiver)
 	# Гол с углового: не размораживаем поле-ИИ (заморозку празднования снимет _celebrate_then_reset).
 	if _manager.is_celebrating():
 		_manager.set_field_ai_active(false)
