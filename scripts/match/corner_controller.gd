@@ -35,6 +35,7 @@ var _locked: bool = false
 var _pending_kind: String = ""
 var _pending_ratio: float = 1.0
 var _contact_connected := false
+var _kicker_mask_saved: int = 0      # маска коллизий бьющего до углового (граница отключается на время)
 
 var _cn_rng := RandomNumberGenerator.new()
 var _spawned: Array = []             # [{body, team_group}] — ВРЕМЕННЫЕ тела углового (все деспавнятся)
@@ -85,6 +86,12 @@ func _setup() -> void:
 	_ball.angular_velocity = Vector3.ZERO
 	_ball.global_position = _spot
 	_place_kicker()
+	# Разбег стартует СНАРУЖИ боковой линии (за флажком), а граничная стена (_setup_boundaries, слой
+	# BOUNDARY_COLLISION_LAYER на x=±34) не даёт полевому телу пересечь её внутрь — без этого бьющий
+	# застревает за стеной и не может вбежать в игру. Снимаем у него маску границы на время углового
+	# (разбегом двигает root motion напрямую, физ-столкновение не нужно); вернём на резолве.
+	_kicker_mask_saved = _kicker.collision_mask
+	_kicker.collision_mask = _kicker_mask_saved & ~FootballConstants.BOUNDARY_COLLISION_LAYER
 	# Бьющий в чистый idle.
 	var kvis := _kicker_visual()
 	if kvis != null:
@@ -378,6 +385,12 @@ func _release() -> void:
 		km.set_control_locked(false)
 	if _keeper_brain != null and _keeper_brain.has_method(&"clear_freekick_anchor"):
 		_keeper_brain.clear_freekick_anchor()
+	# Бьющий стоял/разбегался СНАРУЖИ поля (за флажком). Ставим его чётко ВНУТРЬ поля от угла и
+	# возвращаем маску границы — иначе он остаётся за стеной и не может вбежать в игру.
+	if is_instance_valid(_kicker):
+		var inward := Vector3(-_side, 0.0, _into).normalized()
+		_kicker.global_position = Vector3(_spot.x, 0.5, _spot.z) + inward * 1.5
+		_kicker.collision_mask = _kicker_mask_saved
 	_free_all_spawned()
 	# Реальный тиммейт мог стать controlled_player (принял мяч) — тогда _set_ai_frozen исключает его
 	# из разморозки, а мотор остался залочен с расстановки → человек не смог бы им двигать. Снимаем
