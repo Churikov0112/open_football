@@ -22,6 +22,7 @@ var _side: float = 1.0
 var _spot: Vector3 = Vector3.ZERO
 var _base_heading: Vector3 = Vector3.FORWARD
 var _heading: Vector3 = Vector3.FORWARD
+var _runup_dir: Vector3 = Vector3.FORWARD   # направление разбега (зависит от ноги), ≠ heading вылета мяча
 var _foot: String = "penalty_r"
 var _peak_height: float = 7.0        # высота дуги навеса (стик-Y), фиксируется при нажатии B
 
@@ -102,19 +103,20 @@ func _setup() -> void:
 	_update_camera_pose()
 	_phase = Phase.AIM
 
-## Расстановка бьющего за мячом вдоль -base_heading, латеральный сдвиг под опорную ногу.
+## Расстановка бьющего на разбег к мячу. Направление разбега зависит от ноги (правая/левая
+## заходят к мячу с разных сторон угла) и всегда стартует ВНУТРИ поля — бьющий стоит на
+## runup_dist позади мяча вдоль -runup_dir, лицом по runup_dir (куда бежит), а не вдоль heading
+## вылета мяча (тот отдельный, задаёт куда полетит подача).
 func _place_kicker() -> void:
-	var side_sign := 1.0 if _foot == "penalty_r" else -1.0
-	var right := _base_heading.cross(Vector3.UP).normalized()
-	_kicker.global_position = _spot - _base_heading * FootballConstants.CORNER_RUNUP_DIST \
-		+ right * (-side_sign * FootballConstants.CORNER_FOOT_LATERAL) \
+	_runup_dir = CornerLogic.runup_dir(_side, _into, _foot, FootballConstants.CORNER_RUNUP_ANGLE)
+	_kicker.global_position = _spot - _runup_dir * FootballConstants.CORNER_RUNUP_DIST \
 		+ Vector3(0.0, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
-	_kicker.look_at(_kicker.global_position + _base_heading, Vector3.UP)
+	_kicker.look_at(_kicker.global_position + _runup_dir, Vector3.UP)
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
 		km.set_control_locked(true)
 		km.set_move_intent(Vector3.ZERO)
-		km.set_face_direction(_base_heading)
+		km.set_face_direction(_runup_dir)
 
 func update(delta: float) -> void:
 	match _phase:
@@ -207,7 +209,7 @@ func _strike_update(delta: float) -> void:
 		return
 	var advance: float = vis.consume_root_motion()
 	if advance > 0.0:
-		_kicker.global_position += _base_heading * advance
+		_kicker.global_position += _runup_dir * advance
 
 func _on_kicker_contact(_action: String) -> void:
 	_contact_connected = false

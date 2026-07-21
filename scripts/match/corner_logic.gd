@@ -37,3 +37,12 @@ static func short_option_pos(spot: Vector3, side: float, into: float, dist: floa
 ## угла), пока не позвали RB — оттуда он выбегает к short_option_pos.
 static func short_mate_start_pos(side: float, goal_line_z: float, into: float, lateral: float, depth: float, y: float) -> Vector3:
 	return Vector3(side * lateral, y, goal_line_z + into * depth)
+
+## Горизонтальное направление разбега бьющего к мячу (куда он БЕЖИТ и лицом). База — из поля
+## наружу к углу (side по X к боковой линии, -into по Z к лицевой), затем поворот на ±angle_deg
+## вокруг вертикали по ноге: правая и левая заходят к мячу с РАЗНЫХ сторон угла. Разбег всегда
+## стартует внутри поля (бьющий стоит на runup_dir*dist позади мяча), а не за флажком.
+static func runup_dir(side: float, into: float, foot: String, angle_deg: float) -> Vector3:
+	var base := Vector3(side, 0.0, -into).normalized()
+	var sign := 1.0 if foot == "penalty_r" else -1.0
+	return base.rotated(Vector3.UP, deg_to_rad(sign * angle_deg)).normalized()

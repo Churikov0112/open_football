@@ -551,7 +551,7 @@ const FK_WATCH_TIME := 1.5            # держим фикс-вид после 
 # Геометрия/разбег. Разбег — клипы penalty_l/penalty_r с root-motion, масштаб PEN_ROOT_SCALE.
 const CORNER_INSET := 0.5             # мяч на столько внутрь поля от точного угла, м
 const CORNER_RUNUP_DIST := 2.8        # пред-расстановка бьющего назад под разбег (мировые метры)
-const CORNER_FOOT_LATERAL := 0.4      # латеральный сдвиг бьющего под опорную ногу, м
+const CORNER_RUNUP_ANGLE := 35.0      # разворот разбега по ноге, град: правая/левая заходят к мячу с РАЗНЫХ сторон угла
 # Прицел/камера.
 const CORNER_AIM_ARC := 1.4           # ±сектор поворота heading от базового (рад)
 const CORNER_AIM_SPEED := 1.6         # скорость поворота heading стиком, рад/с

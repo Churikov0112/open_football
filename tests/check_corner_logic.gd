@@ -10,6 +10,7 @@ func _init() -> void:
 	ok = _check_targets() and ok
 	ok = _check_short() and ok
 	ok = _check_short_start() and ok
+	ok = _check_runup() and ok
 	if ok:
 		print("CHECK PASS: corner_logic")
 		quit(0)
@@ -88,5 +89,29 @@ func _check_short_start() -> bool:
 	var l := CornerLogic.short_mate_start_pos(-1.0, -52.5, 1.0, 3.0, 6.0, 0.5)
 	if l.x >= 0.0:
 		print("  FAIL short_start left side: ", l)
+		return false
+	return true
+
+func _check_runup() -> bool:
+	# Правый угол Home (side=1, into=1). Две ноги дают РАЗНЫЕ направления захода (зеркально
+	# вокруг базы), обе горизонтальные (y≈0) и единичные.
+	var r := CornerLogic.runup_dir(1.0, 1.0, "penalty_r", 35.0)
+	var l := CornerLogic.runup_dir(1.0, 1.0, "penalty_l", 35.0)
+	if not (is_equal_approx(r.y, 0.0) and is_equal_approx(l.y, 0.0)):
+		print("  FAIL runup not horizontal: ", r, " ", l)
+		return false
+	if not (is_equal_approx(r.length(), 1.0) and is_equal_approx(l.length(), 1.0)):
+		print("  FAIL runup not unit: ", r.length(), " ", l.length())
+		return false
+	# Ноги заходят с разных сторон: угол между направлениями ≈ 2*35 = 70°, а не 0.
+	if r.angle_to(l) < deg_to_rad(60.0):
+		print("  FAIL runup feet not split: angle=", rad_to_deg(r.angle_to(l)))
+		return false
+	# База (angle=0) лежит МЕЖДУ двумя ногами (по знаку signed_angle вокруг UP — противоположны).
+	var base := Vector3(1.0, 0.0, -1.0).normalized()
+	var sr := base.signed_angle_to(r, Vector3.UP)
+	var sl := base.signed_angle_to(l, Vector3.UP)
+	if sign(sr) == sign(sl):
+		print("  FAIL runup feet same side of base: ", sr, " ", sl)
 		return false
 	return true
