@@ -93,25 +93,35 @@ func _check_short_start() -> bool:
 	return true
 
 func _check_runup() -> bool:
-	# Правый угол Home (side=1, into=1): x=33.5, z=-52.0. Боковая линия x=34, линия ворот z=-52.5.
-	var spot := CornerLogic.corner_spot(1.0, 34.0, -52.5, 0.5, 0.11)
 	var runup := 2.8
+	# ПРАВЫЙ угол глазами вратаря (side=+1, into=1): x=33.5, z=-52.0. Боковая x=34, линия ворот z=-52.5.
+	# Тут ПРАВАЯ нога — из-за ЛИНИИ ВОРОТ (z<-52.5), ЛЕВАЯ — из-за БОКОВОЙ (x>34).
+	var spot := CornerLogic.corner_spot(1.0, 34.0, -52.5, 0.5, 0.11)
 	var dr := CornerLogic.runup_dir(1.0, 1.0, "penalty_r", 30.0)
 	var dl := CornerLogic.runup_dir(1.0, 1.0, "penalty_l", 30.0)
-	# Обе горизонтальные и единичные.
 	if not (is_equal_approx(dr.y, 0.0) and is_equal_approx(dl.y, 0.0)
 			and is_equal_approx(dr.length(), 1.0) and is_equal_approx(dl.length(), 1.0)):
 		print("  FAIL runup unit/horizontal: ", dr, " ", dl)
 		return false
-	# Правая нога: старт (spot - dir*runup) ЗА боковой линией (x>34) и ПЕРЕД линией ворот (z>-52.5).
 	var sr := spot - dr * runup
-	if not (sr.x > 34.0 and sr.z > -52.5):
-		print("  FAIL runup R region (ожидалось x>34, z>-52.5): ", sr)
-		return false
-	# Левая нога: старт ЗА линией ворот (z<-52.5).
 	var sl := spot - dl * runup
-	if sl.z >= -52.5:
-		print("  FAIL runup L region (ожидалось z<-52.5): ", sl)
+	if sr.z >= -52.5:
+		print("  FAIL runup R region side+ (ожидалось z<-52.5, из-за линии ворот): ", sr)
+		return false
+	if not (sl.x > 34.0 and sl.z > -52.5):
+		print("  FAIL runup L region side+ (ожидалось x>34, из-за боковой): ", sl)
+		return false
+	# ЛЕВЫЙ угол (side=-1) — ЗЕРКАЛО: правая нога из-за БОКОВОЙ (x<-34), левая из-за ЛИНИИ ВОРОТ (z<-52.5).
+	var spot2 := CornerLogic.corner_spot(-1.0, 34.0, -52.5, 0.5, 0.11)
+	var dr2 := CornerLogic.runup_dir(-1.0, 1.0, "penalty_r", 30.0)
+	var dl2 := CornerLogic.runup_dir(-1.0, 1.0, "penalty_l", 30.0)
+	var sr2 := spot2 - dr2 * runup
+	var sl2 := spot2 - dl2 * runup
+	if not (sr2.x < -34.0 and sr2.z > -52.5):
+		print("  FAIL runup R region side- (ожидалось x<-34, из-за боковой): ", sr2)
+		return false
+	if sl2.z >= -52.5:
+		print("  FAIL runup L region side- (ожидалось z<-52.5, из-за линии ворот): ", sl2)
 		return false
 	# Ноги заходят с явно разных сторон.
 	if dr.angle_to(dl) < deg_to_rad(30.0):
