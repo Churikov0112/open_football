@@ -88,6 +88,8 @@ func _setup() -> void:
 		kvis.recover()
 	# Правило: соперники бьющей команды — вне штрафной у goal_line_z.
 	_clear_opponent_box()
+	# Правило: НИКОГО (даже своей команды), кроме вратаря, — во вратарской ±5м.
+	_clear_goal_area_buffer()
 	_charging = false
 	_charge = 0.0
 	_locked = false
@@ -113,6 +115,25 @@ func _clear_opponent_box() -> void:
 		var adjusted := GoalKickLogic.push_out_of_penalty_area(n.global_position, _goal_line_z, _into,
 			FootballConstants.PENALTY_AREA_DEPTH, FootballConstants.PENALTY_AREA_WIDTH * 0.5,
 			FootballConstants.GK_ENCROACH_MARGIN)
+		if not adjusted.is_equal_approx(n.global_position):
+			n.global_position = adjusted
+		var m := PlayerMotor.find_on(n)
+		if m != null:
+			m.set_control_locked(true)
+			m.set_move_intent(Vector3.ZERO)
+
+## Никто (ОБЕ команды, включая свою же), кроме вратаря, не должен стоять во вратарской площади
+## ±GK_CLEAR_MARGIN. Отдельно от _clear_opponent_box (та трогает только соперников и на полную
+## штрафную) — это узкая зона вокруг самих ворот, но касается ВСЕХ полевых без исключения.
+func _clear_goal_area_buffer() -> void:
+	var bodies := _manager.get_tree().get_nodes_in_group(&"team_1")
+	bodies += _manager.get_tree().get_nodes_in_group(&"team_2")
+	for n in bodies:
+		if not is_instance_valid(n) or n == _keeper or not (n is Node3D):
+			continue
+		var adjusted := GoalKickLogic.push_out_of_goal_area(n.global_position, _goal_line_z, _into,
+			FootballConstants.GOAL_AREA_DEPTH, FootballConstants.GOAL_AREA_WIDTH * 0.5,
+			FootballConstants.GK_CLEAR_MARGIN)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
 		var m := PlayerMotor.find_on(n)

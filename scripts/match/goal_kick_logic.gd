@@ -27,3 +27,19 @@ static func push_out_of_penalty_area(pos: Vector3, goal_line_z: float, into: flo
 		out.z = goal_line_z + into * (pa_depth + margin)
 		return out
 	return pos
+
+## Если pos внутри вратарской площади (ga_depth × ga_half_width от goal_line_z), РАСШИРЕННОЙ на
+## margin метров и по глубине, и по ширине — вытолкнуть его за расширенную границу (по глубине,
+## в поле). Иначе вернуть pos без изменений. Правило: у ВСЕХ полевых игроков (в т.ч. своей же
+## команды вратаря), кроме самого вратаря, при ударе от ворот должен быть запас margin метров от
+## вратарской площади в любую сторону — в отличие от push_out_of_penalty_area (которая расширяет
+## только зону выхода по глубине, не саму зону проверки), здесь margin расширяет ОБА измерения зоны.
+static func push_out_of_goal_area(pos: Vector3, goal_line_z: float, into: float, ga_depth: float, ga_half_width: float, margin: float) -> Vector3:
+	var in_width := absf(pos.x) <= ga_half_width + margin
+	var rel := (pos.z - goal_line_z) * into
+	var in_depth := rel >= -margin and rel <= ga_depth + margin
+	if in_width and in_depth:
+		var out := pos
+		out.z = goal_line_z + into * (ga_depth + margin)
+		return out
+	return pos
