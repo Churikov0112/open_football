@@ -85,17 +85,7 @@ func _setup() -> void:
 	_ball.angular_velocity = Vector3.ZERO
 	_ball.global_position = _spot
 	# Бьющий за мячом на длину разбега, лицом по heading; латеральный сдвиг под опорную ногу.
-	var side := 1.0 if _foot == "penalty_r" else -1.0
-	var right := _base_heading.cross(Vector3.UP).normalized()
-	_kicker.global_position = _spot - _base_heading * FootballConstants.FK_RUNUP_DIST \
-		+ right * (-side * FootballConstants.FK_FOOT_LATERAL) \
-		+ Vector3(0.0, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
-	_kicker.look_at(_kicker.global_position + _base_heading, Vector3.UP)
-	var km := PlayerMotor.find_on(_kicker)
-	if km != null:
-		km.set_control_locked(true)
-		km.set_move_intent(Vector3.ZERO)
-		km.set_face_direction(_base_heading)
+	_place_kicker()
 	# Бьющий — в чистый idle: сбрасываем любое текущее действие/one-shot (если перед штрафным
 	# делали что-то другое — подкат/пас/удар — иначе бьющий стоит в чужой позе до разбега).
 	var kvis := _kicker_visual()
@@ -129,6 +119,20 @@ func _setup() -> void:
 	_update_camera_pose()
 	_phase = Phase.AIM
 
+## Расстановка бьющего за мячом на разбег, лицом по base_heading, сдвиг под опорную ногу.
+func _place_kicker() -> void:
+	var side := 1.0 if _foot == "penalty_r" else -1.0
+	var right := _base_heading.cross(Vector3.UP).normalized()
+	_kicker.global_position = _spot - _base_heading * FootballConstants.FK_RUNUP_DIST \
+		+ right * (-side * FootballConstants.FK_FOOT_LATERAL) \
+		+ Vector3(0.0, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
+	_kicker.look_at(_kicker.global_position + _base_heading, Vector3.UP)
+	var km := PlayerMotor.find_on(_kicker)
+	if km != null:
+		km.set_control_locked(true)
+		km.set_move_intent(Vector3.ZERO)
+		km.set_face_direction(_base_heading)
+
 func update(delta: float) -> void:
 	match _phase:
 		Phase.AIM:
@@ -148,6 +152,13 @@ func update(delta: float) -> void:
 	_update_camera_pose()
 
 func _aim_update(delta: float) -> void:
+	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
+	if Input.is_action_just_pressed(&"foot_left") and _foot != "penalty_l":
+		_foot = "penalty_l"
+		_place_kicker()
+	elif Input.is_action_just_pressed(&"foot_right") and _foot != "penalty_r":
+		_foot = "penalty_r"
+		_place_kicker()
 	var stick_x := Input.get_axis(&"move_left", &"move_right")
 	# До нажатия kick: стик крутит heading (камера едет). После нажатия: heading зафиксирован,
 	# боковой ввод копится в закрутку.

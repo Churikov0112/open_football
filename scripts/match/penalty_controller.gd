@@ -73,19 +73,7 @@ func _setup() -> void:
 	_ball.angular_velocity = Vector3.ZERO
 	_ball.global_position = _spot
 	# Бьющий за мячом (в сторону от ворот) на длину разбега, лицом к воротам; в обычном idle.
-	# Латеральный сдвиг под опорную ногу: правая нога → чуть ЛЕВЕЕ (от камеры), левая → зеркально.
-	# «Лево» игрока при взгляде на ворота = -_into по X.
-	var side := -_into if _foot == "penalty_r" else _into
-	_kicker.global_position = _spot - _forward * FootballConstants.PEN_RUNUP_DIST \
-		+ Vector3(side * FootballConstants.PEN_FOOT_LATERAL, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
-	_kicker.look_at(_kicker.global_position + _forward, Vector3.UP)
-	var km := PlayerMotor.find_on(_kicker)
-	if km != null:
-		# Лочим (гасит остаточную скорость бега сразу — иначе тело дрейфует и мотор доворачивает
-		# корпус по вектору движения) и жёстко смотрим на ворота через set_face_direction.
-		km.set_control_locked(true)
-		km.set_move_intent(Vector3.ZERO)
-		km.set_face_direction(_forward)
+	_place_kicker()
 	# Вратарь: пенальти-режим (центр, keeper_idle, реактивный сейв off).
 	if _keeper_brain != null and _keeper_brain.has_method(&"set_penalty_mode"):
 		_keeper_brain.set_penalty_mode(true)
@@ -99,6 +87,22 @@ func _setup() -> void:
 	_struck_zone = -1
 	_update_camera_pose()
 	_phase = Phase.AIM
+
+## Расстановка бьющего за мячом лицом к воротам, латеральный сдвиг под опорную ногу.
+## Латеральный сдвиг под опорную ногу: правая нога → чуть ЛЕВЕЕ (от камеры), левая → зеркально.
+## «Лево» игрока при взгляде на ворота = -_into по X.
+func _place_kicker() -> void:
+	var side := -_into if _foot == "penalty_r" else _into
+	_kicker.global_position = _spot - _forward * FootballConstants.PEN_RUNUP_DIST \
+		+ Vector3(side * FootballConstants.PEN_FOOT_LATERAL, 0.5 - FootballConstants.BALL_RADIUS, 0.0)
+	_kicker.look_at(_kicker.global_position + _forward, Vector3.UP)
+	var km := PlayerMotor.find_on(_kicker)
+	if km != null:
+		# Лочим (гасит остаточную скорость бега сразу — иначе тело дрейфует и мотор доворачивает
+		# корпус по вектору движения) и жёстко смотрим на ворота через set_face_direction.
+		km.set_control_locked(true)
+		km.set_move_intent(Vector3.ZERO)
+		km.set_face_direction(_forward)
 
 ## Очистить штрафную: все полевые (обе команды), кроме бьющего и вратаря, отходят ЗА мяч
 ## (дальше от ворот) и за радиус 9.15 м от точки — по правилу их до удара не должно быть в
@@ -137,6 +141,13 @@ func update(delta: float) -> void:
 	_update_camera_pose()
 
 func _aim_update(delta: float) -> void:
+	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
+	if Input.is_action_just_pressed(&"foot_left") and _foot != "penalty_l":
+		_foot = "penalty_l"
+		_place_kicker()
+	elif Input.is_action_just_pressed(&"foot_right") and _foot != "penalty_r":
+		_foot = "penalty_r"
+		_place_kicker()
 	# Прицел стиком/стрелками: X = ширина, вверх стика = выше в воротах (инвертируем Y).
 	var aim_stick := Vector2(
 		Input.get_axis(&"move_left", &"move_right"),
