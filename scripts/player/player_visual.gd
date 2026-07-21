@@ -70,6 +70,9 @@ const ACTION_TIMING := {
 	# lock — когда хвост при post_speed доигран (0.53с/1.8 ≈ 0.29 → 1.0+0.29). Разбег до контакта — 1.0×.
 	"penalty_l": {"contact": 1.0, "lock": 1.2, "speed": 1.0, "post_speed": 2.8},
 	"penalty_r": {"contact": 1.0, "lock": 1.2, "speed": 1.0, "post_speed": 2.8},
+	# Вброс из аута: мяч выпускается на 13/33 клипа (contact), lock = полная длина. Значения —
+	# из tools/measure_throw_in.gd; пересобрали клип → перемерить (как PEN_ROOT_SCALE).
+	"throw_in": {"contact": 0.45, "lock": 1.13, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0
