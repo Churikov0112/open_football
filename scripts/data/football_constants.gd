@@ -542,3 +542,35 @@ const FK_TARGET_LATERAL := 6.0        # цель навеса: сдвиг по X
 const FK_TARGET_DEPTH := 14.0         # цель навеса: отступ в поле от линии ворот, м
 # Тайминг.
 const FK_WATCH_TIME := 1.5            # держим фикс-вид после удара до возврата, с
+
+
+# ═══════════════════════════════════════════
+#  CORNER (Фаза A)
+# ═══════════════════════════════════════════
+
+# Геометрия/разбег. Разбег — клипы penalty_l/penalty_r с root-motion, масштаб PEN_ROOT_SCALE.
+const CORNER_INSET := 0.5             # мяч на столько внутрь поля от точного угла, м
+const CORNER_RUNUP_DIST := 2.8        # пред-расстановка бьющего назад под разбег (мировые метры)
+const CORNER_FOOT_LATERAL := 0.4      # латеральный сдвиг бьющего под опорную ногу, м
+# Прицел/камера.
+const CORNER_AIM_ARC := 1.4           # ±сектор поворота heading от базового (рад)
+const CORNER_AIM_SPEED := 1.6         # скорость поворота heading стиком, рад/с
+const CORNER_CAM_BACK := 8.0          # отступ камеры назад от угла вдоль -heading, м
+const CORNER_CAM_HEIGHT := 4.0        # высота камеры, м
+const CORNER_CAM_LOOK_Y := 2.0        # высота точки взгляда камеры, м
+# Заряд/сила.
+const CORNER_CHARGE_MAX_TIME := 0.9   # макс. время заряда (A/B), с
+const CORNER_PASS_MIN_SPEED := 12.0   # скорость наземного паса A при мин. заряде, м/с
+const CORNER_PASS_MAX_SPEED := 30.0   # при полном заряде, м/с
+# Навес B: высота дуги по стику Y (все три садятся в одну точку, отличается время полёта).
+const CORNER_LOB_PEAK_HEAD := 4.0     # стик вверх — низкая быстрая (на уровень головы), м
+const CORNER_LOB_PEAK_STANDARD := 7.0 # нейтраль — стандарт, м
+const CORNER_LOB_PEAK_SVECHA := 12.0  # стик вниз — «свеча» (высокая, летит дольше всех), м
+const CORNER_LOB_MIN_DIST := 12.0     # дальность приземления навеса без цели, мин. заряд, м
+const CORNER_LOB_MAX_DIST := 40.0     # без цели, полный заряд, м
+const CORNER_CURL_SCALE := 7.0        # накопленный боковой ввод стика → величина curl.z
+const CORNER_CURL_MAX := 3.5          # кламп |curl.z|
+# Спавны.
+const CORNER_TARGET_LATERAL := 6.0    # цели навеса: сдвиг по X от центра, м
+const CORNER_TARGET_DEPTH := 11.0     # цели навеса: отступ в поле от линии ворот, м
+const CORNER_SHORT_DIST := 7.0        # короткая опция: партнёр вглубь поля вдоль линии, м
