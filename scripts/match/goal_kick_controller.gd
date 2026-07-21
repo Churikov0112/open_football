@@ -107,6 +107,12 @@ func _place_kicker() -> void:
 		km.set_move_intent(Vector3.ZERO)
 		km.set_face_direction(_forward)
 
+func _set_foot(f: String) -> void:
+	if f == _foot:
+		return
+	_foot = f
+	_place_kicker()
+
 ## Все полевые соперники бьющей команды внутри штрафной у goal_line_z — за 16.5-линию.
 func _clear_opponent_box() -> void:
 	for n in _manager.get_tree().get_nodes_in_group(_opp_group):
@@ -157,6 +163,11 @@ func _pin_ball() -> void:
 	_ball.global_position = _spot
 
 func _aim_update(delta: float) -> void:
+	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
+	if Input.is_action_just_pressed(&"foot_left"):
+		_set_foot("penalty_l")
+	elif Input.is_action_just_pressed(&"foot_right"):
+		_set_foot("penalty_r")
 	var stick_x := Input.get_axis(&"move_left", &"move_right")
 	# Стик крутит направление вылета мяча — и до, и после коммита (доводка/финт).
 	if absf(stick_x) > 0.15:
