@@ -240,17 +240,13 @@ func _on_kicker_contact(_action: String) -> void:
 		if _ball.has_method(&"launch"):
 			_ball.launch(vel, true)
 	else:
-		# Навес: точка приземления = позиция цели (или heading × дальность заряда, если цели нет).
-		var land: Vector3
-		if is_instance_valid(receiver):
-			land = Vector3(receiver.global_position.x, FootballConstants.BALL_RADIUS, receiver.global_position.z)
-		else:
-			var land_dist := lerpf(FootballConstants.CORNER_LOB_MIN_DIST, FootballConstants.CORNER_LOB_MAX_DIST, _pending_ratio)
-			land = from + flat * land_dist
-			land.y = FootballConstants.BALL_RADIUS
-		var to_land := Vector3(land.x - from.x, 0.0, land.z - from.z)
-		var land_dist2 := to_land.length()
-		var land_dir := to_land.normalized() if land_dist2 > 0.001 else flat
+		# Навес: дальность приземления ВСЕГДА по ЗАРЯДУ вдоль прицела (мин. заряд — едва до штрафной,
+		# полный — слегка за неё). Цель (receiver) дальность НЕ задаёт — она только для приёма/передачи
+		# управления ниже (иначе навес на тиммейта игнорировал бы заряд).
+		var land_dist2 := lerpf(FootballConstants.CORNER_LOB_MIN_DIST, FootballConstants.CORNER_LOB_MAX_DIST, _pending_ratio)
+		var land := from + flat * land_dist2
+		land.y = FootballConstants.BALL_RADIUS
+		var land_dir := flat
 		# launch_lob не учитывает драг → берём вертикаль из неё, горизонталь с поправкой на драг.
 		var lob := PassSystem.launch_lob(from, land, _peak_height, g)
 		var vy: float = lob.y

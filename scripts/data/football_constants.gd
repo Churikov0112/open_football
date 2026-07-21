@@ -566,8 +566,8 @@ const CORNER_PASS_MAX_SPEED := 30.0   # при полном заряде, м/с
 const CORNER_LOB_PEAK_HEAD := 4.0     # стик вверх — низкая быстрая (на уровень головы), м
 const CORNER_LOB_PEAK_STANDARD := 7.0 # нейтраль — стандарт, м
 const CORNER_LOB_PEAK_SVECHA := 12.0  # стик вниз — «свеча» (высокая, летит дольше всех), м
-const CORNER_LOB_MIN_DIST := 12.0     # дальность приземления навеса без цели, мин. заряд, м
-const CORNER_LOB_MAX_DIST := 40.0     # без цели, полный заряд, м
+const CORNER_LOB_MIN_DIST := 18.0     # дальность навеса вдоль прицела при мин. заряде (быстрый тап) — едва до штрафной, м
+const CORNER_LOB_MAX_DIST := 50.0     # при полном заряде — слегка за дальнюю кромку штрафной, м
 const CORNER_CURL_SCALE := 7.0        # накопленный боковой ввод стика → величина curl.z
 const CORNER_CURL_MAX := 3.5          # кламп |curl.z|
 # Спавны.
