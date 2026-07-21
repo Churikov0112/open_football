@@ -31,6 +31,9 @@ var _free_kick_cam_pose: Transform3D = Transform3D.IDENTITY
 var _corner                                    # CornerController
 var _corner_active: bool = false
 var _corner_cam_pose: Transform3D = Transform3D.IDENTITY
+var _goal_kick                                 # GoalKickController
+var _goal_kick_active: bool = false
+var _goal_kick_cam_pose: Transform3D = Transform3D.IDENTITY
 var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
 var _third_person_camera: bool = false         # DEBUG: переключение 1/3 — broadcast / вид от 3-го лица
 var _tp_cam_eye: Vector3 = Vector3.ZERO        # сглаженная позиция third-person камеры
@@ -144,6 +147,10 @@ func _ready() -> void:
 	_corner.name = "CornerController"
 	add_child(_corner)
 	_corner.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_goal_kick = preload("res://scripts/match/goal_kick_controller.gd").new()
+	_goal_kick.name = "GoalKickController"
+	add_child(_goal_kick)
+	_goal_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
 	_action_executor = ActionExecutor.new()
 	_action_executor.name = "ActionExecutor"
 	add_child(_action_executor)
@@ -233,6 +240,7 @@ func _setup_inputs() -> void:
 		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
 		&"free_kick_debug": {"keys": [KEY_F],     "buttons": [], "axes": []},
 		&"corner_debug":    {"keys": [KEY_C],     "buttons": [], "axes": []},
+		&"goal_kick_debug": {"keys": [KEY_G],     "buttons": [], "axes": []},
 		&"corner_call":     {"keys": [KEY_T],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"foot_left":       {"keys": [KEY_L],     "buttons": [], "axes": []},
 		&"foot_right":      {"keys": [KEY_R],     "buttons": [], "axes": []},
@@ -633,6 +641,18 @@ func set_corner_cam_pose(pose: Transform3D) -> void:
 	_corner_cam_pose = pose
 
 
+func is_goal_kick_active() -> bool:
+	return _goal_kick_active
+
+
+func set_goal_kick_active(on: bool) -> void:
+	_goal_kick_active = on
+
+
+func set_goal_kick_cam_pose(pose: Transform3D) -> void:
+	_goal_kick_cam_pose = pose
+
+
 ## Включить приём паса для receiver — то же самое, что обычный _fire_pass() делает для
 ## человека-получателя (наведение стика на предсказанную позицию мяча в _handle_player_input
 ## + принудительный трап на любой скорости в _handle_dribbling, минуя BALL_TRAP_MAX_SPEED).
@@ -840,6 +860,8 @@ func _process(delta: float) -> void:
 		camera_pivot.global_transform = _free_kick_cam_pose
 	elif _corner_active:
 		camera_pivot.global_transform = _corner_cam_pose
+	elif _goal_kick_active:
+		camera_pivot.global_transform = _goal_kick_cam_pose
 	elif _third_person_camera and controlled_player != null:
 		var forward := -controlled_player.global_transform.basis.z
 		forward.y = 0.0
@@ -860,7 +882,13 @@ func _process(delta: float) -> void:
 	if _trail != null:
 		_update_ball_trail(ball_pos)
 
-	if _controlled_marker != null and controlled_player and _match_camera != null:
+	# Удар от ворот — бьёт вратарь, а controlled_player намеренно не трогаем (см. GoalKickController).
+	# Маркер контролируемого игрока на время розыгрыша просто скрываем — он не про вратаря и не
+	# про controlled_player (человек не переключался), показывать его тут нечего.
+	if _goal_kick_active:
+		if _controlled_marker != null:
+			_controlled_marker.visible = false
+	elif _controlled_marker != null and controlled_player and _match_camera != null:
 		var marker_world_pos := controlled_player.global_position + Vector3(0, 2.2, 0)
 		if _match_camera.is_position_behind(marker_world_pos):
 			_controlled_marker.visible = false
@@ -870,7 +898,7 @@ func _process(delta: float) -> void:
 
 	# Заряд: копим, пока держим кнопку заряжаемого действия. Во время пенальти/штрафного баром
 	# владеет соответствующий контроллер — не трогаем (иначе он тут же гасится каждый кадр).
-	if not _penalty_active and not _free_kick_active and not _corner_active:
+	if not _penalty_active and not _free_kick_active and not _corner_active and not _goal_kick_active:
 		if _is_charging() and _charge_player == controlled_player:
 			var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
 			var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
@@ -919,6 +947,15 @@ func _physics_process(delta: float) -> void:
 	# Угловой по C — только из чистого состояния (не во время празднования гола).
 	if Input.is_action_just_pressed(&"corner_debug") and _keeper != null and not _celebrating:
 		_corner.start(controlled_player, _keeper_brain.goal_line_z)
+		return
+	# Удар от ворот — свой контроллер, обычные системы заглушены.
+	if _goal_kick_active:
+		_goal_kick.update(delta)
+		return
+	# Удар от ворот по G — только из чистого состояния (не во время празднования гола). Бьющий —
+	# ВРАТАРЬ (_keeper), не controlled_player: человек драйвит вратаря на время розыгрыша.
+	if Input.is_action_just_pressed(&"goal_kick_debug") and _keeper != null and not _celebrating:
+		_goal_kick.start(_keeper, _keeper_brain.goal_line_z)
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():
