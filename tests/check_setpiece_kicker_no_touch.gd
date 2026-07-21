@@ -10,6 +10,7 @@ var _corner: Node
 var _kicker: Node
 var _spot: Vector3
 var _max_dist: float = 0.0
+var _lk_at_launch: int = -1   # -1 не захвачен, 1 == kicker, 0 != kicker
 var _elapsed: float = 0.0
 var _stage: int = 0
 var _st: float = 0.0
@@ -42,15 +43,17 @@ func _process(delta: float) -> bool:
 				_stage = 2
 				_st = 0.0
 		2:
-			# После контакта копим макс. удаление мяча от точки.
+			# После контакта копим макс. удаление мяча от точки и ловим last_kicker В МОМЕНТ запуска
+			# (позже быстрый пас долетает до ворот/вратаря и last_kicker сбрасывается ресетом).
 			var p: Vector3 = _mm.ball.global_position
 			_max_dist = maxf(_max_dist, Vector2(p.x - _spot.x, p.z - _spot.z).length())
+			if _lk_at_launch == -1 and _mm.ball.last_kicker != null:
+				_lk_at_launch = 1 if _mm.ball.last_kicker == _kicker else 0
 			if _st > 2.5:
-				var lk = _mm.ball.last_kicker
-				var lk_ok: bool = lk == _kicker
+				var lk_ok: bool = _lk_at_launch == 1
 				# Без грейса мяч блокировался о бьющего и оставался у точки (~1-2 м). С фиксом улетает.
 				var flew: bool = _max_dist > 4.0
-				print("SMOKE: last_kicker==kicker=%s  max_dist=%.1f m" % [lk_ok, _max_dist])
+				print("SMOKE: last_kicker==kicker@launch=%s  max_dist=%.1f m" % [lk_ok, _max_dist])
 				if lk_ok and flew:
 					print("CHECK PASS: setpiece pass leaves the kicker (no self-block), kicker tagged")
 					quit(0)

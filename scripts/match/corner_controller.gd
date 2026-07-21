@@ -234,9 +234,19 @@ func _on_kicker_contact(_action: String) -> void:
 	var flat := Vector3(_heading.x, 0.0, _heading.z).normalized()
 	var receiver: CharacterBody3D = _select_receiver()
 	if _pending_kind == "ground":
-		# Короткий наземный пас; сила = скорость (заряд).
-		var speed := lerpf(FootballConstants.CORNER_PASS_MIN_SPEED, FootballConstants.CORNER_PASS_MAX_SPEED, _pending_ratio)
-		var vel := PassSystem.launch_ground(from, from + flat, speed)
+		# Короткий пас ВСЕГДА доходит до получателя: скорость выводится из ДИСТАНЦИИ (не фикс), заряд
+		# лишь меняет скорость/жёсткость — как низовой пас в обычной игре. Прицел — в получателя
+		# (подбежавший RB-тиммейт), иначе вдоль heading на дефолтную дистанцию.
+		var to: Vector3
+		if is_instance_valid(receiver):
+			to = Vector3(receiver.global_position.x, from.y, receiver.global_position.z)
+		else:
+			to = from + flat * FootballConstants.CORNER_SHORT_DIST
+		var dist := Vector2(to.x - from.x, to.z - from.z).length()
+		var speed := PassSystem.ground_pass_speed(dist, _pending_ratio,
+			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
+		var vel := PassSystem.launch_ground(from, to, speed)
 		if _ball.has_method(&"launch"):
 			_ball.launch(vel, true)
 	else:

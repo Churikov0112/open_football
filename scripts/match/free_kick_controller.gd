@@ -294,9 +294,18 @@ func _on_kicker_contact(_action: String) -> void:
 		_pending_curl = FreeKickLogic.curl_from_stick(_curl_accum, FootballConstants.FK_CURL_SCALE, FootballConstants.FK_CURL_MAX)
 	match _pending_kind:
 		"ground":
-			# Наземный пас в направлении камеры (heading), настильно; сила = скорость (заряд).
-			var speed := lerpf(FootballConstants.FK_PASS_MIN_SPEED, FootballConstants.FK_PASS_MAX_SPEED, _pending_ratio)
-			var vel := PassSystem.launch_ground(from, from + flat, speed)
+			# Наземный пас ВСЕГДА доходит до получателя: скорость выводится из ДИСТАНЦИИ (не фикс),
+			# заряд лишь меняет скорость/жёсткость. Прицел — в получателя, иначе вдоль heading на дефолт.
+			var to: Vector3
+			if is_instance_valid(receiver):
+				to = Vector3(receiver.global_position.x, from.y, receiver.global_position.z)
+			else:
+				to = from + flat * FootballConstants.FK_MATE_LATERAL
+			var dist := Vector2(to.x - from.x, to.z - from.z).length()
+			var speed := PassSystem.ground_pass_speed(dist, _pending_ratio,
+				FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+				FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED)
+			var vel := PassSystem.launch_ground(from, to, speed)
 			if _ball.has_method(&"launch"):
 				_ball.launch(vel, true)
 		"lob":
