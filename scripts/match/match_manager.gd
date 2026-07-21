@@ -882,8 +882,11 @@ func _process(delta: float) -> void:
 	if _trail != null:
 		_update_ball_trail(ball_pos)
 
-	if _controlled_marker != null and controlled_player and _match_camera != null:
-		var marker_world_pos := controlled_player.global_position + Vector3(0, 2.2, 0)
+	# Удар от ворот — бьёт вратарь, а controlled_player намеренно не трогаем (см. GoalKickController),
+	# так что маркер на время розыгрыша должен указывать на вратаря, а не на прежнего controlled_player.
+	var marker_body: Node3D = _keeper if _goal_kick_active else controlled_player
+	if _controlled_marker != null and marker_body and _match_camera != null:
+		var marker_world_pos := marker_body.global_position + Vector3(0, 2.2, 0)
 		if _match_camera.is_position_behind(marker_world_pos):
 			_controlled_marker.visible = false
 		else:
