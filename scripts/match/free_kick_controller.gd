@@ -136,6 +136,7 @@ func _place_kicker() -> void:
 func update(delta: float) -> void:
 	match _phase:
 		Phase.AIM:
+			_pin_ball()
 			_aim_update(delta)
 		Phase.STRIKE:
 			_strike_update(delta)
@@ -150,6 +151,14 @@ func update(delta: float) -> void:
 			if ball_live or _watch_timer <= 0.0:
 				_release()
 	_update_camera_pose()
+
+## Держим мяч неподвижно на точке до удара (как пойманный вратарём). Иначе остаточная скорость
+## (штрафной берут «с ноги», ведя мяч) укатывает мяч драгом на несколько метров — на пенальти
+## этого нет, т.к. точка расчищена и мяч из чистого сброса. Снимается сама при переходе в STRIKE.
+func _pin_ball() -> void:
+	_ball.linear_velocity = Vector3.ZERO
+	_ball.angular_velocity = Vector3.ZERO
+	_ball.global_position = _spot
 
 func _aim_update(delta: float) -> void:
 	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
