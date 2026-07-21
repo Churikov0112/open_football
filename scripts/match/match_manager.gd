@@ -28,6 +28,9 @@ var _free_kick                                 # FreeKickController
 var _free_kick_active: bool = false
 var _action_executor                           # ActionExecutor
 var _free_kick_cam_pose: Transform3D = Transform3D.IDENTITY
+var _corner                                    # CornerController
+var _corner_active: bool = false
+var _corner_cam_pose: Transform3D = Transform3D.IDENTITY
 var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
 var _third_person_camera: bool = false         # DEBUG: переключение 1/3 — broadcast / вид от 3-го лица
 var _tp_cam_eye: Vector3 = Vector3.ZERO        # сглаженная позиция third-person камеры
@@ -137,6 +140,10 @@ func _ready() -> void:
 	_free_kick.name = "FreeKickController"
 	add_child(_free_kick)
 	_free_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_corner = preload("res://scripts/match/corner_controller.gd").new()
+	_corner.name = "CornerController"
+	add_child(_corner)
+	_corner.setup(self, ball, camera_pivot, power_bar, _keeper)
 	_action_executor = ActionExecutor.new()
 	_action_executor.name = "ActionExecutor"
 	add_child(_action_executor)
@@ -225,6 +232,10 @@ func _setup_inputs() -> void:
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
 		&"free_kick_debug": {"keys": [KEY_F],     "buttons": [], "axes": []},
+		&"corner_debug":    {"keys": [KEY_C],     "buttons": [], "axes": []},
+		&"corner_call":     {"keys": [KEY_T],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
+		&"foot_left":       {"keys": [KEY_L],     "buttons": [], "axes": []},
+		&"foot_right":      {"keys": [KEY_R],     "buttons": [], "axes": []},
 		&"camera_broadcast":    {"keys": [KEY_1], "buttons": [], "axes": []},
 		&"camera_third_person": {"keys": [KEY_3], "buttons": [], "axes": []},
 	}
@@ -610,6 +621,18 @@ func set_free_kick_cam_pose(pose: Transform3D) -> void:
 	_free_kick_cam_pose = pose
 
 
+func is_corner_active() -> bool:
+	return _corner_active
+
+
+func set_corner_active(on: bool) -> void:
+	_corner_active = on
+
+
+func set_corner_cam_pose(pose: Transform3D) -> void:
+	_corner_cam_pose = pose
+
+
 ## Включить приём паса для receiver — то же самое, что обычный _fire_pass() делает для
 ## человека-получателя (наведение стика на предсказанную позицию мяча в _handle_player_input
 ## + принудительный трап на любой скорости в _handle_dribbling, минуя BALL_TRAP_MAX_SPEED).
@@ -815,6 +838,8 @@ func _process(delta: float) -> void:
 		camera_pivot.global_transform = _penalty_cam_pose
 	elif _free_kick_active:
 		camera_pivot.global_transform = _free_kick_cam_pose
+	elif _corner_active:
+		camera_pivot.global_transform = _corner_cam_pose
 	elif _third_person_camera and controlled_player != null:
 		var forward := -controlled_player.global_transform.basis.z
 		forward.y = 0.0
@@ -845,7 +870,7 @@ func _process(delta: float) -> void:
 
 	# Заряд: копим, пока держим кнопку заряжаемого действия. Во время пенальти/штрафного баром
 	# владеет соответствующий контроллер — не трогаем (иначе он тут же гасится каждый кадр).
-	if not _penalty_active and not _free_kick_active:
+	if not _penalty_active and not _free_kick_active and not _corner_active:
 		if _is_charging() and _charge_player == controlled_player:
 			var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
 			var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
@@ -886,6 +911,14 @@ func _physics_process(delta: float) -> void:
 	# Штрафной по F — только из чистого состояния (не во время празднования гола).
 	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper != null and not _celebrating:
 		_free_kick.start(controlled_player, _keeper_brain.goal_line_z)
+		return
+	# Угловой-режим: всё ведёт контроллер, обычные системы заглушены.
+	if _corner_active:
+		_corner.update(delta)
+		return
+	# Угловой по C — только из чистого состояния (не во время празднования гола).
+	if Input.is_action_just_pressed(&"corner_debug") and _keeper != null and not _celebrating:
+		_corner.start(controlled_player, _keeper_brain.goal_line_z)
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():
