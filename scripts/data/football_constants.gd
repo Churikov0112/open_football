@@ -576,3 +576,21 @@ const CORNER_TARGET_DEPTH := 11.0     # цели навеса: отступ в �
 const CORNER_SHORT_DIST := 7.0        # короткая опция: партнёр вглубь поля вдоль линии, м
 const CORNER_SHORT_START_LATERAL := 3.0  # старт партнёра в штрафной: сдвиг по X от центра (сторона угла), м
 const CORNER_SHORT_START_DEPTH := 6.0    # старт партнёра в штрафной: отступ в поле от линии ворот, м
+
+# ── GOAL KICK (удар от ворот) ──────────────────────────────────────────────────
+const GK_RUNUP_DIST := 2.8            # пред-расстановка вратаря назад под разбег, м
+const GK_DEFAULT_FOOT := "penalty_r"  # ключ ACTION_CLIPS (клип penalty_kick_r)
+const GK_FOOT_LATERAL := 0.4          # латеральный сдвиг бьющего под опорную ногу, м
+const GK_AIM_SPEED := 1.6             # скорость поворота heading стиком, рад/с
+const GK_AIM_ARC := 1.2               # ±сектор поворота heading от направления вверх поля, рад (~69°)
+const GK_CHARGE_MAX_TIME := 0.9       # макс. время заряда силы, с
+const GK_GROUND_MIN_DIST := 12.0      # дальность наземного паса при мин. заряде, м
+const GK_GROUND_MAX_DIST := 45.0      # при полном заряде, м
+const GK_LOB_MIN_DIST := 18.0         # дальность приземления навеса при мин. заряде, м
+const GK_LOB_MAX_DIST := 55.0         # при полном заряде, м
+const GK_LOB_PEAK_MIN := 4.0          # высота дуги навеса при мин. заряде, м
+const GK_LOB_PEAK_MAX := 8.0          # при полном заряде, м
+const GK_ENCROACH_MARGIN := 1.0       # соперников выталкиваем за 16.5-линию на этот запас, м
+const GK_CAM_BACK := 8.0              # отступ камеры назад от точки вдоль -heading, м
+const GK_CAM_HEIGHT := 3.5            # высота камеры, м
+const GK_CAM_LOOK_Y := 1.4            # высота точки взгляда камеры, м
