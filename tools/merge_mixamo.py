@@ -96,6 +96,26 @@ IN_PLACE_CLIPS = {
     "keeper_pass": (0, 2),        # раскат мяча рукой по низу на месте — горизонталь морозим
     "keeper_placing_ball": (0, 2),  # ставит мяч рукой на газон себе в ноги — горизонталь морозим
     "keeper_overhand_throw": (0, 2),  # бросок мяча верхом правой рукой на месте — горизонталь морозим
+    # Вброс из аута: горизонтали (0,1) морозим как обычно (заморозка на кадре 0 — умеренные
+    # диапазоны 23.2/20.7, безопасно). Ось 2 — эмпирически подтверждённая вертикаль для ЭТОГО
+    # клипа (Godot Skeleton3D.get_bone_global_pose: заморозка axis=2 даёт КОНСТАНТНЫЙ мировой Y
+    # на всех кадрах — прямое доказательство). НО: заморозка-на-кадре-0 (обычный freeze) для axis=2
+    # не годится — сырое значение первого кадра throw_in.fbx на этой оси (135.64) само аномально
+    # большое (того же порядка, что рост персонажа ~99.79-110.65 у REST Hips, см.
+    # diagnose_throw_in_scale.py) — этот конкретный Mixamo-экспорт, в отличие от остальных клипов
+    # ("Without Skin / In Place"), явно нёс на этой оси что-то похожее на абсолютную, а не
+    # маленькую относительную величину. Заморозка на 135.64 пришпиливала таз ВЫШЕ нормального
+    # роста на ВЕСЬ клип → игрок висел в воздухе от стойки AIM до конца броска. Поэтому axis=2
+    # не морозим через freeze_root_translation (к кадру 0), а ОБНУЛЯЕМ отдельно ниже
+    # (zero_root_translation, ZERO_PLACE_CLIPS) — жертвуем естественным подъёмом таза на замахе
+    # ради корректной высоты стойки.
+    "throw_in": (0, 1),
+}
+
+# Клипы, где часть каналов Hips нужно ПОЛНОСТЬЮ ОБНУЛИТЬ (не заморозить на значении кадра 0,
+# а именно занулить), потому что само значение кадра 0 на этой оси аномально — см. throw_in выше.
+ZERO_PLACE_CLIPS = {
+    "throw_in": (2,),
 }
 
 def _action_fcurves(act):
@@ -136,6 +156,29 @@ def freeze_root_translation(imp_arm, act, axes):
             fc.update()
     print("IN_PLACE: заморожена трансляция Hips (оси %s) для action %s" % (axes, act.name))
 
+def zero_root_translation(imp_arm, act, axes):
+    # Как freeze_root_translation, но пинует к 0, а не к значению первого кадра — для каналов, где
+    # само значение первого кадра аномально (см. ZERO_PLACE_CLIPS/throw_in выше).
+    root_bone = None
+    for b in imp_arm.data.bones:
+        if b.parent is None:
+            root_bone = b.name
+            break
+    if root_bone is None:
+        print("ZERO_ROOT: не найдена корневая кость, пропуск")
+        return
+    path = 'pose.bones["%s"].location' % root_bone
+    for fc in _action_fcurves(act):
+        if fc.data_path == path and fc.array_index in axes:
+            if not fc.keyframe_points:
+                continue
+            for kp in fc.keyframe_points:
+                kp.co[1] = 0.0
+                kp.handle_left[1] = 0.0
+                kp.handle_right[1] = 0.0
+            fc.update()
+    print("ZERO_ROOT: обнулена трансляция Hips (оси %s) для action %s" % (axes, act.name))
+
 if not anim_files:
     raise RuntimeError("В %s не найдено ни одного FBX-клипа (кроме character.fbx)" % src_dir)
 
@@ -151,6 +194,8 @@ for anim_name, fname in anim_files.items():
     act.name = anim_name
     if anim_name in IN_PLACE_CLIPS:
         freeze_root_translation(imp_arm, act, IN_PLACE_CLIPS[anim_name])
+    if anim_name in ZERO_PLACE_CLIPS:
+        zero_root_translation(imp_arm, act, ZERO_PLACE_CLIPS[anim_name])
     start = int(act.frame_range[0])
     track = main_arm.animation_data.nla_tracks.new()
     track.name = anim_name

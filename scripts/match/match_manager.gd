@@ -34,6 +34,9 @@ var _corner_cam_pose: Transform3D = Transform3D.IDENTITY
 var _goal_kick                                 # GoalKickController
 var _goal_kick_active: bool = false
 var _goal_kick_cam_pose: Transform3D = Transform3D.IDENTITY
+var _throw_in                                  # ThrowInController
+var _throw_in_active: bool = false
+var _throw_in_cam_pose: Transform3D = Transform3D.IDENTITY
 var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
 var _third_person_camera: bool = false         # DEBUG: переключение 1/3 — broadcast / вид от 3-го лица
 var _tp_cam_eye: Vector3 = Vector3.ZERO        # сглаженная позиция third-person камеры
@@ -151,6 +154,10 @@ func _ready() -> void:
 	_goal_kick.name = "GoalKickController"
 	add_child(_goal_kick)
 	_goal_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_throw_in = preload("res://scripts/match/throw_in_controller.gd").new()
+	_throw_in.name = "ThrowInController"
+	add_child(_throw_in)
+	_throw_in.setup(self, ball, camera_pivot, power_bar)
 	_action_executor = ActionExecutor.new()
 	_action_executor.name = "ActionExecutor"
 	add_child(_action_executor)
@@ -241,6 +248,7 @@ func _setup_inputs() -> void:
 		&"free_kick_debug": {"keys": [KEY_F],     "buttons": [], "axes": []},
 		&"corner_debug":    {"keys": [KEY_C],     "buttons": [], "axes": []},
 		&"goal_kick_debug": {"keys": [KEY_G],     "buttons": [], "axes": []},
+		&"throw_in_debug":  {"keys": [KEY_T],     "buttons": [], "axes": []},
 		&"corner_call":     {"keys": [KEY_T],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"foot_left":       {"keys": [KEY_L],     "buttons": [], "axes": []},
 		&"foot_right":      {"keys": [KEY_R],     "buttons": [], "axes": []},
@@ -561,12 +569,17 @@ func _setup_boundaries() -> void:
 	var wall_height := 4.0
 	var wall_thickness := 0.5
 	var wall_extra := 4.0
+	# Боковые стены НЕ на самой линии аута (±field_width), а с запасом-выкатом наружу: иначе
+	# вбрасывающий, стоящий за боковой линией, и мяч в его руках упираются в стену (заперты
+	# снаружи, мяч не может пробиться внутрь). Запас — закромка поля, как у настоящего газона.
+	var side_extra := 2.0
 	var total_half_z := field_length + wall_extra
+	var total_half_x := field_width + side_extra
 	var walls := [
-		{"pos": Vector3(0, wall_height/2, -total_half_z), "size": Vector3(field_width*2, wall_height, wall_thickness)},
-		{"pos": Vector3(0, wall_height/2, total_half_z), "size": Vector3(field_width*2, wall_height, wall_thickness)},
-		{"pos": Vector3(-field_width, wall_height/2, 0), "size": Vector3(wall_thickness, wall_height, total_half_z*2)},
-		{"pos": Vector3(field_width, wall_height/2, 0), "size": Vector3(wall_thickness, wall_height, total_half_z*2)},
+		{"pos": Vector3(0, wall_height/2, -total_half_z), "size": Vector3(total_half_x*2, wall_height, wall_thickness)},
+		{"pos": Vector3(0, wall_height/2, total_half_z), "size": Vector3(total_half_x*2, wall_height, wall_thickness)},
+		{"pos": Vector3(-total_half_x, wall_height/2, 0), "size": Vector3(wall_thickness, wall_height, total_half_z*2)},
+		{"pos": Vector3(total_half_x, wall_height/2, 0), "size": Vector3(wall_thickness, wall_height, total_half_z*2)},
 	]
 	for w in walls:
 		var body := StaticBody3D.new()
@@ -651,6 +664,18 @@ func set_goal_kick_active(on: bool) -> void:
 
 func set_goal_kick_cam_pose(pose: Transform3D) -> void:
 	_goal_kick_cam_pose = pose
+
+
+func is_throw_in_active() -> bool:
+	return _throw_in_active
+
+
+func set_throw_in_active(on: bool) -> void:
+	_throw_in_active = on
+
+
+func set_throw_in_cam_pose(pose: Transform3D) -> void:
+	_throw_in_cam_pose = pose
 
 
 ## Включить приём паса для receiver — то же самое, что обычный _fire_pass() делает для
@@ -862,6 +887,8 @@ func _process(delta: float) -> void:
 		camera_pivot.global_transform = _corner_cam_pose
 	elif _goal_kick_active:
 		camera_pivot.global_transform = _goal_kick_cam_pose
+	elif _throw_in_active:
+		camera_pivot.global_transform = _throw_in_cam_pose
 	elif _third_person_camera and controlled_player != null:
 		var forward := -controlled_player.global_transform.basis.z
 		forward.y = 0.0
@@ -885,7 +912,7 @@ func _process(delta: float) -> void:
 	# Удар от ворот — бьёт вратарь, а controlled_player намеренно не трогаем (см. GoalKickController).
 	# Маркер контролируемого игрока на время розыгрыша просто скрываем — он не про вратаря и не
 	# про controlled_player (человек не переключался), показывать его тут нечего.
-	if _goal_kick_active:
+	if _goal_kick_active or _throw_in_active:
 		if _controlled_marker != null:
 			_controlled_marker.visible = false
 	elif _controlled_marker != null and controlled_player and _match_camera != null:
@@ -898,7 +925,7 @@ func _process(delta: float) -> void:
 
 	# Заряд: копим, пока держим кнопку заряжаемого действия. Во время пенальти/штрафного баром
 	# владеет соответствующий контроллер — не трогаем (иначе он тут же гасится каждый кадр).
-	if not _penalty_active and not _free_kick_active and not _corner_active and not _goal_kick_active:
+	if not _penalty_active and not _free_kick_active and not _corner_active and not _goal_kick_active and not _throw_in_active:
 		if _is_charging() and _charge_player == controlled_player:
 			var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
 			var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
@@ -956,6 +983,14 @@ func _physics_process(delta: float) -> void:
 	# ВРАТАРЬ (_keeper), не controlled_player: человек драйвит вратаря на время розыгрыша.
 	if Input.is_action_just_pressed(&"goal_kick_debug") and _keeper != null and not _celebrating:
 		_goal_kick.start(_keeper, _keeper_brain.goal_line_z)
+		return
+	# Вброс из аута — свой контроллер, обычные системы заглушены.
+	if _throw_in_active:
+		_throw_in.update(delta)
+		return
+	# Вброс по T — только из чистого состояния (не во время празднования гола).
+	if Input.is_action_just_pressed(&"throw_in_debug") and not _celebrating:
+		_throw_in.start()
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():

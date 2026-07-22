@@ -70,6 +70,9 @@ const ACTION_TIMING := {
 	# lock — когда хвост при post_speed доигран (0.53с/1.8 ≈ 0.29 → 1.0+0.29). Разбег до контакта — 1.0×.
 	"penalty_l": {"contact": 1.0, "lock": 1.2, "speed": 1.0, "post_speed": 2.8},
 	"penalty_r": {"contact": 1.0, "lock": 1.2, "speed": 1.0, "post_speed": 2.8},
+	# Вброс из аута: мяч выпускается на 13/33 клипа (contact), lock = полная длина. Значения —
+	# из tools/measure_throw_in.gd; пересобрали клип → перемерить (как PEN_ROOT_SCALE).
+	"throw_in": {"contact": 0.45, "lock": 1.13, "speed": 1.0},
 }
 
 @export var model_y_offset: float = 0.0
@@ -280,6 +283,12 @@ func _make_transition(auto_return: bool) -> AnimationNodeStateMachineTransition:
 func _process(delta: float) -> void:
 	if _anim_tree == null or delta <= 0.0:
 		return
+	# Двуручная точка хвата (вброс): держим её в середине между костями ладоней каждый кадр
+	# (+ небольшой подъём — середина запястий чуть ниже, чем «между ладонями»).
+	if _two_hand_hold != null and is_instance_valid(_two_hand_hold) \
+			and _hold_l != null and _hold_r != null:
+		_two_hand_hold.global_position = (_hold_l.global_position + _hold_r.global_position) * 0.5 \
+			+ Vector3(0.0, TWO_HAND_HOLD_LIFT, 0.0)
 	var speed: float
 	if _explicit_speed >= 0.0:
 		speed = _explicit_speed
@@ -365,6 +374,7 @@ func trigger(action: String) -> bool:
 	if state == "":
 		push_warning("PlayerVisual.trigger('%s'): нет клипа под это действие" % action)
 		return false
+	_fall_lock = false   # trigger снимает hold_pose-заморозку (см. hold_pose)
 	_playback.travel(StringName(state))
 	# root motion — только для клипов удара пенальти (разбег), у остальных трек снят (иначе
 	# извлечение Hips ломает вертикаль их поз).
@@ -392,6 +402,22 @@ func trigger(action: String) -> bool:
 	_action_lock_at = lock
 	_action_contact_done = false
 	_action_post_speed = post_speed
+	return true
+
+## Встать в позу первого кадра клипа-действия и замереть (стойка вброса с мячом в руках).
+## Мгновенный переход на кадр 0 (_playback.start, без кроссфейда) + заморозка времени
+## (TimeScale=0) + _fall_lock (чтобы селектор локомоции не сдёрнул обратно в idle). Снимается
+## вызовом trigger() (сбрасывает _fall_lock и восстанавливает скорость → клип идёт с кадра 0).
+func hold_pose(clip: String) -> bool:
+	if _playback == null:
+		return false
+	var state := _resolve_action(clip)
+	if state == "" or not _states.has(state):
+		return false
+	_fall_lock = true
+	_active_action = ""
+	_set_action_speed(0.0)
+	_playback.start(StringName(state))
 	return true
 
 ## Отменить текущее действие без сигнала касания (напр., игрока сбили на замахе).
@@ -520,6 +546,48 @@ func get_hold_attachment() -> Node3D:
 	ba.bone_name = skel.get_bone_name(bone_idx)
 	_hold_attachment = ba
 	return ba
+
+## Двуручная точка хвата (вброс из аута): узел ПОСЕРЕДИНЕ между костями ЛЕВОЙ и ПРАВОЙ кистей,
+## позиция пересчитывается каждый кадр в _process. В отличие от get_hold_attachment (одна кисть,
+## вратарь) мяч висит по центру между ладонями, как при вбрасывании. Если одной из костей нет —
+## фолбэк на одноручную get_hold_attachment().
+const TWO_HAND_HOLD_LIFT := 0.1   # подъём двуручной точки хвата над серединой запястий, м
+var _two_hand_hold: Node3D = null
+var _hold_l: BoneAttachment3D = null
+var _hold_r: BoneAttachment3D = null
+func get_two_hand_hold_attachment() -> Node3D:
+	if _two_hand_hold != null and is_instance_valid(_two_hand_hold):
+		return _two_hand_hold
+	var skel := _find_skeleton(_model)
+	if skel == null:
+		return null
+	var li := _find_hand_bone(skel, "lefthand", "left_hand")
+	var ri := _find_hand_bone(skel, "righthand", "right_hand")
+	if li < 0 or ri < 0:
+		return get_hold_attachment()   # нет одной из ладоней — одноручный фолбэк
+	_hold_l = BoneAttachment3D.new()
+	_hold_l.name = "BallHoldL"
+	skel.add_child(_hold_l)
+	_hold_l.bone_name = skel.get_bone_name(li)
+	_hold_r = BoneAttachment3D.new()
+	_hold_r.name = "BallHoldR"
+	skel.add_child(_hold_r)
+	_hold_r.bone_name = skel.get_bone_name(ri)
+	_two_hand_hold = Node3D.new()
+	_two_hand_hold.name = "TwoHandHold"
+	skel.add_child(_two_hand_hold)
+	_two_hand_hold.global_position = (_hold_l.global_position + _hold_r.global_position) * 0.5 \
+		+ Vector3(0.0, TWO_HAND_HOLD_LIFT, 0.0)
+	return _two_hand_hold
+
+## Индекс кости кисти по подстрокам имени (первое совпадение — само запястье, до костей пальцев,
+## т.к. Mixamo нумерует кости parent-first: LeftHand до LeftHandThumb1). -1 если не найдено.
+func _find_hand_bone(skel: Skeleton3D, key1: String, key2: String) -> int:
+	for i in range(skel.get_bone_count()):
+		var n := skel.get_bone_name(i).to_lower()
+		if n.contains(key1) or n.contains(key2):
+			return i
+	return -1
 
 func _find_skeleton(n: Node) -> Skeleton3D:
 	if n == null:
