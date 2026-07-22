@@ -569,12 +569,17 @@ func _setup_boundaries() -> void:
 	var wall_height := 4.0
 	var wall_thickness := 0.5
 	var wall_extra := 4.0
+	# Боковые стены НЕ на самой линии аута (±field_width), а с запасом-выкатом наружу: иначе
+	# вбрасывающий, стоящий за боковой линией, и мяч в его руках упираются в стену (заперты
+	# снаружи, мяч не может пробиться внутрь). Запас — закромка поля, как у настоящего газона.
+	var side_extra := 2.0
 	var total_half_z := field_length + wall_extra
+	var total_half_x := field_width + side_extra
 	var walls := [
-		{"pos": Vector3(0, wall_height/2, -total_half_z), "size": Vector3(field_width*2, wall_height, wall_thickness)},
-		{"pos": Vector3(0, wall_height/2, total_half_z), "size": Vector3(field_width*2, wall_height, wall_thickness)},
-		{"pos": Vector3(-field_width, wall_height/2, 0), "size": Vector3(wall_thickness, wall_height, total_half_z*2)},
-		{"pos": Vector3(field_width, wall_height/2, 0), "size": Vector3(wall_thickness, wall_height, total_half_z*2)},
+		{"pos": Vector3(0, wall_height/2, -total_half_z), "size": Vector3(total_half_x*2, wall_height, wall_thickness)},
+		{"pos": Vector3(0, wall_height/2, total_half_z), "size": Vector3(total_half_x*2, wall_height, wall_thickness)},
+		{"pos": Vector3(-total_half_x, wall_height/2, 0), "size": Vector3(wall_thickness, wall_height, total_half_z*2)},
+		{"pos": Vector3(total_half_x, wall_height/2, 0), "size": Vector3(wall_thickness, wall_height, total_half_z*2)},
 	]
 	for w in walls:
 		var body := StaticBody3D.new()
