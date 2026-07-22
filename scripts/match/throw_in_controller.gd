@@ -61,10 +61,11 @@ func _setup() -> void:
 		tm.set_control_locked(true)
 		tm.set_move_intent(Vector3.ZERO)
 		tm.set_face_direction(_into)
-	# Мяч в руку вбрасывающего (CAUGHT — сам приклеен к кости кисти каждый кадр; гол забить нельзя).
+	# Мяч в руки вбрасывающего (CAUGHT — приклеен к точке ПОСЕРЕДИНЕ между ладонями каждый кадр;
+	# гол забить нельзя).
 	var vis := _thrower_visual()
 	if vis != null and _ball.has_method(&"catch"):
-		var hold: Node3D = vis.get_hold_attachment()
+		var hold: Node3D = vis.get_two_hand_hold_attachment()
 		if hold != null:
 			if _ball.has_method(&"clear_last_kicker"):
 				_ball.clear_last_kicker()

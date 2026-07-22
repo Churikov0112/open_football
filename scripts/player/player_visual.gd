@@ -283,6 +283,10 @@ func _make_transition(auto_return: bool) -> AnimationNodeStateMachineTransition:
 func _process(delta: float) -> void:
 	if _anim_tree == null or delta <= 0.0:
 		return
+	# Двуручная точка хвата (вброс): держим её в середине между костями ладоней каждый кадр.
+	if _two_hand_hold != null and is_instance_valid(_two_hand_hold) \
+			and _hold_l != null and _hold_r != null:
+		_two_hand_hold.global_position = (_hold_l.global_position + _hold_r.global_position) * 0.5
 	var speed: float
 	if _explicit_speed >= 0.0:
 		speed = _explicit_speed
@@ -540,6 +544,46 @@ func get_hold_attachment() -> Node3D:
 	ba.bone_name = skel.get_bone_name(bone_idx)
 	_hold_attachment = ba
 	return ba
+
+## Двуручная точка хвата (вброс из аута): узел ПОСЕРЕДИНЕ между костями ЛЕВОЙ и ПРАВОЙ кистей,
+## позиция пересчитывается каждый кадр в _process. В отличие от get_hold_attachment (одна кисть,
+## вратарь) мяч висит по центру между ладонями, как при вбрасывании. Если одной из костей нет —
+## фолбэк на одноручную get_hold_attachment().
+var _two_hand_hold: Node3D = null
+var _hold_l: BoneAttachment3D = null
+var _hold_r: BoneAttachment3D = null
+func get_two_hand_hold_attachment() -> Node3D:
+	if _two_hand_hold != null and is_instance_valid(_two_hand_hold):
+		return _two_hand_hold
+	var skel := _find_skeleton(_model)
+	if skel == null:
+		return null
+	var li := _find_hand_bone(skel, "lefthand", "left_hand")
+	var ri := _find_hand_bone(skel, "righthand", "right_hand")
+	if li < 0 or ri < 0:
+		return get_hold_attachment()   # нет одной из ладоней — одноручный фолбэк
+	_hold_l = BoneAttachment3D.new()
+	_hold_l.name = "BallHoldL"
+	skel.add_child(_hold_l)
+	_hold_l.bone_name = skel.get_bone_name(li)
+	_hold_r = BoneAttachment3D.new()
+	_hold_r.name = "BallHoldR"
+	skel.add_child(_hold_r)
+	_hold_r.bone_name = skel.get_bone_name(ri)
+	_two_hand_hold = Node3D.new()
+	_two_hand_hold.name = "TwoHandHold"
+	skel.add_child(_two_hand_hold)
+	_two_hand_hold.global_position = (_hold_l.global_position + _hold_r.global_position) * 0.5
+	return _two_hand_hold
+
+## Индекс кости кисти по подстрокам имени (первое совпадение — само запястье, до костей пальцев,
+## т.к. Mixamo нумерует кости parent-first: LeftHand до LeftHandThumb1). -1 если не найдено.
+func _find_hand_bone(skel: Skeleton3D, key1: String, key2: String) -> int:
+	for i in range(skel.get_bone_count()):
+		var n := skel.get_bone_name(i).to_lower()
+		if n.contains(key1) or n.contains(key2):
+			return i
+	return -1
 
 func _find_skeleton(n: Node) -> Skeleton3D:
 	if n == null:
