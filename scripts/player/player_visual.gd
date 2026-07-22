@@ -283,10 +283,12 @@ func _make_transition(auto_return: bool) -> AnimationNodeStateMachineTransition:
 func _process(delta: float) -> void:
 	if _anim_tree == null or delta <= 0.0:
 		return
-	# Двуручная точка хвата (вброс): держим её в середине между костями ладоней каждый кадр.
+	# Двуручная точка хвата (вброс): держим её в середине между костями ладоней каждый кадр
+	# (+ небольшой подъём — середина запястий чуть ниже, чем «между ладонями»).
 	if _two_hand_hold != null and is_instance_valid(_two_hand_hold) \
 			and _hold_l != null and _hold_r != null:
-		_two_hand_hold.global_position = (_hold_l.global_position + _hold_r.global_position) * 0.5
+		_two_hand_hold.global_position = (_hold_l.global_position + _hold_r.global_position) * 0.5 \
+			+ Vector3(0.0, TWO_HAND_HOLD_LIFT, 0.0)
 	var speed: float
 	if _explicit_speed >= 0.0:
 		speed = _explicit_speed
@@ -549,6 +551,7 @@ func get_hold_attachment() -> Node3D:
 ## позиция пересчитывается каждый кадр в _process. В отличие от get_hold_attachment (одна кисть,
 ## вратарь) мяч висит по центру между ладонями, как при вбрасывании. Если одной из костей нет —
 ## фолбэк на одноручную get_hold_attachment().
+const TWO_HAND_HOLD_LIFT := 0.1   # подъём двуручной точки хвата над серединой запястий, м
 var _two_hand_hold: Node3D = null
 var _hold_l: BoneAttachment3D = null
 var _hold_r: BoneAttachment3D = null
@@ -573,7 +576,8 @@ func get_two_hand_hold_attachment() -> Node3D:
 	_two_hand_hold = Node3D.new()
 	_two_hand_hold.name = "TwoHandHold"
 	skel.add_child(_two_hand_hold)
-	_two_hand_hold.global_position = (_hold_l.global_position + _hold_r.global_position) * 0.5
+	_two_hand_hold.global_position = (_hold_l.global_position + _hold_r.global_position) * 0.5 \
+		+ Vector3(0.0, TWO_HAND_HOLD_LIFT, 0.0)
 	return _two_hand_hold
 
 ## Индекс кости кисти по подстрокам имени (первое совпадение — само запястье, до костей пальцев,
