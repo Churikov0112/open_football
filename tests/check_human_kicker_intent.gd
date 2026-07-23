@@ -63,11 +63,13 @@ func _init() -> void:
 	ok = _expect(base.charge_start_variant() == -1 and base.charge_committed() == false \
 		and base.foot_switch() == 0 and base.aim_axis() == Vector2.ZERO, "база no-op") and ok
 
-	# Презентация: is_local_human → owns всё; иначе ничего.
-	var ph := SetPiecePresentation.new(true)
-	var po := SetPiecePresentation.new(false)
-	ok = _expect(ph.owns_camera() and ph.owns_hud(), "human владеет camera+hud") and ok
-	ok = _expect(not po.owns_camera() and not po.owns_hud(), "observer не владеет") and ok
+	# Презентация по роли: KICKER → камера+HUD, без keeper-маркера; KEEPER → камера+маркер, без HUD; NONE → ничего.
+	var pk := SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
+	var pkeep := SetPiecePresentation.new(SetPiecePresentation.Role.KEEPER)
+	var pn := SetPiecePresentation.new(SetPiecePresentation.Role.NONE)
+	ok = _expect(pk.owns_camera() and pk.owns_hud() and not pk.owns_keeper_marker(), "KICKER: камера+HUD") and ok
+	ok = _expect(pkeep.owns_camera() and not pkeep.owns_hud() and pkeep.owns_keeper_marker(), "KEEPER: камера+маркер") and ok
+	ok = _expect(not pn.owns_camera() and not pn.owns_hud() and not pn.owns_keeper_marker(), "NONE: ничего") and ok
 
 	if ok:
 		print("CHECK PASS: human_kicker_intent")

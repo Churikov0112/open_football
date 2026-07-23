@@ -47,7 +47,7 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_pen_rng.randomize()
 	_build_reticle()
-	_presentation = SetPiecePresentation.new(true)
+	_presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
 
 ## Human-дефолт источника намерения пенальти-бьющего (ровно прежние Input-чтения контроллера).
 func _default_intent() -> KickerIntent:

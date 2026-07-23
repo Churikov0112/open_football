@@ -1,17 +1,21 @@
 class_name SetPiecePresentation
 extends RefCounted
-## Двухуровневый профиль презентации стандарта. Уровень 1: участвует ли локальный человек-актёр
-## (owns camera + тайминги стандарта). Уровень 2 (состав HUD по роли) добавят фичи, которым он
-## нужен. Пилот: только owns_camera/owns_hud. is_local_human=true (дефолт human) → владеет всем;
-## observer (ИИ/чужой стандарт) → ничем (камера-броадкаст не трогается, HUD скрыт).
+## Профиль презентации стандарта по РОЛИ локального человека (один факт → вся презентация).
+## Камера включается, если человек участвует в любой роли; состав HUD — по роли.
+## WALL — задел под штрафной (Этап 2), сейчас не используется.
 
-var _local_human: bool
+enum Role { NONE, KICKER, KEEPER, WALL }
 
-func _init(is_local_human: bool) -> void:
-	_local_human = is_local_human
+var _local_role: int
+
+func _init(local_role: int) -> void:
+	_local_role = local_role
 
 func owns_camera() -> bool:
-	return _local_human
+	return _local_role != Role.NONE
 
 func owns_hud() -> bool:
-	return _local_human
+	return _local_role == Role.KICKER   # ретикл/power_bar бьющего
+
+func owns_keeper_marker() -> bool:
+	return _local_role == Role.KEEPER
