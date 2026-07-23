@@ -35,6 +35,15 @@ static func plane_point_to_world(xy: Vector2, goal_center_x: float, goal_line_z:
 static func random_dive_zone(rng: RandomNumberGenerator) -> int:
 	return rng.randi_range(0, 4)
 
+## Квадрант стика → зона нырка. stick.x: лево<0/право>0; stick.y: низ<0/верх>0 (уже
+## инвертированный aim_axis). Длина ниже deadzone → CENTER.
+static func stick_to_zone(stick: Vector2, deadzone: float) -> int:
+	if stick.length() < deadzone:
+		return Zone.CENTER
+	if stick.x < 0.0:
+		return Zone.HIGH_L if stick.y > 0.0 else Zone.LOW_L
+	return Zone.HIGH_R if stick.y > 0.0 else Zone.LOW_R
+
 ## Репрезентативная точка зоны на линии ворот (куда целит нырок). L = -X, R = +X
 ## (согласовано с KeeperLogic.save_decision: dx<0 → левый нырок).
 static func zone_target(zone: int, goal_center_x: float, half_width: float, low_y: float, high_y: float, lateral: float, goal_line_z: float) -> Vector3:
