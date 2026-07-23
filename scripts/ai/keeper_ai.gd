@@ -39,6 +39,9 @@ var _freekick_mode: bool = false
 var _goalkick_mode: bool = false
 var _freekick_anchor: Vector3 = Vector3.ZERO
 var _pen_struck: bool = false
+var _penalty_step_lateral: float = 0.0   # последнее боковое намерение от контроллера (AIM)
+var _penalty_target_x: float = 0.0       # интегрированная цель X по линии
+var _penalty_frozen: bool = false        # X зафиксирован (разбег начался)
 
 
 func _motor() -> PlayerMotor:
@@ -290,6 +293,9 @@ func set_penalty_mode(on: bool) -> void:
 		_pen_struck = false
 		_reacting = false
 		_pass_through = false
+		_penalty_step_lateral = 0.0
+		_penalty_target_x = 0.0
+		_penalty_frozen = false
 		_current_action = KeeperLogic.SaveAction.NONE
 		_state = State.POSITION
 		if ball != null and is_instance_valid(ball) and ball.dribbler == _body:
@@ -332,6 +338,15 @@ func set_goalkick_mode(on: bool) -> void:
 
 ## Слепой нырок пенальти по выбранной зоне. Угловые — существующий _begin_save (клип/контакт/отбой
 ## как с игры); CENTER — остаёмся в центре, центральный рефлекс в _penalty_hold решит по высоте.
+## AIM-позиционирование: контроллер каждый кадр шлёт боковое намерение стика (Human) или 0 (ИИ).
+func set_penalty_step(lateral: float) -> void:
+	_penalty_step_lateral = lateral
+
+## Старт разбега бьющего: фиксируем X вратаря на линии (дальше стик = направление прыжка).
+func freeze_penalty_position() -> void:
+	_penalty_frozen = true
+
+
 func begin_penalty_dive(zone: int) -> void:
 	_pen_struck = true
 	if zone == PenaltyLogic.Zone.CENTER:
@@ -371,7 +386,12 @@ func _penalty_hold(delta: float, m: PlayerMotor) -> void:
 	# в момент нажатия P выходил навстречу удару, остаточная Z-скорость уносила его вперёд с линии, и
 	# вернуть было некому (Z не правился) — «вратарь не на линии». Теперь возвращаем по обеим осям.
 	var anchor_z := goal_line_z + into * 0.5
-	var to := Vector3(-_body.global_position.x, 0.0, anchor_z - _body.global_position.z)
+	# До заморозки: цель X ползёт вбок по стику (приставные шаги), кламп в пределах створа.
+	if not _penalty_frozen:
+		_penalty_target_x += _penalty_step_lateral * FootballConstants.KEEPER_PEN_STEP_SPEED * delta
+		var lim := FootballConstants.GOAL_WIDTH * 0.5 - FootballConstants.KEEPER_PEN_STEP_MARGIN
+		_penalty_target_x = clampf(_penalty_target_x, -lim, lim)
+	var to := Vector3(_penalty_target_x - _body.global_position.x, 0.0, anchor_z - _body.global_position.z)
 	var d := to.length()
 	if d > 0.15:
 		# Проп. скорость: тормозим у якоря, чтобы инерция мотора не проносила вратаря сквозь линию

@@ -442,6 +442,10 @@ const KEEPER_PLACE_DRIBBLE_DIST := 10.0 # ВРЕМЕННО: сколько ме�
 const KEEPER_THROW_DISTANCE := 25.0    # дальность броска верхом рукой (keeper_overhand_throw), м — к центру поля
 const KEEPER_THROW_PEAK := 6.0         # высота дуги броска верхом, м
 
+# Приставные шаги вратаря по линии до разбега бьющего (K-режим пенальти, см. keeper_ai._penalty_hold).
+const KEEPER_PEN_STEP_SPEED := 3.0     # скорость бокового дрейфа по линии, м/с
+const KEEPER_PEN_STEP_MARGIN := 0.5    # отступ от штанги, дальше не смещаться, м
+
 
 # ═══════════════════════════════════════════
 #  PENALTY (Фаза A)
