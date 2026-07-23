@@ -102,6 +102,7 @@ func _interim_award(team: int, spot: Vector3) -> void:
 ## Гол (зовёт менеджер из goal-area). Интерим: только сигнал/лог — сам кикофф пока = существующий
 ## _reset_ball менеджера (Этап 1 заменит настоящим кикоффом).
 func report_goal() -> void:
+	print("[REFEREE] ГОЛ → кикофф (интерим: сброс мяча существующим _reset_ball)")
 	restart_awarded.emit(RefereeLogic.Restart.KICKOFF, 0, Vector3.ZERO)
 
 ## Фол подката (зовёт менеджер). Интерим: сигнал foul_called + restart_awarded, без запуска
