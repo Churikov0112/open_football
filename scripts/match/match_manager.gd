@@ -920,10 +920,11 @@ func _process(delta: float) -> void:
 	if _trail != null:
 		_update_ball_trail(ball_pos)
 
-	# Удар от ворот — бьёт вратарь, а controlled_player намеренно не трогаем (см. GoalKickController).
-	# Маркер контролируемого игрока на время розыгрыша просто скрываем — он не про вратаря и не
-	# про controlled_player (человек не переключался), показывать его тут нечего.
-	if _goal_kick_active or _throw_in_active:
+	# Удар от ворот/аут — бьёт вратарь/вбрасывающий, а controlled_player намеренно не трогаем.
+	# Пенальти с ИИ-бьющим (K, см. PenaltyController.kicker_is_local_human) — по той же причине:
+	# controlled_player сейчас управляется ИИ, маркер над ним вводит в заблуждение (человек играет
+	# вратаря, не бьющего). Маркер на время розыгрыша просто скрываем.
+	if _goal_kick_active or _throw_in_active or (_penalty_active and _penalty != null and not _penalty.kicker_is_local_human()):
 		if _controlled_marker != null:
 			_controlled_marker.visible = false
 	elif _controlled_marker != null and controlled_player and _match_camera != null:

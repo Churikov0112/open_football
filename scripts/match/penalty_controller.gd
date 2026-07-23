@@ -52,6 +52,11 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 	_build_keeper_marker()
 	_presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
 
+## Локальный человек сейчас играет бьющего (а не вратаря/наблюдателя)? Для match_manager —
+## скрывать ли маркер controlled_player на время розыгрыша (K: бьющий — ИИ, маркер над ним лишний).
+func kicker_is_local_human() -> bool:
+	return _presentation != null and _presentation.owns_hud()
+
 ## Human-дефолт источника намерения пенальти-бьющего (ровно прежние Input-чтения контроллера).
 func _default_intent() -> KickerIntent:
 	return HumanKickerIntent.new({
@@ -335,8 +340,8 @@ func _update_reticle() -> void:
 func _build_keeper_marker() -> void:
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = 0.0
-	mesh.bottom_radius = 0.25
-	mesh.height = 0.5
+	mesh.bottom_radius = 0.12
+	mesh.height = 0.22
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = Color(0.1, 0.9, 1.0)   # cyan (как маркер управляемого игрока)
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
