@@ -17,3 +17,7 @@ func dive_zone() -> int:
 	var x := _axis(lat[0], lat[1]) if lat.size() == 2 else 0.0
 	var y := -_axis(vert[0], vert[1]) if vert.size() == 2 else 0.0
 	return PenaltyLogic.stick_to_zone(Vector2(x, y), 0.15)
+
+func step_lateral() -> float:
+	var lat: Array = _cfg.get("aim_lat", [])
+	return _axis(lat[0], lat[1]) if lat.size() == 2 else 0.0

@@ -7,3 +7,8 @@ extends RefCounted
 ## Выбранная зона нырка (PenaltyLogic.Zone).
 func dive_zone() -> int:
 	return PenaltyLogic.Zone.CENTER
+
+## Желаемое боковое смещение вратаря по линии в фазе прицеливания (AIM), [-1..1]; 0 = стоять.
+## Отдельно от dive_zone: позиционирование телом, а не выбор зоны прыжка.
+func step_lateral() -> float:
+	return 0.0

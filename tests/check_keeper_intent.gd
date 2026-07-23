@@ -34,6 +34,12 @@ func _init() -> void:
 	f.ax_vert = 0.0
 	ok = _z(f.dive_zone(), PenaltyLogic.Zone.CENTER, "HKI нейтраль→CENTER") and ok
 
+	# step_lateral: Human отдаёт боковую ось стика; база = 0.
+	f.ax_lat = 0.6
+	f.ax_vert = 0.0
+	ok = _expect(is_equal_approx(f.step_lateral(), 0.6), "HKI step_lateral = ax_lat") and ok
+	ok = _expect(is_equal_approx(KeeperIntent.new().step_lateral(), 0.0), "база step_lateral = 0") and ok
+
 	# База KeeperIntent → CENTER.
 	ok = _z(KeeperIntent.new().dive_zone(), PenaltyLogic.Zone.CENTER, "база→CENTER") and ok
 
