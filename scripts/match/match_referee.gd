@@ -1,0 +1,103 @@
+class_name MatchReferee
+extends Node
+## Судья v1 (Этап 0). Автомат LIVE/DEAD. Детектит выход мяча за линии (BoundaryLogic),
+## разрешает рестарт (RefereeLogic), эмитит сигналы. Интерим-режим detect+award: пока настоящих
+## ИИ-стандартов нет, рестарт разрешается заглушкой — мяч на точку, владение исполняющей команде,
+## снова LIVE, без церемонии. Гол/фол пробрасываются извне (менеджером).
+
+signal restart_awarded(restart_type: int, team: int, spot: Vector3)
+signal foul_called(spot: Vector3, team: int)
+
+enum State { LIVE = 0, DEAD = 1 }
+
+var _manager: Node
+var _ball: Node
+var _team_defending_neg: int = 2
+var _state: int = State.LIVE
+
+func setup(manager: Node, ball: Node, team_defending_neg: int) -> void:
+	_manager = manager
+	_ball = ball
+	_team_defending_neg = team_defending_neg
+
+func state() -> int:
+	return _state
+
+## Тик детекта открытой игры (зовётся из match_manager._physics_process, когда НЕ идёт
+## сет-пис/празднование). Только в LIVE, только при валидном last_touch.
+func tick() -> void:
+	if _state != State.LIVE:
+		return
+	if _ball == null or not is_instance_valid(_ball):
+		return
+	if _ball.has_method(&"is_caught") and _ball.is_caught():
+		return   # мяч в руках вратаря — не выход за линию
+	var lt: Node = _ball.last_touch
+	if lt == null or not is_instance_valid(lt):
+		return   # некому атрибутировать — не судим (напр. до первого касания)
+	var exit := BoundaryLogic.classify(_ball.global_position,
+		_manager.field_length, _manager.field_width,
+		FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.BALL_RADIUS)
+	if exit == BoundaryLogic.Exit.NONE:
+		return
+	_award_ball_out(exit, lt)
+
+func _award_ball_out(exit: int, last_touch: Node) -> void:
+	var lt_team := 1 if last_touch.is_in_group("team_1") else 2
+	var res := RefereeLogic.ball_out_restart(exit, lt_team, _team_defending_neg)
+	var spot := _spot_for(res["restart"], exit)
+	_state = State.DEAD
+	restart_awarded.emit(res["restart"], res["team"], spot)
+	_interim_award(res["team"], spot)
+	_state = State.LIVE
+
+## Точка рестарта по типу и стороне выхода.
+func _spot_for(restart: int, exit: int) -> Vector3:
+	var hl: float = _manager.field_length
+	var hw: float = _manager.field_width
+	var r := FootballConstants.BALL_RADIUS
+	match restart:
+		RefereeLogic.Restart.THROW_IN:
+			return BoundaryLogic.throw_in_spot(_ball.global_position, hw, r)
+		RefereeLogic.Restart.CORNER:
+			return BoundaryLogic.corner_spot(_ball.global_position, hl, hw, exit, FootballConstants.CORNER_INSET, r)
+		RefereeLogic.Restart.GOAL_KICK:
+			return BoundaryLogic.goal_kick_spot(exit, hl, FootballConstants.GOAL_AREA_DEPTH, r)
+		_:
+			return Vector3(0.0, r, 0.0)
+
+## Интерим-заглушка: мяч на точку, владение ближайшему полевому исполняющей команды. БЕЗ
+## церемонии/камеры. Заменяется настоящими контроллерами в Этапах 1–2.
+func _interim_award(team: int, spot: Vector3) -> void:
+	if _ball.has_method(&"release_dribble"):
+		_ball.release_dribble()
+	if _ball.has_method(&"clear_last_kicker"):
+		_ball.clear_last_kicker()
+	_ball.linear_velocity = Vector3.ZERO
+	_ball.angular_velocity = Vector3.ZERO
+	_ball.global_position = spot + Vector3(0, FootballConstants.RESET_BALL_Y, 0)
+	var group := "team_1" if team == 1 else "team_2"
+	var nodes := get_tree().get_nodes_in_group(group)
+	var positions: Array = []
+	for n in nodes:
+		positions.append((n as Node3D).global_position)
+	var idx := RefereeLogic.select_taker(spot, positions)
+	if idx >= 0 and _ball.has_method(&"set_dribbler"):
+		_ball.set_dribbler(nodes[idx], true)
+
+## Гол (зовёт менеджер из goal-area). Интерим: только сигнал/лог — сам кикофф пока = существующий
+## _reset_ball менеджера (Этап 1 заменит настоящим кикоффом).
+func report_goal() -> void:
+	restart_awarded.emit(RefereeLogic.Restart.KICKOFF, 0, Vector3.ZERO)
+
+## Фол подката (зовёт менеджер). Интерим: сигнал foul_called + restart_awarded, без запуска
+## контроллера штрафного/пенальти (Этап 2). Заглушку владения НЕ делаем — фол-геометрия и
+## расстановка сложнее аута, оставляем настоящему контроллеру.
+func report_tackle_foul(foul_pos: Vector3, fouler: Node, fouled: Node) -> void:
+	var fouler_team := 1 if fouler.is_in_group("team_1") else 2
+	var fouled_team := 1 if fouled.is_in_group("team_1") else 2
+	foul_called.emit(foul_pos, fouler_team)
+	var res := RefereeLogic.foul_restart(foul_pos, fouler_team, fouled_team,
+		_manager.field_length, _team_defending_neg,
+		FootballConstants.PENALTY_AREA_DEPTH, FootballConstants.PENALTY_AREA_WIDTH * 0.5)
+	restart_awarded.emit(res["restart"], res["team"], foul_pos)

@@ -509,6 +509,8 @@ git commit -m "feat(referee): RefereeLogic — restart resolution + taker select
 
 **Замечание о `class_name` в тесте (гоча проекта):** переменная тела статически типизирована `Node`, у неё нет `MatchReferee`-членов — объявляй `var ref: MatchReferee = ...` явно, не `:=` (иначе «cannot infer the type», как с `Player.brain()` в Фазе 2).
 
+**Гоча дерева (as-built, всплыла при исполнении):** узлы, добавленные `root.add_child()` в `SceneTree._initialize()`, ещё НЕ «внутри дерева» — `global_position` возвращает identity (0,0,0), и судья видит мяч в центре → NONE. Поэтому создание узлов — в `_initialize`, а действия/проверки (`set_dribbler`/двигать мяч/`tick`/asserts) — в первом `_process(delta) -> bool` (там узлы уже в дереве). Позиции ставить локальным `position` (все узлы — прямые дети root с identity-трансформом, `position == global_position`). Плюс всегда `add_child` ПЕРЕД установкой позиции. Также после нового `class_name`-файла нужен `--headless --import` перед `-s`-тестом (иначе «Identifier not declared»).
+
 - [ ] **Step 1: Написать падающий смоук-тест**
 
 Create `tests/check_referee_flow.gd`:
