@@ -167,6 +167,9 @@ func update(delta: float) -> void:
 	_update_camera_pose()
 
 func _aim_update(delta: float) -> void:
+	# Позиционирование вратаря телом (K): человек стиком водит вратаря по линии; ИИ step_lateral()=0 → стоит.
+	if _keeper_brain != null and _keeper_brain.has_method(&"set_penalty_step"):
+		_keeper_brain.set_penalty_step(_keeper_intent.step_lateral())
 	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
 	var fs := _intent.foot_switch()
 	if fs == -1 and _foot != "penalty_l":
@@ -206,6 +209,9 @@ func _aim_update(delta: float) -> void:
 
 func _fire(ratio: float) -> void:
 	_charging = false
+	# Старт разбега бьющего: фиксируем X вратаря на линии (дальше стик = направление прыжка, на контакте).
+	if _keeper_brain != null and _keeper_brain.has_method(&"freeze_penalty_position"):
+		_keeper_brain.freeze_penalty_position()
 	if _presentation.owns_hud():
 		_power_bar.visible = false
 	var from: Vector3 = _ball.global_position
