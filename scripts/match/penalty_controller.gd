@@ -35,6 +35,8 @@ var _pending_launch: Vector3 = Vector3.ZERO
 var _struck_zone: int = -1
 var _contact_connected := false
 var _watch_timer: float = 0.0
+var _intent: KickerIntent
+var _presentation: SetPiecePresentation
 
 func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
 	_manager = manager
@@ -45,9 +47,20 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_pen_rng.randomize()
 	_build_reticle()
+	_presentation = SetPiecePresentation.new(true)
+
+## Human-дефолт источника намерения пенальти-бьющего (ровно прежние Input-чтения контроллера).
+func _default_intent() -> KickerIntent:
+	return HumanKickerIntent.new({
+		"aim_lat": [&"move_left", &"move_right"],
+		"aim_vert": [&"move_forward", &"move_back"],
+		"foot": [&"foot_left", &"foot_right"],
+		"charges": [[&"kick", 0]],
+		"modifier": &"combo_modifier",
+	})
 
 ## Старт одиночного пенальти в атакуемые ворота (goal_line_z вратаря).
-func start_single(kicker: CharacterBody3D, goal_line_z: float) -> void:
+func start_single(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
 	if _phase != Phase.IDLE or kicker == null:
 		return
 	_kicker = kicker
@@ -55,6 +68,9 @@ func start_single(kicker: CharacterBody3D, goal_line_z: float) -> void:
 	_into = -1.0 if goal_line_z > 0.0 else 1.0
 	_foot = FootballConstants.PEN_DEFAULT_FOOT
 	release_after_strike = true
+	_intent = intent if intent != null else _default_intent()   # свежий intent на каждый пенальти (латч сброшен)
+	if presentation != null:
+		_presentation = presentation
 	_setup()
 
 func _setup() -> void:
@@ -142,16 +158,15 @@ func update(delta: float) -> void:
 
 func _aim_update(delta: float) -> void:
 	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
-	if Input.is_action_just_pressed(&"foot_left") and _foot != "penalty_l":
+	var fs := _intent.foot_switch()
+	if fs == -1 and _foot != "penalty_l":
 		_foot = "penalty_l"
 		_place_kicker()
-	elif Input.is_action_just_pressed(&"foot_right") and _foot != "penalty_r":
+	elif fs == 1 and _foot != "penalty_r":
 		_foot = "penalty_r"
 		_place_kicker()
 	# Прицел стиком/стрелками: X = ширина, вверх стика = выше в воротах (инвертируем Y).
-	var aim_stick := Vector2(
-		Input.get_axis(&"move_left", &"move_right"),
-		-Input.get_axis(&"move_forward", &"move_back"))
+	var aim_stick := _intent.aim_axis()
 	if aim_stick.length() > 0.15:
 		_aim = PenaltyLogic.move_reticle(_aim, aim_stick, FootballConstants.PEN_RETICLE_SPEED, delta,
 			FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_HEIGHT, FootballConstants.PEN_AIM_OVERHANG)
@@ -160,24 +175,26 @@ func _aim_update(delta: float) -> void:
 		var center := Vector2(0.0, FootballConstants.PEN_RETICLE_START_Y)
 		_aim = _aim.lerp(center, clampf(FootballConstants.PEN_RETICLE_RETURN * delta, 0.0, 1.0))
 	# Заряд силы: удержание kick; черпачок — combo_modifier + kick.
-	if Input.is_action_just_pressed(&"kick"):
+	if _intent.charge_start_variant() >= 0:
 		_charging = true
 		_charge = 0.0
-		_chip = Input.is_action_pressed(&"combo_modifier")
+		_chip = _intent.modifier_held()
 	if _charging:
 		_charge += delta
 		var ratio := clampf(_charge / FootballConstants.PEN_CHARGE_MAX_TIME, 0.0, 1.0)
-		_power_bar.visible = true
-		_power_bar.value = ratio
-		var fill := _power_bar.get_theme_stylebox("fill")
-		if fill:
-			fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-		if ratio >= 1.0 or Input.is_action_just_released(&"kick"):
+		if _presentation.owns_hud():
+			_power_bar.visible = true
+			_power_bar.value = ratio
+			var fill := _power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		if ratio >= 1.0 or _intent.charge_committed():
 			_fire(ratio)
 
 func _fire(ratio: float) -> void:
 	_charging = false
-	_power_bar.visible = false
+	if _presentation.owns_hud():
+		_power_bar.visible = false
 	var from: Vector3 = _ball.global_position
 	# Итоговая точка = прицел + случай внутри круга разброса.
 	var spread := PenaltyLogic.spread_radius(ratio, FootballConstants.PEN_SPREAD_MIN_R, FootballConstants.PEN_SPREAD_MAX_R)
@@ -267,6 +284,8 @@ func _release() -> void:
 func _update_camera_pose() -> void:
 	if _phase == Phase.IDLE:
 		return
+	if not _presentation.owns_camera():
+		return
 	# Фикс-камера за бьющим (за точкой, в сторону от ворот), смотрит в ворота.
 	var eye := _spot - _forward * FootballConstants.PEN_CAM_BACK + Vector3(0.0, FootballConstants.PEN_CAM_HEIGHT, 0.0)
 	var look := Vector3(0.0, FootballConstants.PEN_CAM_LOOK_Y, _goal_line_z)
@@ -294,7 +313,7 @@ func _build_reticle() -> void:
 func _update_reticle() -> void:
 	if _reticle == null:
 		return
-	var show_it := _phase == Phase.AIM and _reticle_visible
+	var show_it := _phase == Phase.AIM and _reticle_visible and _presentation.owns_hud()
 	_reticle.visible = show_it
 	if not show_it:
 		return
