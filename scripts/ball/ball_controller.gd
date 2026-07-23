@@ -9,6 +9,7 @@ extends RigidBody3D
 
 var dribbler: Node3D
 var last_kicker: Node3D
+var last_touch: Node3D   # последний коснувшийся мяча (для атрибуции судьи); НЕ чистится при блоке/старте сет-писа, в отличие от last_kicker
 var _last_release_time: int = 0
 var _release_cooldown_msec: int = 500
 var _last_kick_time: int = 0
@@ -90,6 +91,7 @@ func set_dribbler(node: Node3D, force: bool = false) -> void:
 		if node and node == last_kicker and now - _last_kick_time < _kick_cooldown_msec:
 			return
 	dribbler = node
+	note_touch(node)
 	_dribbler_prev_pos = node.global_position if node else Vector3.ZERO
 	state = BallState.TRAPPED if node else BallState.OPEN
 	_set_player_collision(false)  # трапнутый/бесхозный мяч не сталкивается с капсулами игроков
@@ -131,6 +133,7 @@ func set_dribble_suppressed(on: bool) -> void:
 func catch(holder: Node3D, hold_node: Node3D) -> void:
 	print("[BALL] catch() at ", global_position, " hold_node=", hold_node)
 	dribbler = holder
+	note_touch(holder)
 	_hold_node = hold_node
 	state = BallState.CAUGHT
 	_flat_flight = false
@@ -242,6 +245,14 @@ func clear_last_kicker() -> void:
 	_last_kick_time = 0
 
 
+## Записать касание мяча игроком (вход атрибуции судьи: аут/угловой/удар от ворот).
+## В отличие от last_kicker (кулдаун удара, намеренно чистится) — last_touch держится до
+## следующего реального касания.
+func note_touch(node: Node3D) -> void:
+	if node != null and is_instance_valid(node):
+		last_touch = node
+
+
 ## Явно пометить бьющего сет-писа (штрафной/угловой/пенальти). Там мяч ЛЕЖИТ на точке
 ## (dribbler=null), поэтому launch()/launch_curl() записывают last_kicker=null — и ни грейс
 ## (анти-самоблок), ни кулдаун перехвата не защищают реального бьющего: мяч запускается прямо
@@ -249,6 +260,7 @@ func clear_last_kicker() -> void:
 ## launch()/launch_curl(): пасующий не трогает мяч _kick_cooldown_msec, а мяч летит к цели.
 func note_kicker(node: Node3D) -> void:
 	last_kicker = node
+	note_touch(node)
 	_last_kick_time = Time.get_ticks_msec()
 	_begin_kick_grace(node)
 
@@ -282,6 +294,7 @@ func peek_dribble_direction() -> Vector3:
 
 func kick(direction: Vector3, power: float) -> void:
 	last_kicker = dribbler
+	note_touch(dribbler)
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
@@ -297,6 +310,7 @@ func kick(direction: Vector3, power: float) -> void:
 ## Импульс = velocity*mass, т.к. _integrate_forces применяет vel += _pending_impulse/mass.
 func launch(velocity: Vector3, flat: bool = false) -> void:
 	last_kicker = dribbler
+	note_touch(dribbler)
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
@@ -312,6 +326,7 @@ func launch(velocity: Vector3, flat: bool = false) -> void:
 ## кручёного удара Фазы 1; ShotSystem посчитает velocity и curl.
 func launch_curl(velocity: Vector3, curl: Vector3, flat: bool = false) -> void:
 	last_kicker = dribbler
+	note_touch(dribbler)
 	_last_kick_time = Time.get_ticks_msec()
 	release_dribble()
 	state = BallState.FLIGHT
