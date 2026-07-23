@@ -28,3 +28,11 @@ func modifier_held() -> bool:
 ## Вторичное действие в этом кадре (corner_call). По умолчанию нет.
 func secondary() -> bool:
 	return false
+
+## У источника фиксированная цель прицела (ИИ знает точку сразу)? Human → false (целится стиком).
+func has_fixed_aim() -> bool:
+	return false
+
+## Фиксированная точка прицела на плоскости ворот (x от центра, y высота). Только при has_fixed_aim().
+func aim_target() -> Vector2:
+	return Vector2.ZERO
