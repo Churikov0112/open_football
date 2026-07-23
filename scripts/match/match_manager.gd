@@ -253,6 +253,7 @@ func _setup_inputs() -> void:
 		&"combo_curl":      {"keys": [KEY_E],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
+		&"keeper_dive_debug": {"keys": [KEY_K], "buttons": [], "axes": []},
 		&"free_kick_debug": {"keys": [KEY_F],     "buttons": [], "axes": []},
 		&"corner_debug":    {"keys": [KEY_C],     "buttons": [], "axes": []},
 		&"goal_kick_debug": {"keys": [KEY_G],     "buttons": [], "axes": []},
@@ -968,6 +969,17 @@ func _physics_process(delta: float) -> void:
 	# _reset_ball() (телепорт игроков/мяча), запуск пенальти в это окно ломает расстановку.
 	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null and not _celebrating:
 		_penalty.start_single(controlled_player, _keeper_brain.goal_line_z)
+		return
+	# K: ИИ бьёт пенальти, человек управляет вратарём (выбор зоны нырка стиком). Бьющий — то же тело,
+	# что бьёт по P (controlled_player), но с AIKickerIntent; презентация — роль KEEPER (камера как у
+	# пенальти + cyan-маркер над вратарём, без ретикла/power_bar бьющего).
+	if Input.is_action_just_pressed(&"keeper_dive_debug") and _keeper != null and not _celebrating:
+		var kicker_rng := RandomNumberGenerator.new()
+		kicker_rng.randomize()
+		_penalty.start_single(controlled_player, _keeper_brain.goal_line_z,
+			AIKickerIntent.new(kicker_rng),
+			SetPiecePresentation.new(SetPiecePresentation.Role.KEEPER),
+			HumanKeeperIntent.new({"aim_lat": [&"move_left", &"move_right"], "aim_vert": [&"move_forward", &"move_back"]}))
 		return
 	# Штрафной-режим: всё ведёт контроллер, обычные системы заглушены.
 	if _free_kick_active:
