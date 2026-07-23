@@ -14,6 +14,7 @@ var _team_away: Team
 var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
+var _referee: MatchReferee
 # team_1 атакует −Z в первом тайме; половина флипает знак (будущий half-time-свап).
 # ОДНО место, задающее сторону чужих ворот для прицела ударов — см. _target_goal_center().
 var _attack_dir_z: float = -1.0
@@ -162,6 +163,13 @@ func _ready() -> void:
 	_action_executor.name = "ActionExecutor"
 	add_child(_action_executor)
 	_action_executor.setup(self, ball)
+	_referee = MatchReferee.new()
+	_referee.name = "MatchReferee"
+	add_child(_referee)
+	# team_defending_neg: команда, защищающая ворота на -Z (там стоит _keeper). Выводим из его
+	# группы, чтобы не хардкодить team_1/team_2.
+	var tdn := 2 if (_keeper != null and _keeper.is_in_group("team_2")) else 1
+	_referee.setup(self, ball, tdn)
 	# Стартовая расстановка: человек с мячом в центре (соперник глубоко — см. _setup_away_player).
 	ball.global_position = _human_player.global_position + Vector3(0, 0.0, -0.6)
 	if ball.has_method(&"set_dribbler"):
@@ -503,6 +511,8 @@ func _setup_goals() -> void:
 				return
 			if body == ball and not _celebrating:
 				_celebrating = true
+				if _referee != null:
+					_referee.report_goal()
 				# Вратаря НЕ замораживаем: у keeper_ai своя обработка празднования (доигрывает
 				# нырок и встаёт в idle ТОЛЬКО по завершении клипа). Заморозка (стоп _physics_process
 				# + лок мотора) обрывала бы это, и вратарь мгновенно вставал в idle-позу посреди нырка.
@@ -568,11 +578,11 @@ func _make_net_collider(local_pos: Vector3, size: Vector3) -> StaticBody3D:
 func _setup_boundaries() -> void:
 	var wall_height := 4.0
 	var wall_thickness := 0.5
-	var wall_extra := 4.0
+	var wall_extra := FootballConstants.BOUNDARY_MARGIN_Z
 	# Боковые стены НЕ на самой линии аута (±field_width), а с запасом-выкатом наружу: иначе
 	# вбрасывающий, стоящий за боковой линией, и мяч в его руках упираются в стену (заперты
 	# снаружи, мяч не может пробиться внутрь). Запас — закромка поля, как у настоящего газона.
-	var side_extra := 2.0
+	var side_extra := FootballConstants.BOUNDARY_MARGIN_X
 	var total_half_z := field_length + wall_extra
 	var total_half_x := field_width + side_extra
 	var walls := [
@@ -996,6 +1006,8 @@ func _physics_process(delta: float) -> void:
 	if _try_fire_queue():
 		_handle_player_input(delta)
 		return
+	if _referee != null and not _celebrating:
+		_referee.tick()
 	_handle_dribbling()
 	_handle_player_input(delta)
 
@@ -1972,6 +1984,10 @@ func _same_team(a: Node, b: Node) -> bool:
 
 
 func _on_ball_collision(body: Node) -> void:
+	# Касание мяча игроком (блок/рикошет/контакт с вратарём) — атрибуция для судьи (last_touch).
+	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
+			and ball.has_method(&"note_touch"):
+		ball.note_touch(body)
 	# Любой контакт мяча с игроком (стенка/защитник/вратарь) нарушает траекторию — сбрасываем
 	# кручение сразу и безусловно (не только в FLIGHT-ветке block_in_flight ниже), иначе Magnus
 	# продолжает крутить уже отскочивший мяч (виден как «кружение на месте»).
