@@ -34,6 +34,8 @@ var _pending_ratio: float = 1.0
 var _pending_kind: String = ""
 var _locked: bool = false              # коммит нажат (камера зафиксирована)
 var _contact_connected := false
+var _intent: KickerIntent
+var _presentation: SetPiecePresentation
 
 func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
 	_manager = manager
@@ -47,16 +49,26 @@ func is_active() -> bool:
 	return _phase != Phase.IDLE
 
 ## Старт удара от ворот: бьющий = вратарь, его ворота = goal_line_z.
-func start(kicker: CharacterBody3D, goal_line_z: float) -> void:
+func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
 	if _phase != Phase.IDLE or kicker == null:
 		return
 	_kicker = kicker
 	_goal_line_z = goal_line_z
 	_into = -signf(goal_line_z)   # в поле от линии ворот
 	_foot = FootballConstants.GK_DEFAULT_FOOT
+	_intent = intent if intent != null else _default_intent()
+	_presentation = presentation if presentation != null else SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
 	# Соперники бьющей команды (по группе бьющего) — общее правило, без хардкода.
 	_opp_group = &"team_2" if kicker.is_in_group("team_1") else &"team_1"
 	_setup()
+
+## Human-дефолт источника намерения бьющего удар от ворот (прежние Input-чтения контроллера).
+func _default_intent() -> KickerIntent:
+	return HumanKickerIntent.new({
+		"aim_lat": [&"move_left", &"move_right"],
+		"foot": [&"foot_left", &"foot_right"],
+		"charges": [[&"pass_short", 0], [&"pass_lob", 1]],   # 0 = ground, 1 = lob
+	})
 
 func _setup() -> void:
 	_phase = Phase.SETUP
@@ -164,36 +176,34 @@ func _pin_ball() -> void:
 
 func _aim_update(delta: float) -> void:
 	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
-	if Input.is_action_just_pressed(&"foot_left"):
+	var fs := _intent.foot_switch()
+	if fs == -1:
 		_set_foot("penalty_l")
-	elif Input.is_action_just_pressed(&"foot_right"):
+	elif fs == 1:
 		_set_foot("penalty_r")
-	var stick_x := Input.get_axis(&"move_left", &"move_right")
+	var stick_x := _intent.aim_axis().x
 	# Стик крутит направление вылета мяча — и до, и после коммита (доводка/финт).
 	if absf(stick_x) > 0.15:
 		_heading = FreeKickLogic.rotate_heading(_heading, _base_heading, stick_x,
 			FootballConstants.GK_AIM_SPEED, delta, FootballConstants.GK_AIM_ARC)
 	if not _locked:
 		_cam_heading = _heading   # камера едет за прицелом только до коммита
-		if Input.is_action_just_pressed(&"pass_short"):
+		var v := _intent.charge_start_variant()
+		if v == 0:
 			_start_charge("ground")
-		elif Input.is_action_just_pressed(&"pass_lob"):
+		elif v == 1:
 			_start_charge("lob")
 	if _charging:
 		_charge += delta
 		var ratio := clampf(_charge / FootballConstants.GK_CHARGE_MAX_TIME, 0.0, 1.0)
-		_power_bar.visible = true
-		_power_bar.value = ratio
-		var fill := _power_bar.get_theme_stylebox("fill")
-		if fill:
-			fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-		if ratio >= 1.0 or _charge_released():
+		if _presentation.owns_hud():
+			_power_bar.visible = true
+			_power_bar.value = ratio
+			var fill := _power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		if ratio >= 1.0 or _intent.charge_committed():
 			_fire_charge(ratio)
-
-func _charge_released() -> bool:
-	if _charge_kind == "lob":
-		return not Input.is_action_pressed(&"pass_lob")
-	return not Input.is_action_pressed(&"pass_short")
 
 ## Коммит: фиксируем камеру (_locked), копим силу. _heading продолжает крутиться до контакта.
 func _start_charge(kind: String) -> void:
@@ -204,7 +214,8 @@ func _start_charge(kind: String) -> void:
 
 func _fire_charge(ratio: float) -> void:
 	_charging = false
-	_power_bar.visible = false
+	if _presentation.owns_hud():
+		_power_bar.visible = false
 	_pending_ratio = ratio
 	_begin_strike(_charge_kind)
 
@@ -224,7 +235,7 @@ func _begin_strike(kind: String) -> void:
 
 func _strike_update(delta: float) -> void:
 	# Доводка продолжается на разбеге вплоть до контакта.
-	var stick_x := Input.get_axis(&"move_left", &"move_right")
+	var stick_x := _intent.aim_axis().x
 	if absf(stick_x) > 0.15:
 		_heading = FreeKickLogic.rotate_heading(_heading, _base_heading, stick_x,
 			FootballConstants.GK_AIM_SPEED, delta, FootballConstants.GK_AIM_ARC)
@@ -293,6 +304,8 @@ func _release() -> void:
 ## Фикс-камера от 3-го лица за вратарём (за точкой вдоль -cam_heading), смотрит вверх поля.
 func _update_camera_pose() -> void:
 	if _phase == Phase.IDLE:
+		return
+	if not _presentation.owns_camera():
 		return
 	var eye := _spot - _cam_heading * FootballConstants.GK_CAM_BACK + Vector3(0.0, FootballConstants.GK_CAM_HEIGHT, 0.0)
 	var look := _spot + _cam_heading * 4.0 + Vector3(0.0, FootballConstants.GK_CAM_LOOK_Y, 0.0)
