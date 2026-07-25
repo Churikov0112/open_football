@@ -15,6 +15,11 @@ var _ball: Node
 var _team_defending_neg: int = 2
 var _state: int = State.LIVE
 
+# --- Непрерывный трекинг границ (см. track_ball_bounds) ---
+var _prev_exit: int = BoundaryLogic.Exit.NONE   # классификация с прошлого кадра — для детекта РЕАЛЬНОГО перехода
+var _suppress_next_edge: bool = false           # взведено, пока мяч CAUGHT; следующий кадр после снятия — не переход, а перебазировка
+var _pending_award_exit: int = BoundaryLogic.Exit.NONE  # "защёлка": реальный переход зафиксирован, награда ещё не выдана
+
 func setup(manager: Node, ball: Node, team_defending_neg: int) -> void:
 	_manager = manager
 	_ball = ball
@@ -23,23 +28,61 @@ func setup(manager: Node, ball: Node, team_defending_neg: int) -> void:
 func state() -> int:
 	return _state
 
-## Тик детекта открытой игры (зовётся из match_manager._physics_process, когда НЕ идёт
-## сет-пис/празднование). Только в LIVE, только при валидном last_touch.
-func tick() -> void:
-	if _state != State.LIVE:
-		return
+## Непрерывный трекинг позиции мяча относительно границ — зовётся из match_manager
+## БЕЗУСЛОВНО каждый физ-кадр, до всех ранних return сет-писов (в отличие от tick() ниже,
+## который гейтится ими). Ловит РЕАЛЬНЫЙ переход внутри→снаружи (не "сейчас снаружи", а именно
+## момент пересечения) — иначе мяч, который сет-пис-контроллер держит/кладёт снаружи поля как
+## часть расстановки (вброс — единственный стандарт, где точка розыгрыша лежит НА границе),
+## триггерил бы ложную награду сразу после отпускания: позиция "снаружи" сохраняется с прошлого
+## кадра → перехода нет → защёлка не взводится. Реальный выход, случившийся ПОКА другой
+## контроллер ещё владеет мячом (например, штрафной ещё не разрешил WATCH, а сам удар улетел
+## за боковую), не теряется — защёлка взводится независимо от того, гейтится ли tick() в этот
+## момент; award() лишь читает уже взведённый факт, когда контроллер наконец отпустит мяч.
+##
+## CAUGHT (мяч в руках — не живая физика, кто-то его туда СТАВИТ) обрабатывается отдельно: пока
+## CAUGHT, мы держим _prev_exit в курсе актуальной позиции, но защёлку не взводим (позиция снаружи
+## тут не результат пересечения линии физикой). Первый кадр ПОСЛЕ снятия CAUGHT — перебазировка:
+## берём текущую позицию за новую точку отсчёта, не считая её переходом. С этого момента снова
+## работает обычное отслеживание — поэтому мяч, пойманный УЖЕ за пределами (напр. вратарь ловит
+## мяч, который улетел мимо ворот — гипотетический будущий кейс), тоже отработает верно: сам факт
+## пересечения линии фиксируется независимо от поимки, ДО неё, а не в момент отпускания.
+func track_ball_bounds() -> void:
 	if _ball == null or not is_instance_valid(_ball):
 		return
-	if _ball.has_method(&"is_caught") and _ball.is_caught():
-		return   # мяч в руках вратаря — не выход за линию
-	var lt: Node = _ball.last_touch
-	if lt == null or not is_instance_valid(lt):
-		return   # некому атрибутировать — не судим (напр. до первого касания)
+	var caught: bool = _ball.has_method(&"is_caught") and _ball.is_caught()
 	var exit := BoundaryLogic.classify(_ball.global_position,
 		_manager.field_length, _manager.field_width,
 		FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.BALL_RADIUS)
-	if exit == BoundaryLogic.Exit.NONE:
+	if caught:
+		_prev_exit = exit
+		_suppress_next_edge = true
 		return
+	if _suppress_next_edge:
+		_suppress_next_edge = false
+		_prev_exit = exit
+		return
+	if _prev_exit == BoundaryLogic.Exit.NONE and exit != BoundaryLogic.Exit.NONE:
+		_pending_award_exit = exit
+	elif exit == BoundaryLogic.Exit.NONE:
+		_pending_award_exit = BoundaryLogic.Exit.NONE
+	_prev_exit = exit
+
+## Решение о награде (зовётся из match_manager._physics_process, гейтится "нет активного
+## сет-писа/не празднование" — та же причина, что раньше: пока стандарт владеет мячом, только
+## он вправе его переставлять). Сам позицию НЕ проверяет — читает защёлку из track_ball_bounds(),
+## взведённую независимо от гейта.
+func tick() -> void:
+	if _state != State.LIVE:
+		return
+	if _pending_award_exit == BoundaryLogic.Exit.NONE:
+		return
+	if _ball == null or not is_instance_valid(_ball):
+		return
+	var lt: Node = _ball.last_touch
+	if lt == null or not is_instance_valid(lt):
+		return   # некому атрибутировать — не судим (напр. до первого касания)
+	var exit := _pending_award_exit
+	_pending_award_exit = BoundaryLogic.Exit.NONE
 	_award_ball_out(exit, lt)
 
 func _award_ball_out(exit: int, last_touch: Node) -> void:

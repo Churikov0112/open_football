@@ -15,8 +15,6 @@ var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
 var _referee: MatchReferee
-var _was_setpiece_active := false     # для детекта перехода активен→неактивен (грейс судьи ниже)
-var _referee_grace_timer: float = 0.0 # см. FootballConstants.REFEREE_SETPIECE_GRACE
 # team_1 атакует −Z в первом тайме; половина флипает знак (будущий half-time-свап).
 # ОДНО место, задающее сторону чужих ворот для прицела ударов — см. _target_goal_center().
 var _attack_dir_z: float = -1.0
@@ -964,16 +962,10 @@ func _process(delta: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	# Грейс судьи после сет-писа (см. FootballConstants.REFEREE_SETPIECE_GRACE): трекаем переход
-	# активен→неактивен ЗДЕСЬ, до всех ранних return ниже — иначе кадр, где сет-пис только что
-	# отпустил мяч (флаг уже false), никогда не дошёл бы до этого кода вовсе.
-	var any_setpiece_active := _penalty_active or _free_kick_active or _corner_active \
-		or _goal_kick_active or _throw_in_active
-	if _was_setpiece_active and not any_setpiece_active:
-		_referee_grace_timer = FootballConstants.REFEREE_SETPIECE_GRACE
-	_was_setpiece_active = any_setpiece_active
-	if _referee_grace_timer > 0.0:
-		_referee_grace_timer -= delta
+	# Непрерывный трекинг границ поля — ЗДЕСЬ, до всех ранних return ниже: должен видеть мяч
+	# каждый кадр независимо от того, идёт ли сейчас сет-пис (см. MatchReferee.track_ball_bounds).
+	if _referee != null:
+		_referee.track_ball_bounds()
 	# Пенальти-режим: всё ведёт контроллер, обычные системы заглушены.
 	if _penalty_active:
 		_penalty.update(delta)
@@ -1031,7 +1023,7 @@ func _physics_process(delta: float) -> void:
 	if _try_fire_queue():
 		_handle_player_input(delta)
 		return
-	if _referee != null and not _celebrating and _referee_grace_timer <= 0.0:
+	if _referee != null and not _celebrating:
 		_referee.tick()
 	_handle_dribbling()
 	_handle_player_input(delta)

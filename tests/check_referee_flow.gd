@@ -3,6 +3,14 @@ extends SceneTree
 ## → эмитит restart_awarded(THROW_IN, team=2, spot на линии) И интерим-заглушка ставит мяч на
 ## точку + отдаёт владение ближайшему team_2. Проверяем сигнал и репозицию мяча.
 ##
+## Судья теперь два метода (см. match_referee.gd): track_ball_bounds() — непрерывный трекинг
+## перехода внутри→снаружи (зовётся match_manager БЕЗУСЛОВНО каждый кадр), tick() — решение о
+## награде по уже взведённой защёлке (гейтится сет-писами/празднованием). Здесь мяч ставится
+## сразу "снаружи" (позиция никогда не была "внутри" за время теста) — track_ball_bounds() ловит
+## это как переход NONE→TOUCHLINE (т.к. внутреннее состояние _prev_exit стартует с NONE), так что
+## оба метода нужно звать по порядку, как это делает match_manager. Регресс на "не уровень, а
+## переход" — check_referee_edge_not_level.gd.
+##
 ## Узлы создаются в _initialize (add_child), но реальные действия/проверки — в первом _process:
 ## только к этому моменту узлы «внутри дерева» и global_position считается корректно (в
 ## _initialize он возвращает identity). Все узлы — прямые дети root (identity), поэтому
@@ -53,6 +61,7 @@ func _process(_delta: float) -> bool:
 	_ball.position = Vector3(35.0, 0.11, 12.0)
 
 	ok = _expect(_ref.state() == MatchReferee.State.LIVE, "старт LIVE") and ok
+	_ref.track_ball_bounds()
 	_ref.tick()
 
 	ok = _expect(_got.has("t"), "restart_awarded эмитнут") and ok

@@ -2,10 +2,11 @@ extends SceneTree
 ## Регрессия: судья НЕ должен переучреждать вброс сразу после того, как только что брошенный мяч
 ## его же контроллером покинул точку розыгрыша. Баг: вброс — единственный стандарт, где точка
 ## розыгрыша лежит НА самой боковой линии (мяч физически стоит за линией в руках вбрасывающего);
-## без грейса (FootballConstants.REFEREE_SETPIECE_GRACE) судья видел мяч ещё не отъехавшим за
-## порог |x| > half_width+ball_radius в тот же/следующий кадр, что и снятие _throw_in_active, и
-## тут же ставил НОВЫЙ вброс с нулевой скоростью — мяч выглядел так, будто врезался в невидимую
-## стену на боковой и доставался вбрасывающему обратно (найдено при живом плейтесте).
+## позиционный уровневый чек судьи видел мяч ещё не отъехавшим за порог |x| > half_width+ball_radius
+## в тот же/следующий кадр, что и снятие _throw_in_active, и тут же ставил НОВЫЙ вброс с нулевой
+## скоростью — мяч выглядел так, будто врезался в невидимую стену на боковой и доставался
+## вбрасывающему обратно (найдено при живом плейтесте). Фикс — MatchReferee.track_ball_bounds()
+## ловит РЕАЛЬНЫЙ переход внутри→снаружи (edge), а не текущий уровень; см. match_referee.gd.
 
 var _mm: Node
 var _ti: Node
@@ -52,7 +53,7 @@ func _process(delta: float) -> bool:
 					var launched: bool = _max_ball_speed_after_fire > 1.0
 					print("SPURIOUS_CHECK: events=", _restart_events, " launched=", launched)
 					if not spurious and launched:
-						print("CHECK PASS: throw_in referee grace (нет спурного переучреждения)")
+						print("CHECK PASS: throw_in no spurious re-award (edge-detect, не уровень)")
 						quit(0)
 					else:
 						print("CHECK FAIL: spurious=", str(spurious), " launched=", str(launched))
