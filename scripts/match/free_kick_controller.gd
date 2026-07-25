@@ -35,6 +35,8 @@ var _pending_launch: Vector3 = Vector3.ZERO
 var _pending_curl: Vector3 = Vector3.ZERO
 var _contact_connected := false
 var _watch_timer: float = 0.0
+var _intent: KickerIntent
+var _presentation: SetPiecePresentation
 
 # Хуки-состояния для стенки/тиммейтов.
 var _wall_bodies: Array = []
@@ -56,13 +58,24 @@ func is_active() -> bool:
 	return _phase != Phase.IDLE
 
 ## Старт штрафного: точка = позиция бьющего (мяч телепортируется туда), ворота вратаря.
-func start(kicker: CharacterBody3D, goal_line_z: float) -> void:
+func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
 	if _phase != Phase.IDLE or kicker == null:
 		return
 	_kicker = kicker
 	_goal_line_z = goal_line_z
 	_foot = FootballConstants.FK_DEFAULT_FOOT
+	_intent = intent if intent != null else _default_intent()
+	_presentation = presentation if presentation != null else SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
 	_setup()
+
+## Human-дефолт источника намерения бьющего штрафной (прежние Input-чтения контроллера).
+func _default_intent() -> KickerIntent:
+	return HumanKickerIntent.new({
+		"aim_lat": [&"move_left", &"move_right"],
+		"foot": [&"foot_left", &"foot_right"],
+		# 0 = удар, 1 = наземный пас (обе кнопки), 2 = навес.
+		"charges": [[&"kick", 0], [&"pass_short", 1], [&"pass_through", 1], [&"pass_lob", 2]],
+	})
 
 func _setup() -> void:
 	_phase = Phase.SETUP
@@ -163,13 +176,14 @@ func _pin_ball() -> void:
 
 func _aim_update(delta: float) -> void:
 	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
-	if Input.is_action_just_pressed(&"foot_left") and _foot != "penalty_l":
+	var fs := _intent.foot_switch()
+	if fs == -1 and _foot != "penalty_l":
 		_foot = "penalty_l"
 		_place_kicker()
-	elif Input.is_action_just_pressed(&"foot_right") and _foot != "penalty_r":
+	elif fs == 1 and _foot != "penalty_r":
 		_foot = "penalty_r"
 		_place_kicker()
-	var stick_x := Input.get_axis(&"move_left", &"move_right")
+	var stick_x := _intent.aim_axis().x
 	# До нажатия kick: стик крутит heading (камера едет). После нажатия: heading зафиксирован,
 	# боковой ввод копится в закрутку.
 	if not _locked:
@@ -179,23 +193,25 @@ func _aim_update(delta: float) -> void:
 			_heading = FreeKickLogic.rotate_heading(_heading, _base_heading, stick_x,
 				FootballConstants.FK_AIM_SPEED, delta, FootballConstants.FK_AIM_ARC)
 		# Старт заряда: удар / наземный пас / навес — все через удержание кнопки (сила растёт).
-		if Input.is_action_just_pressed(&"kick"):
+		var v := _intent.charge_start_variant()
+		if v == 0:
 			_start_charge("shot")
-		elif Input.is_action_just_pressed(&"pass_short") or Input.is_action_just_pressed(&"pass_through"):
+		elif v == 1:
 			_start_charge("ground")
-		elif Input.is_action_just_pressed(&"pass_lob"):
+		elif v == 2:
 			_start_charge("lob")
 	if _charging:
 		_charge += delta
 		if _charge_kind == "shot":
 			_curl_accum += stick_x * delta   # закрутка копится только для удара
 		var ratio := clampf(_charge / FootballConstants.FK_CHARGE_MAX_TIME, 0.0, 1.0)
-		_power_bar.visible = true
-		_power_bar.value = ratio
-		var fill := _power_bar.get_theme_stylebox("fill")
-		if fill:
-			fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-		if ratio >= 1.0 or _charge_released():
+		if _presentation.owns_hud():
+			_power_bar.visible = true
+			_power_bar.value = ratio
+			var fill := _power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		if ratio >= 1.0 or _intent.charge_committed():
 			_fire_charge(ratio)
 
 ## Старт заряда действия (удар/пас/навес): фиксируем heading/камеру, копим силу.
@@ -206,20 +222,11 @@ func _start_charge(kind: String) -> void:
 	_curl_accum = 0.0
 	_charge_kind = kind
 
-## Кнопка текущего заряжаемого действия отпущена?
-func _charge_released() -> bool:
-	match _charge_kind:
-		"shot":
-			return not Input.is_action_pressed(&"kick")
-		"lob":
-			return not Input.is_action_pressed(&"pass_lob")
-		_:
-			return not (Input.is_action_pressed(&"pass_short") or Input.is_action_pressed(&"pass_through"))
-
 ## Отпустили (или макс. заряд): удар считает вектор сразу; пас/навес запоминают ratio до контакта.
 func _fire_charge(ratio: float) -> void:
 	_charging = false
-	_power_bar.visible = false
+	if _presentation.owns_hud():
+		_power_bar.visible = false
 	if _charge_kind == "shot":
 		_fire_shot(ratio)
 	else:
@@ -228,7 +235,8 @@ func _fire_charge(ratio: float) -> void:
 
 func _fire_shot(ratio: float) -> void:
 	_charging = false
-	_power_bar.visible = false
+	if _presentation.owns_hud():
+		_power_bar.visible = false
 	var vel := FreeKickLogic.launch_velocity(_heading, ratio,
 		FootballConstants.FK_POWER_MIN_SPEED, FootballConstants.FK_POWER_MAX_SPEED,
 		FootballConstants.FK_ELEV_MIN, FootballConstants.FK_ELEV_MAX)
@@ -273,7 +281,7 @@ func _strike_update(delta: float) -> void:
 	# держали кнопку. Раньше накопление останавливалось на _fire_shot (до разбега), из-за чего
 	# закрутка ощущалась пропавшей — стик двигали именно во время бега к мячу.
 	if _pending_kind == "shot":
-		_curl_accum += Input.get_axis(&"move_left", &"move_right") * delta
+		_curl_accum += _intent.aim_axis().x * delta
 	var vis := _kicker_visual()
 	if vis == null:
 		return
@@ -387,6 +395,8 @@ func _release() -> void:
 ## без отдельной логики: пересчёт идёт из тех же _spot/_heading, которые больше не меняются.
 func _update_camera_pose() -> void:
 	if _phase == Phase.IDLE:
+		return
+	if not _presentation.owns_camera():
 		return
 	var eye := _spot - _heading * FootballConstants.FK_CAM_BACK + Vector3(0.0, FootballConstants.FK_CAM_HEIGHT, 0.0)
 	var look := _spot + _heading * 4.0 + Vector3(0.0, FootballConstants.FK_CAM_LOOK_Y, 0.0)
