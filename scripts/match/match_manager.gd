@@ -518,10 +518,12 @@ func _setup_goals() -> void:
 				# нырок и встаёт в idle ТОЛЬКО по завершении клипа). Заморозка (стоп _physics_process
 				# + лок мотора) обрывала бы это, и вратарь мгновенно вставал в idle-позу посреди нырка.
 				_set_ai_frozen(true, _keeper)   # прочие ИИ стоп в idle
+				# team_1 (_team_home) атакует −Z (см. _attack_dir_z) → забивает в ворота Home.
+				# home_score/away_score считают ГОЛЫ КОМАНДЫ, а не то, чьи ворота пробиты.
 				if g.side == "Home":
-					away_score += 1
-				else:
 					home_score += 1
+				else:
+					away_score += 1
 				score_label.text = "%d : %d" % [home_score, away_score]
 				var net = _goal_nets.get(g.side)
 				if net:
