@@ -37,6 +37,9 @@ var _pending_ratio: float = 1.0
 var _contact_connected := false
 var _kicker_mask_saved: int = 0      # маска коллизий бьющего до углового (граница отключается на время)
 
+var _intent: KickerIntent
+var _presentation: SetPiecePresentation
+
 var _cn_rng := RandomNumberGenerator.new()
 var _spawned: Array = []             # [{body, team_group}] — ВРЕМЕННЫЕ тела углового (все деспавнятся)
 var _real_mate: CharacterBody3D      # реальный тиммейт из ростера: получатель + короткая опция (НЕ временный)
@@ -57,7 +60,7 @@ func is_active() -> bool:
 	return _phase != Phase.IDLE
 
 ## Старт углового: сторона по X игрока в момент вызова; ворота вратаря (goal_line_z).
-func start(kicker: CharacterBody3D, goal_line_z: float) -> void:
+func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
 	if _phase != Phase.IDLE or kicker == null:
 		return
 	_kicker = kicker
@@ -65,7 +68,19 @@ func start(kicker: CharacterBody3D, goal_line_z: float) -> void:
 	_into = -signf(goal_line_z)
 	_side = CornerLogic.side_for_player(kicker.global_position.x)
 	_foot = CornerLogic.foot_for_side(_side)
+	_intent = intent if intent != null else _default_intent()
+	_presentation = presentation if presentation != null else SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
 	_setup()
+
+## Human-дефолт источника намерения бьющего угловой (прежние Input-чтения контроллера).
+func _default_intent() -> KickerIntent:
+	return HumanKickerIntent.new({
+		"aim_lat": [&"move_left", &"move_right"],
+		"aim_vert": [&"move_forward", &"move_back"],
+		"foot": [&"foot_left", &"foot_right"],
+		"charges": [[&"pass_short", 0], [&"pass_lob", 1]],   # 0 = ground, 1 = lob
+		"secondary": &"corner_call",
+	})
 
 func _setup() -> void:
 	_phase = Phase.SETUP
@@ -143,15 +158,17 @@ func _pin_ball() -> void:
 	_ball.global_position = _spot
 
 func _aim_update(delta: float) -> void:
-	var stick_x := Input.get_axis(&"move_left", &"move_right")
-	var stick_y := -Input.get_axis(&"move_forward", &"move_back")
+	var aim := _intent.aim_axis()
+	var stick_x := aim.x
+	var stick_y := aim.y
 	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога от выбранного бьющего).
-	if Input.is_action_just_pressed(&"foot_left"):
+	var fs := _intent.foot_switch()
+	if fs == -1:
 		_set_foot("penalty_l")
-	elif Input.is_action_just_pressed(&"foot_right"):
+	elif fs == 1:
 		_set_foot("penalty_r")
 	# RB — позвать ближайшего партнёра на короткую опцию.
-	if Input.is_action_just_pressed(&"corner_call"):
+	if _intent.secondary():
 		_call_short_mate()
 	_drive_short_mate(delta)
 	if not _locked:
@@ -162,21 +179,23 @@ func _aim_update(delta: float) -> void:
 		_peak_height = CornerLogic.peak_for_stick_y(stick_y, FootballConstants.CORNER_LOB_PEAK_HEAD,
 			FootballConstants.CORNER_LOB_PEAK_STANDARD, FootballConstants.CORNER_LOB_PEAK_SVECHA)
 		# A = наземный пас, B = навес.
-		if Input.is_action_just_pressed(&"pass_short"):
+		var v := _intent.charge_start_variant()
+		if v == 0:
 			_start_charge("ground")
-		elif Input.is_action_just_pressed(&"pass_lob"):
+		elif v == 1:
 			_start_charge("lob")
 	if _charging:
 		_charge += delta
 		if _charge_kind == "lob":
 			_curl_accum += stick_x * delta   # закрутка копится только для навеса
 		var ratio := clampf(_charge / FootballConstants.CORNER_CHARGE_MAX_TIME, 0.0, 1.0)
-		_power_bar.visible = true
-		_power_bar.value = ratio
-		var fill := _power_bar.get_theme_stylebox("fill")
-		if fill:
-			fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-		if ratio >= 1.0 or _charge_released():
+		if _presentation.owns_hud():
+			_power_bar.visible = true
+			_power_bar.value = ratio
+			var fill := _power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		if ratio >= 1.0 or _intent.charge_committed():
 			_fire_charge(ratio)
 
 func _set_foot(f: String) -> void:
@@ -184,11 +203,6 @@ func _set_foot(f: String) -> void:
 		return
 	_foot = f
 	_place_kicker()
-
-func _charge_released() -> bool:
-	if _charge_kind == "lob":
-		return not Input.is_action_pressed(&"pass_lob")
-	return not Input.is_action_pressed(&"pass_short")
 
 func _start_charge(kind: String) -> void:
 	_charging = true
@@ -199,7 +213,8 @@ func _start_charge(kind: String) -> void:
 
 func _fire_charge(ratio: float) -> void:
 	_charging = false
-	_power_bar.visible = false
+	if _presentation.owns_hud():
+		_power_bar.visible = false
 	_pending_ratio = ratio
 	_begin_strike(_charge_kind)
 
@@ -219,7 +234,7 @@ func _begin_strike(kind: String) -> void:
 
 func _strike_update(delta: float) -> void:
 	if _pending_kind == "lob":
-		_curl_accum += Input.get_axis(&"move_left", &"move_right") * delta
+		_curl_accum += _intent.aim_axis().x * delta
 	var vis := _kicker_visual()
 	if vis == null:
 		return
@@ -429,6 +444,8 @@ func _release() -> void:
 ## на _release() _corner_active сбрасывается и обычная камера возвращается сама.
 func _update_camera_pose() -> void:
 	if _phase == Phase.IDLE:
+		return
+	if not _presentation.owns_camera():
 		return
 	var eye := _spot - _heading * FootballConstants.CORNER_CAM_BACK + Vector3(0.0, FootballConstants.CORNER_CAM_HEIGHT, 0.0)
 	var look := _spot + _heading * 4.0 + Vector3(0.0, FootballConstants.CORNER_CAM_LOOK_Y, 0.0)
