@@ -137,7 +137,9 @@ func _ready() -> void:
 	_setup_away_teammate()
 	_setup_home_player()
 	_setup_teammate()
-	_setup_keeper()
+	_keeper = _setup_keeper(_team_away, -field_length, Color(0.15, 0.7, 0.15))   # team_2, зелёный (как было)
+	_keeper_brain = _keeper.brain()
+	_setup_keeper(_team_home, field_length, Color(0.85, 0.55, 0.1))              # team_1, оранжевый (новый)
 	_setup_boundaries()
 	_setup_controlled_indicator()
 	_setup_tackle_area()
@@ -788,20 +790,19 @@ func _set_ai_frozen(on: bool, keep_active: Node = null) -> void:
 					break
 
 
-## Вратарь соперника в атакуемых человеком воротах (Away, +field_length).
-func _setup_keeper() -> void:
-	var goal_line_z := -field_length   # ворота Home на -field_length
+## Вратарь team в воротах у goal_line_z (сторона-агностичен: keeper_ai всё выводит из goal_line_z).
+func _setup_keeper(team: Team, goal_line_z: float, kit_color: Color) -> CharacterBody3D:
 	var into_field := 1.0 if goal_line_z < 0.0 else -1.0
 	var cfg := PlayerConfig.new()
-	cfg.team_group = &"team_2"
+	cfg.team_group = team.team_group
 	cfg.role = PlayerConfig.Role.GK
-	cfg.kit_color = Color(0.15, 0.7, 0.15)   # вратарь — зелёный
+	cfg.kit_color = kit_color
 	cfg.spawn_pos = Vector3(0, 0.5, goal_line_z + into_field * 0.5)
-	cfg.display_name = "Keeper"
+	cfg.display_name = "Keeper_" + str(team.team_group)
 	cfg.ai_script = preload("res://scripts/ai/keeper_ai.gd")
 	cfg.connect_action_signals = false        # keeper_ai сам коннектит visual.action_contact
 	cfg.locomotion_style = PlayerVisual.LOCO_STYLE_KEEPER
-	var k := PlayerFactory.spawn(cfg, _team_away)
+	var k := PlayerFactory.spawn(cfg, team)
 	var kb: Node = k.brain()                    # keeper теперь Brain-компонент
 	# --- keeper-специфичные узлы (не входят в общий player.tscn) — на ТЕЛО (transform) ---
 	var save_area := Area3D.new()
@@ -823,8 +824,18 @@ func _setup_keeper() -> void:
 	kb.save_area = save_area
 	kb.hold_point = hold_point
 	kb.manager = self
-	_keeper = k
-	_keeper_brain = kb
+	return k
+
+## Вратарь команды, ЗАЩИЩАЮЩЕЙ ворота у goal_line_z. Защищающая команда — та, чей
+## attack_z_sign == -signf(goal_line_z) (team_1 атакует -Z → защищает +Z; team_2 наоборот).
+## Без хардкода стороны/команды. null, если у нужной команды нет вратаря.
+func _keeper_at(goal_line_z: float) -> CharacterBody3D:
+	var want_sign := -signf(goal_line_z)
+	if is_equal_approx(_team_home.attack_z_sign, want_sign):
+		return _team_home.keeper()
+	if is_equal_approx(_team_away.attack_z_sign, want_sign):
+		return _team_away.keeper()
+	return null
 
 
 func _setup_away_player() -> void:
