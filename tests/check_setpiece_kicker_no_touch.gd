@@ -30,7 +30,7 @@ func _process(delta: float) -> bool:
 				if _corner == null:
 					print("CHECK FAIL: нет узла CornerController")
 					return true
-				_corner.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
+				_corner.start(_mm.controlled_player, -_mm.field_length)
 				_kicker = _corner._kicker
 				_spot = _corner._spot
 				_stage = 1

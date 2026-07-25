@@ -41,7 +41,7 @@ func _process(delta: float) -> bool:
 				if _corner == null:
 					print("CHECK FAIL: нет узла CornerController"); return true
 				_fake = FakeKickerIntent.new()
-				_corner.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z, _fake)
+				_corner.start(_mm.controlled_player, -_mm.field_length, _fake)
 				if not _mm.is_corner_active():
 					print("CHECK FAIL: режим углового не включился"); return true
 				_state = 1

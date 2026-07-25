@@ -24,7 +24,7 @@ func _count_fk_bodies() -> int:
 
 func _start_kick() -> void:
 	_mm.controlled_player.global_position = Vector3(5.0, 0.5, -35.0)
-	_fk.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
+	_fk.start(_mm.controlled_player, -_mm.field_length)
 
 func _fail(msg: String) -> void:
 	print("CHECK FAIL: ", msg)

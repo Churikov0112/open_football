@@ -40,13 +40,11 @@ var _presentation: SetPiecePresentation
 var _keeper_intent: KeeperIntent
 var _keeper_marker: MeshInstance3D
 
-func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
+func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
 	_ball = ball
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
-	_keeper = keeper
-	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_pen_rng.randomize()
 	_build_reticle()
 	_build_keeper_marker()
@@ -73,6 +71,8 @@ func start_single(kicker: CharacterBody3D, goal_line_z: float, intent: KickerInt
 		return
 	_kicker = kicker
 	_goal_line_z = goal_line_z
+	_keeper = _manager._keeper_at(goal_line_z)
+	_keeper_brain = _keeper.brain() if _keeper != null and _keeper.has_method(&"brain") else null
 	_into = -1.0 if goal_line_z > 0.0 else 1.0
 	_foot = FootballConstants.PEN_DEFAULT_FOOT
 	release_after_strike = true

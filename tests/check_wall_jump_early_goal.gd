@@ -31,7 +31,7 @@ func _tick() -> void:
 		_fail("нет FreeKickController"); return
 	var kicker: Node3D = _mm.get(&"controlled_player")
 	kicker.global_position = Vector3(5.0, 0.5, -35.0)
-	_fk.start(kicker, _mm._keeper_brain.goal_line_z)
+	_fk.start(kicker, -_mm.field_length)
 	# _setup() уже отработал синхронно — стенка заспавнена.
 	var wall_bodies: Array = _fk.get(&"_wall_bodies")
 	if wall_bodies.is_empty():

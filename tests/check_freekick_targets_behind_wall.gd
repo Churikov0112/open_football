@@ -22,7 +22,7 @@ func _process(delta: float) -> bool:
 			if _fk == null:
 				print("CHECK FAIL: нет узла FreeKickController")
 				return true
-			var gz: float = _mm._keeper_brain.goal_line_z
+			var gz: float = -_mm.field_length
 			# Близкий штрафной: бьющий в 20 м от ворот (стенка ~10.85 м от ворот).
 			_mm.controlled_player.global_position = Vector3(2.0, 0.5, gz + (20.0 if gz < 0.0 else -20.0))
 			_fk.start(_mm.controlled_player, gz)
@@ -55,7 +55,7 @@ func _process(delta: float) -> bool:
 				var er: Vector3 = pos[pos.size() - 1]
 				for grp in ["team_1", "team_2"]:
 					for n in _mm.get_tree().get_nodes_in_group(grp):
-						if n == _fk._kicker or n == _mm._keeper or not (n is Node3D) or _fk._is_wall_body(n):
+						if n == _fk._kicker or n.is_in_group("role_gk") or not (n is Node3D) or _fk._is_wall_body(n):
 							continue
 						var adj: Vector3 = FreeKickLogic.push_out_of_cone(n.global_position, spot, el, er, FootballConstants.FK_CONE_MARGIN_DEG)
 						if not adj.is_equal_approx(n.global_position):

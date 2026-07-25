@@ -21,14 +21,14 @@ func _tick() -> void:
 	_frames += 1
 	if _frames < 15:
 		return  # дать сцене осесть
-	var keeper: Node3D = _mm.get(&"_keeper")
-	var kbrain = _mm.get(&"_keeper_brain")
+	var keeper: Node3D = _mm._keeper_at(-_mm.field_length)
+	var kbrain = keeper.brain() if keeper != null else null
 	if keeper == null or kbrain == null:
 		return
 	if not _started:
 		_started = true
 		keeper.velocity = Vector3(0, 0, 9.0)   # вратарь выходил навстречу удару в момент нажатия P
-		_mm.get_node("PenaltyController").start_single(_mm.controlled_player, kbrain.goal_line_z)
+		_mm.get_node("PenaltyController").start_single(_mm.controlled_player, -_mm.field_length)
 		_frames = 100                          # окно наблюдения после старта пенальти
 		return
 	if _frames <= 100 + 90:

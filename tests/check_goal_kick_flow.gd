@@ -21,7 +21,7 @@ func _process(delta: float) -> bool:
 		if _gk == null:
 			print("CHECK FAIL: нет узла GoalKickController")
 			return true
-		_gk.start(_mm._keeper, _mm._keeper_brain.goal_line_z)
+		_gk.start(_mm._keeper_at(-_mm.field_length), -_mm.field_length)
 		_started = true
 		if not _mm.is_goal_kick_active():
 			print("CHECK FAIL: goal_kick-режим не включился после start")

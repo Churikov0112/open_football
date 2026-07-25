@@ -47,13 +47,11 @@ var _short_mate: CharacterBody3D     # партнёр под короткую о
 var _short_called: bool = false
 var _short_target: Vector3 = Vector3.ZERO
 
-func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
+func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
 	_ball = ball
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
-	_keeper = keeper
-	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_cn_rng.randomize()
 
 func is_active() -> bool:
@@ -65,6 +63,8 @@ func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = n
 		return
 	_kicker = kicker
 	_goal_line_z = goal_line_z
+	_keeper = _manager._keeper_at(goal_line_z)
+	_keeper_brain = _keeper.brain() if _keeper != null and _keeper.has_method(&"brain") else null
 	_into = -signf(goal_line_z)
 	_side = CornerLogic.side_for_player(kicker.global_position.x)
 	_foot = CornerLogic.foot_for_side(_side)

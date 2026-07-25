@@ -36,7 +36,7 @@ func _process(delta: float) -> bool:
 					print("CHECK FAIL: нет узла FreeKickController"); return true
 				_mm.controlled_player.global_position = Vector3(5.0, 0.5, -35.0)
 				_fake = FakeKickerIntent.new()
-				_fk.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z, _fake)
+				_fk.start(_mm.controlled_player, -_mm.field_length, _fake)
 				if not _mm.is_free_kick_active():
 					print("CHECK FAIL: режим штрафного не включился"); return true
 				_state = 1

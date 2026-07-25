@@ -37,13 +37,11 @@ var _contact_connected := false
 var _intent: KickerIntent
 var _presentation: SetPiecePresentation
 
-func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
+func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
 	_ball = ball
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
-	_keeper = keeper
-	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 
 func is_active() -> bool:
 	return _phase != Phase.IDLE
@@ -53,6 +51,8 @@ func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = n
 	if _phase != Phase.IDLE or kicker == null:
 		return
 	_kicker = kicker
+	_keeper = kicker   # удар от ворот бьёт САМ вратарь (не защищающийся)
+	_keeper_brain = kicker.brain() if kicker != null and kicker.has_method(&"brain") else null
 	_goal_line_z = goal_line_z
 	_into = -signf(goal_line_z)   # в поле от линии ворот
 	_foot = FootballConstants.GK_DEFAULT_FOOT

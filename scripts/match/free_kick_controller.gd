@@ -45,13 +45,11 @@ var _ball_in_flight_watch := false
 var _watch_elapsed: float = 0.0
 var _hidden_dummies: Array = []      # debug-болванки, спрятанные на время штрафного
 
-func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
+func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
 	_ball = ball
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
-	_keeper = keeper
-	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_fk_rng.randomize()
 
 func is_active() -> bool:
@@ -63,6 +61,8 @@ func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = n
 		return
 	_kicker = kicker
 	_goal_line_z = goal_line_z
+	_keeper = _manager._keeper_at(goal_line_z)
+	_keeper_brain = _keeper.brain() if _keeper != null and _keeper.has_method(&"brain") else null
 	_foot = FootballConstants.FK_DEFAULT_FOOT
 	_intent = intent if intent != null else _default_intent()
 	_presentation = presentation if presentation != null else SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)

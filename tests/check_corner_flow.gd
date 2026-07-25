@@ -22,7 +22,7 @@ func _process(delta: float) -> bool:
 		if _corner == null:
 			print("CHECK FAIL: нет узла CornerController")
 			return true
-		_corner.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
+		_corner.start(_mm.controlled_player, -_mm.field_length)
 		_started = true
 		if not _mm.is_corner_active():
 			print("CHECK FAIL: режим углового не включился после start")

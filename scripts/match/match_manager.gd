@@ -56,8 +56,6 @@ var _tackle_clean: bool = true
 var _hit_processed: bool = false
 var _tackle_recovery_timer: float = 0.0
 var _tackle_area: Area3D
-var _keeper: CharacterBody3D
-var _keeper_brain: Node
 var _tackle_foul_position: Vector3 = Vector3.ZERO
 var _tackle_fouled_player: Node3D
 
@@ -137,9 +135,8 @@ func _ready() -> void:
 	_setup_away_teammate()
 	_setup_home_player()
 	_setup_teammate()
-	_keeper = _setup_keeper(_team_away, -field_length, Color(0.15, 0.7, 0.15))   # team_2, зелёный (как было)
-	_keeper_brain = _keeper.brain()
-	_setup_keeper(_team_home, field_length, Color(0.85, 0.55, 0.1))              # team_1, оранжевый (новый)
+	_setup_keeper(_team_away, -field_length, Color(0.15, 0.7, 0.15))   # team_2, зелёный (как было)
+	_setup_keeper(_team_home, field_length, Color(0.85, 0.55, 0.1))    # team_1, оранжевый (новый)
 	_setup_boundaries()
 	_setup_controlled_indicator()
 	_setup_tackle_area()
@@ -148,19 +145,19 @@ func _ready() -> void:
 	_penalty = preload("res://scripts/match/penalty_controller.gd").new()
 	_penalty.name = "PenaltyController"
 	add_child(_penalty)
-	_penalty.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_penalty.setup(self, ball, camera_pivot, power_bar)
 	_free_kick = preload("res://scripts/match/free_kick_controller.gd").new()
 	_free_kick.name = "FreeKickController"
 	add_child(_free_kick)
-	_free_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_free_kick.setup(self, ball, camera_pivot, power_bar)
 	_corner = preload("res://scripts/match/corner_controller.gd").new()
 	_corner.name = "CornerController"
 	add_child(_corner)
-	_corner.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_corner.setup(self, ball, camera_pivot, power_bar)
 	_goal_kick = preload("res://scripts/match/goal_kick_controller.gd").new()
 	_goal_kick.name = "GoalKickController"
 	add_child(_goal_kick)
-	_goal_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_goal_kick.setup(self, ball, camera_pivot, power_bar)
 	_throw_in = preload("res://scripts/match/throw_in_controller.gd").new()
 	_throw_in.name = "ThrowInController"
 	add_child(_throw_in)
@@ -176,9 +173,9 @@ func _ready() -> void:
 	_referee = MatchReferee.new()
 	_referee.name = "MatchReferee"
 	add_child(_referee)
-	# team_defending_neg: команда, защищающая ворота на -Z (там стоит _keeper). Выводим из его
-	# группы, чтобы не хардкодить team_1/team_2.
-	var tdn := 2 if (_keeper != null and _keeper.is_in_group("team_2")) else 1
+	# team_defending_neg: команда, защищающая ворота на -Z = та, чей attack_z_sign > 0
+	# (team_2 при текущей расстановке). Выводим из ростера, без singleton-вратаря.
+	var tdn := 2 if _team_away.attack_z_sign > 0.0 else 1
 	_referee.setup(self, ball, tdn)
 	# Старт матча: жеребьёвка, кто разводит первым — реальный кикофф вместо старого «мяч человеку
 	# в ноги напрямую». KickoffLogic.coin_flip — чистая функция (тестируется с фиксированным seed
@@ -1035,16 +1032,16 @@ func _physics_process(delta: float) -> void:
 		return
 	# Пенальти по P — только из чистого состояния: во время празднования гола ждёт отложенный
 	# _reset_ball() (телепорт игроков/мяча), запуск пенальти в это окно ломает расстановку.
-	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null and not _celebrating:
-		_penalty.start_single(controlled_player, _keeper_brain.goal_line_z)
+	if Input.is_action_just_pressed(&"penalty_debug") and _keeper_at(-field_length) != null and not _celebrating:
+		_penalty.start_single(controlled_player, -field_length)
 		return
 	# K: ИИ бьёт пенальти, человек управляет вратарём (выбор зоны нырка стиком). Бьющий — то же тело,
 	# что бьёт по P (controlled_player), но с AIKickerIntent; презентация — роль KEEPER (камера как у
 	# пенальти + cyan-маркер над вратарём, без ретикла/power_bar бьющего).
-	if Input.is_action_just_pressed(&"keeper_dive_debug") and _keeper != null and not _celebrating:
+	if Input.is_action_just_pressed(&"keeper_dive_debug") and _keeper_at(-field_length) != null and not _celebrating:
 		var kicker_rng := RandomNumberGenerator.new()
 		kicker_rng.randomize()
-		_penalty.start_single(controlled_player, _keeper_brain.goal_line_z,
+		_penalty.start_single(controlled_player, -field_length,
 			AIKickerIntent.new(kicker_rng),
 			SetPiecePresentation.new(SetPiecePresentation.Role.KEEPER),
 			HumanKeeperIntent.new({"aim_lat": [&"move_left", &"move_right"], "aim_vert": [&"move_forward", &"move_back"]}))
@@ -1054,25 +1051,25 @@ func _physics_process(delta: float) -> void:
 		_free_kick.update(delta)
 		return
 	# Штрафной по F — только из чистого состояния (не во время празднования гола).
-	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper != null and not _celebrating:
-		_free_kick.start(controlled_player, _keeper_brain.goal_line_z)
+	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper_at(-field_length) != null and not _celebrating:
+		_free_kick.start(controlled_player, -field_length)
 		return
 	# Угловой-режим: всё ведёт контроллер, обычные системы заглушены.
 	if _corner_active:
 		_corner.update(delta)
 		return
 	# Угловой по C — только из чистого состояния (не во время празднования гола).
-	if Input.is_action_just_pressed(&"corner_debug") and _keeper != null and not _celebrating:
-		_corner.start(controlled_player, _keeper_brain.goal_line_z)
+	if Input.is_action_just_pressed(&"corner_debug") and _keeper_at(-field_length) != null and not _celebrating:
+		_corner.start(controlled_player, -field_length)
 		return
 	# Удар от ворот — свой контроллер, обычные системы заглушены.
 	if _goal_kick_active:
 		_goal_kick.update(delta)
 		return
 	# Удар от ворот по G — только из чистого состояния (не во время празднования гола). Бьющий —
-	# ВРАТАРЬ (_keeper), не controlled_player: человек драйвит вратаря на время розыгрыша.
-	if Input.is_action_just_pressed(&"goal_kick_debug") and _keeper != null and not _celebrating:
-		_goal_kick.start(_keeper, _keeper_brain.goal_line_z)
+	# ВРАТАРЬ (team_2 у -Z), не controlled_player: человек драйвит вратаря на время розыгрыша.
+	if Input.is_action_just_pressed(&"goal_kick_debug") and _keeper_at(-field_length) != null and not _celebrating:
+		_goal_kick.start(_keeper_at(-field_length), -field_length)
 		return
 	# Вброс из аута — свой контроллер, обычные системы заглушены.
 	if _throw_in_active:
