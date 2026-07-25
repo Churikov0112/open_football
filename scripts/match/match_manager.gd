@@ -837,7 +837,7 @@ func _setup_away_player() -> void:
 	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
 	cfg.connect_action_signals = true
 	cfg.extra_fields = {
-		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
+		&"home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),   # team_2 атакует +Z (Away)
 	}
 	PlayerFactory.spawn(cfg, _team_away)
 	# Тестовая стенка из бездействующих соперников (только пока соперник отключён флагом) —
@@ -859,7 +859,7 @@ func _setup_away_teammate() -> void:
 	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
 	cfg.connect_action_signals = true
 	cfg.extra_fields = {
-		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
+		&"home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),   # team_2 атакует +Z (Away)
 	}
 	PlayerFactory.spawn(cfg, _team_away)
 
@@ -900,7 +900,7 @@ func _make_dummy_opponent(pos: Vector3) -> void:
 	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
 	cfg.connect_action_signals = true
 	cfg.extra_fields = {
-		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
+		&"home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),   # team_2 атакует +Z (Away)
 	}
 	PlayerFactory.spawn(cfg, _team_away)
 
