@@ -636,3 +636,5 @@ const KICKOFF_CHARGE_MAX_TIME := 0.6    # с
 const KICKOFF_CAM_BACK := 4.5
 const KICKOFF_CAM_HEIGHT := 2.2
 const KICKOFF_CAM_LOOK_Y := 1.2
+const AI_KICKOFF_THINK_TIME := 0.6      # с, пауза обдумывания перед довортом
+const AI_KICKOFF_CHARGE_RATIO := 0.6    # доля от KICKOFF_CHARGE_MAX_TIME, которую ИИ держит заряд
