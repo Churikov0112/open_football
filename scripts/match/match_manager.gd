@@ -178,10 +178,12 @@ func _ready() -> void:
 	# группы, чтобы не хардкодить team_1/team_2.
 	var tdn := 2 if (_keeper != null and _keeper.is_in_group("team_2")) else 1
 	_referee.setup(self, ball, tdn)
-	# Стартовая расстановка: человек с мячом в центре (соперник глубоко — см. _setup_away_player).
-	ball.global_position = _human_player.global_position + Vector3(0, 0.0, -0.6)
-	if ball.has_method(&"set_dribbler"):
-		ball.set_dribbler(_human_player, true)
+	# Старт матча: жеребьёвка, кто разводит первым — реальный кикофф вместо старого «мяч человеку
+	# в ноги напрямую». KickoffLogic.coin_flip — чистая функция (тестируется с фиксированным seed
+	# отдельно, см. check_kickoff_logic.gd); здесь — обычный randomize() для реальной игры.
+	var kickoff_rng := RandomNumberGenerator.new()
+	kickoff_rng.randomize()
+	_dispatch_kickoff(KickoffLogic.coin_flip(kickoff_rng))
 
 
 ## DEBUG: линия-след за мячом. MeshInstance3D + ImmediateMesh, перестраивается каждый кадр
@@ -521,14 +523,16 @@ func _setup_goals() -> void:
 				return
 			if body == ball and not _celebrating:
 				_celebrating = true
+				# team_1 (_team_home) атакует −Z (см. _attack_dir_z) → забивает в ворота Home →
+				# team_2 пропустил. Одна и та же g.side задаёт и то, кто забил (счёт), и то, кто
+				# пропустил (исполнитель кикоффа) — вычисляем один раз.
+				var conceding_team := 2 if g.side == "Home" else 1
 				if _referee != null:
-					_referee.report_goal()
+					_referee.report_goal(conceding_team)
 				# Вратаря НЕ замораживаем: у keeper_ai своя обработка празднования (доигрывает
 				# нырок и встаёт в idle ТОЛЬКО по завершении клипа). Заморозка (стоп _physics_process
 				# + лок мотора) обрывала бы это, и вратарь мгновенно вставал в idle-позу посреди нырка.
 				_set_ai_frozen(true, _keeper)   # прочие ИИ стоп в idle
-				# team_1 (_team_home) атакует −Z (см. _attack_dir_z) → забивает в ворота Home.
-				# home_score/away_score считают ГОЛЫ КОМАНДЫ, а не то, чьи ворота пробиты.
 				if g.side == "Home":
 					home_score += 1
 				else:
@@ -537,7 +541,7 @@ func _setup_goals() -> void:
 				var net = _goal_nets.get(g.side)
 				if net:
 					net.start_sim()
-				_celebrate_then_reset(net)
+				_celebrate_then_reset(net, conceding_team)
 		)
 
 
@@ -2101,16 +2105,47 @@ func _reset_ball() -> void:
 	_sync_ai_controllers()
 
 
-## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через
-## NET_CELEBRATION_TIME сброс мяча и остановка симуляции. Не await-им игроков —
-## по решению ничего не замораживаем. Не await-ит вызывающий (fire-and-forget).
-func _celebrate_then_reset(net) -> void:
+## Минимальный кикофф-специфичный диспетчер (НЕ полноценный генерик-диспетчер по сигналу
+## restart_awarded для всех шести стандартов — та работа остаётся будущим этапом роадмапа).
+## kicking_team=1 (человек) → Human-дефолт + Role.KICKER (камера/бар владеет контроллер).
+## kicking_team=2 → AIKickoffIntent + Role.NONE («наблюдатель» — камера не трогается).
+func _dispatch_kickoff(kicking_team: int) -> void:
+	if _kickoff == null:
+		return
+	var team: Team = _team_home if kicking_team == 1 else _team_away
+	var outfield: Array = team.outfield()
+	if outfield.size() < 2:
+		return   # некому пасовать — отменяем
+	var intent: KickerIntent = null
+	var presentation: SetPiecePresentation
+	if kicking_team == 1:
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
+	else:
+		# KickoffLogic.kicker_placement — ЕДИНАЯ функция, её же зовёт KickoffController._setup()
+		# (Task 3) — ИИ должен знать финальную геометрию ДО того, как контроллер её выставит
+		# (intent передаётся в start() раньше, чем _setup() успевает что-либо разместить), поэтому
+		# диспетчер обязан вычислить её сам, но БЕЗ дублирования формулы — общая чистая функция.
+		var placement := KickoffLogic.kicker_placement(team.attack_z_sign, FootballConstants.KICKOFF_KICKER_OFFSET, 0.5)
+		var kicker_pos: Vector3 = placement["pos"]
+		var base_heading: Vector3 = placement["base_heading"]
+		var partner_body: Node3D = outfield[1]
+		var partner_pos: Vector3 = partner_body.get_meta(&"home_pos", partner_body.global_position)
+		partner_pos = KickoffLogic.clamp_to_own_half(partner_pos, team.attack_z_sign, FootballConstants.KICKOFF_HALF_MARGIN)
+		intent = AIKickoffIntent.new(kicker_pos, base_heading, partner_pos)
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.NONE)
+	_kickoff.start(kicking_team, intent, presentation)
+
+
+## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через NET_CELEBRATION_TIME —
+## настоящий кикофф (пропустившая команда) вместо старого простого сброса мяча в центр.
+## Не await-им игроков — по решению ничего не замораживаем. Не await-ит вызывающий (fire-and-forget).
+func _celebrate_then_reset(net, conceding_team: int) -> void:
 	await get_tree().create_timer(FootballConstants.NET_CELEBRATION_TIME).timeout
-	_reset_ball()
 	if net and is_instance_valid(net):
 		net.stop_sim()
 	_celebrating = false
 	_set_ai_frozen(false, _keeper)   # возвращаем ИИ в игру (вратаря не трогали — он сам собой управлял)
+	_dispatch_kickoff(conceding_team)
 
 
 func _poll_ai_tackles() -> void:

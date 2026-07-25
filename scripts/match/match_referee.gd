@@ -142,11 +142,14 @@ func _interim_award(team: int, spot: Vector3) -> void:
 		_ball.set_dribbler(nodes[idx], true)
 		print("[REFEREE] мяч → ", nodes[idx].name, " (team_", team, ") на точке ", spot)
 
-## Гол (зовёт менеджер из goal-area). Интерим: только сигнал/лог — сам кикофф пока = существующий
-## _reset_ball менеджера (Этап 1 заменит настоящим кикоффом).
-func report_goal() -> void:
-	print("[REFEREE] ГОЛ → кикофф (интерим: сброс мяча существующим _reset_ball)")
-	restart_awarded.emit(RefereeLogic.Restart.KICKOFF, 0, Vector3.ZERO)
+## Гол (зовёт менеджер из goal-area с уже вычисленной пропустившей командой — атрибуция по тому,
+## в какие ворота влетел мяч, не по last_touch). Эмитит сигнал (для будущих слушателей — напр.
+## RefereeAvatar); фактический запуск кикоффа менеджер делает напрямую через _dispatch_kickoff
+## после окончания празднования (см. _celebrate_then_reset) — не через подписку на этот сигнал,
+## т.к. кикофф не должен стартовать, пока идёт 5-секундная церемония гола.
+func report_goal(conceding_team: int) -> void:
+	print("[REFEREE] ГОЛ → кикофф team_", conceding_team)
+	restart_awarded.emit(RefereeLogic.Restart.KICKOFF, conceding_team, Vector3.ZERO)
 
 ## Фол подката (зовёт менеджер). Интерим: сигнал foul_called + restart_awarded, без запуска
 ## контроллера штрафного/пенальти (Этап 2). Заглушку владения НЕ делаем — фол-геометрия и
