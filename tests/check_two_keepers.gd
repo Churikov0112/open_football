@@ -29,6 +29,23 @@ func _process(delta: float) -> bool:
 	if k_home.global_position.z > 0.0 or k_away.global_position.z < 0.0:
 		print("CHECK FAIL: вратари не у своих ворот (z_home=", k_home.global_position.z,
 			" z_away=", k_away.global_position.z, ")"); quit(1); return true
-	print("CHECK PASS: two keepers (spawn + _keeper_at)")
+
+	# --- Задача 2: заморозка ИИ НЕ трогает вратарей ---
+	_mm._set_ai_frozen(true)
+	if not _mm._ai_of(k_home).is_physics_processing():
+		print("CHECK FAIL: заморозка вырубила team_2-вратаря"); quit(1); return true
+	if not _mm._ai_of(k_away).is_physics_processing():
+		print("CHECK FAIL: заморозка вырубила team_1-вратаря"); quit(1); return true
+	_mm._set_ai_frozen(false)
+
+	# --- Задача 2: _reset_ball НЕ телепортит вратарей (players() включает team_1-вратаря) ---
+	var moved := Vector3(5.0, 0.5, 40.0)
+	k_away.global_position = moved
+	_mm._reset_ball()
+	if k_away.global_position.distance_to(moved) > 0.1:
+		print("CHECK FAIL: _reset_ball сдвинул team_1-вратаря с ", moved,
+			" на ", k_away.global_position); quit(1); return true
+
+	print("CHECK PASS: two keepers + freeze/reset skip role_gk")
 	quit(0)
 	return true

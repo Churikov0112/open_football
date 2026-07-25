@@ -534,7 +534,7 @@ func _setup_goals() -> void:
 				# Вратаря НЕ замораживаем: у keeper_ai своя обработка празднования (доигрывает
 				# нырок и встаёт в idle ТОЛЬКО по завершении клипа). Заморозка (стоп _physics_process
 				# + лок мотора) обрывала бы это, и вратарь мгновенно вставал в idle-позу посреди нырка.
-				_set_ai_frozen(true, _keeper)   # прочие ИИ стоп в idle
+				_set_ai_frozen(true)   # прочие ИИ стоп в idle (вратари role_gk исключены внутри)
 				if g.side == "Home":
 					home_score += 1
 				else:
@@ -749,7 +749,7 @@ func assign_controlled_player(p: CharacterBody3D) -> void:
 ## ТОЛЬКО скрипта ИИ не мешало мотору доигрывать последнее заданное направление движения —
 ## соперник продолжал бежать к мячу/игроку сквозь всю расстановку.
 func set_field_ai_active(on: bool) -> void:
-	_set_ai_frozen(not on, _keeper)
+	_set_ai_frozen(not on)
 
 
 ## Останавливаем/возвращаем ИИ-игроков (team_1+team_2) в чистый idle. `keep_active` (если
@@ -768,12 +768,12 @@ func set_field_ai_active(on: bool) -> void:
 ## заморозке, но ставший controlled_player к моменту разморозки, остался бы залоченным
 ## навсегда (мотор игнорирует ввод, маркер выбран, но тело не бежит). Разморозка чужого/не-AI
 ## тела безвредна — его собственный скрипт self-гейтится по `controlled_player == self`.
-func _set_ai_frozen(on: bool, keep_active: Node = null) -> void:
+func _set_ai_frozen(on: bool) -> void:
 	var bodies := get_tree().get_nodes_in_group("team_1")
 	bodies += get_tree().get_nodes_in_group("team_2")
 	for n in bodies:
-		if not is_instance_valid(n) or n == keep_active:
-			continue   # keep_active (вратарь) не трогаем НИКОГДА — сам управляет своим локом/мотором
+		if not is_instance_valid(n) or n.is_in_group("role_gk"):
+			continue   # вратари (role_gk) НИКОГДА не трогаем — сами управляют своим локом/мотором
 		if on and n == controlled_player:
 			continue
 		_ai_of(n).set_physics_process(not on)
@@ -1259,8 +1259,8 @@ func _handle_dribbling() -> void:
 	var pickers := get_tree().get_nodes_in_group("team_1")
 	pickers += get_tree().get_nodes_in_group("team_2")
 	for p in pickers:
-		if not is_instance_valid(p) or p == _keeper:
-			continue
+		if not is_instance_valid(p) or p.is_in_group("role_gk"):
+			continue   # вратари (оба) не подбирают бесхозный мяч как полевые
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
 			ball.set_dribbler(p)
@@ -2085,9 +2085,11 @@ func _on_ball_collision(body: Node) -> void:
 		ball.clear_curl()
 	# Мяч коснулся вратаря → ловля/отбой (а не блок): иначе block_in_flight гасит мяч, и он
 	# закатывается в ворота. Физический контакт — надёжный триггер сейва.
-	if body == _keeper and _keeper_brain != null and _keeper_brain.has_method(&"on_ball_contact"):
-		print("[MATCH] ball hit KEEPER capsule")
-		_keeper_brain.on_ball_contact()
+	if body.is_in_group("role_gk") and body.has_method(&"brain"):
+		var kb: Node = body.brain()
+		if kb != null and kb.has_method(&"on_ball_contact"):
+			print("[MATCH] ball hit KEEPER capsule")
+			kb.on_ball_contact()
 		return
 	# Блок: летящий мяч коснулся игрока (защитник на пути / попал в своего). Гасим и роняем
 	# мяч в OPEN (без мгновенной передачи владения — дальше обычная борьба за подбор).
@@ -2107,8 +2109,8 @@ func _reset_ball() -> void:
 	ball.global_position = Vector3(0, 0.5, -0.6)
 
 	# Возврат игроков на стартовые позиции — по ростеру обеих команд (home_pos из фабрики).
-	# Вратарь НЕ сбрасывается (как и раньше) — он держит свою позицию через keeper_ai.
-	for body in _team_home.players() + _team_away.outfield():
+	# Вратари (role_gk) НЕ сбрасываются — держат свои позиции через keeper_ai. outfield() их исключает.
+	for body in _team_home.outfield() + _team_away.outfield():
 		if is_instance_valid(body):
 			body.global_position = body.get_meta(&"home_pos", body.global_position)
 
@@ -2155,7 +2157,7 @@ func _celebrate_then_reset(net, conceding_team: int) -> void:
 	if net and is_instance_valid(net):
 		net.stop_sim()
 	_celebrating = false
-	_set_ai_frozen(false, _keeper)   # возвращаем ИИ в игру (вратаря не трогали — он сам собой управлял)
+	_set_ai_frozen(false)   # возвращаем ИИ в игру (вратари role_gk не трогались — сами собой управляют)
 	_dispatch_kickoff(conceding_team)
 
 
