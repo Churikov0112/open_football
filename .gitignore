@@ -1,2 +1,10 @@
 # Raw Mixamo FBX — не распространяем (public/open-source); коммитим только собранный .glb
 assets/models/mixamo_src/
+
+# Godot editor/import cache — регенерируется при импорте, не коммитим
+.godot/
+
+# Локальные инструменты (Claude Code / агенты) — не часть исходников проекта
+.claude/
+.agents/
+skills-lock.json
