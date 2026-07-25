@@ -93,7 +93,10 @@ func _setup() -> void:
 	for body in defending.outfield():
 		_place_supporting(body, defending.attack_z_sign, true)
 	_place_kicker()
-	_manager.assign_controlled_player(_kicker)
+	# Управление кикером забираем ТОЛЬКО когда бьёт локальный человек (Role.KICKER). При ИИ-кикоффе
+	# (Role.NONE) человек продолжает управлять своим полевым — иначе управление уходит на чужое тело.
+	if _presentation.owns_hud():
+		_manager.assign_controlled_player(_kicker)
 	_charging = false
 	_charge = 0.0
 	_locked = false
@@ -205,11 +208,16 @@ func _on_kicker_contact(_action: String) -> void:
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
 		km.set_control_locked(false)
-	if is_instance_valid(_partner) and _manager.has_method(&"assign_controlled_player"):
-		_manager.assign_controlled_player(_partner)
-	_release()
-	if is_instance_valid(_partner) and _manager.has_method(&"begin_pass_receive"):
-		_manager.begin_pass_receive(_partner)
+	# Передача управления на партнёра + receive-assist — только при человеческом кикоффе (Role.KICKER).
+	# При ИИ-кикоффе (Role.NONE) партнёр — красное тело, управлять им человек не должен.
+	if _presentation.owns_hud():
+		if is_instance_valid(_partner) and _manager.has_method(&"assign_controlled_player"):
+			_manager.assign_controlled_player(_partner)
+		_release()
+		if is_instance_valid(_partner) and _manager.has_method(&"begin_pass_receive"):
+			_manager.begin_pass_receive(_partner)
+	else:
+		_release()
 
 func _release() -> void:
 	if is_instance_valid(_kicker):

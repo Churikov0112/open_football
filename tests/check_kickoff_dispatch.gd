@@ -47,7 +47,14 @@ func _process(delta: float) -> bool:
 				if not (is_ai and role_none):
 					print("CHECK FAIL: team_2 kickoff — is_ai=", is_ai, " role_none=", role_none)
 					return true
+				# Регрессия: при ИИ-кикоффе (Role.NONE) управление НЕ должно уходить на тело team_2 —
+				# человек продолжает управлять своим полевым (баг: кикер/партнёр красных становились
+				# controlled_player). Проверяем и до, и после contact-фазы розыгрыша.
+				if _mm.controlled_player != null and _mm.controlled_player.is_in_group(&"team_2"):
+					print("CHECK FAIL: ИИ-кикофф отдал управление телу team_2 (SETUP)"); return true
 				kickoff_node._fire_charge(0.7)   # сразу разрешаем розыгрыш, не ждём таймингов ИИ
+				if _mm.controlled_player != null and _mm.controlled_player.is_in_group(&"team_2"):
+					print("CHECK FAIL: ИИ-кикофф отдал управление телу team_2 (после удара)"); return true
 				_state = 2
 		2:
 			if not _mm.is_kickoff_active() and _elapsed > 1.5:
