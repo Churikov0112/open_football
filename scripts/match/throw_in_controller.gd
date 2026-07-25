@@ -25,6 +25,8 @@ var _charge: float = 0.0
 var _pending_ratio: float = 1.0
 var _locked: bool = false                   # A нажата (направление зафиксировано)
 var _contact_connected := false
+var _intent: KickerIntent
+var _presentation: SetPiecePresentation
 
 func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
@@ -36,9 +38,11 @@ func is_active() -> bool:
 	return _phase != Phase.IDLE
 
 ## Старт вброса: точка = проекция мяча на ближайшую боковую линию; бьющий = ближайший team_1.
-func start() -> void:
+func start(intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
 	if _phase != Phase.IDLE:
 		return
+	_intent = intent if intent != null else _default_intent()
+	_presentation = presentation if presentation != null else SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
 	_spot = ThrowInLogic.aut_point(_ball.global_position,
 		FootballConstants.HALF_FIELD_WIDTH, FootballConstants.BALL_RADIUS)
 	_into = ThrowInLogic.base_heading(_spot.x)
@@ -48,6 +52,13 @@ func start() -> void:
 		return   # некому вбрасывать — отменяем старт
 	_opp_group = &"team_2" if _thrower.is_in_group("team_1") else &"team_1"
 	_setup()
+
+## Human-дефолт источника намерения вбрасывающего (ровно прежние Input-чтения контроллера).
+func _default_intent() -> KickerIntent:
+	return HumanKickerIntent.new({
+		"aim_lat": [&"move_left", &"move_right"],
+		"charges": [[&"pass_short", 0]],
+	})
 
 func _setup() -> void:
 	_phase = Phase.SETUP
@@ -121,7 +132,7 @@ func update(delta: float) -> void:
 
 func _aim_update(delta: float) -> void:
 	if not _locked:
-		var stick_x := Input.get_axis(&"move_left", &"move_right")
+		var stick_x := _intent.aim_axis().x
 		if absf(stick_x) > 0.15:
 			_heading = FreeKickLogic.rotate_heading(_heading, _into, stick_x,
 				FootballConstants.THROW_AIM_SPEED, delta, FootballConstants.THROW_AIM_ARC)
@@ -129,17 +140,18 @@ func _aim_update(delta: float) -> void:
 		var tm := PlayerMotor.find_on(_thrower)
 		if tm != null:
 			tm.set_face_direction(_heading)
-		if Input.is_action_just_pressed(&"pass_short"):
+		if _intent.charge_start_variant() >= 0:
 			_start_charge()
 	if _charging:
 		_charge += delta
 		var ratio := clampf(_charge / FootballConstants.THROW_CHARGE_MAX_TIME, 0.0, 1.0)
-		_power_bar.visible = true
-		_power_bar.value = ratio
-		var fill := _power_bar.get_theme_stylebox("fill")
-		if fill:
-			fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-		if ratio >= 1.0 or not Input.is_action_pressed(&"pass_short"):
+		if _presentation.owns_hud():
+			_power_bar.visible = true
+			_power_bar.value = ratio
+			var fill := _power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		if ratio >= 1.0 or _intent.charge_committed():
 			_fire_charge(ratio)
 
 ## Коммит: направление фиксируется, начинается набор силы.
@@ -150,7 +162,8 @@ func _start_charge() -> void:
 
 func _fire_charge(ratio: float) -> void:
 	_charging = false
-	_power_bar.visible = false
+	if _presentation.owns_hud():
+		_power_bar.visible = false
 	_pending_ratio = ratio
 	_begin_strike()
 
@@ -210,6 +223,8 @@ func _release() -> void:
 ## Фикс-камера 3-го лица за вбрасывающим (за точкой вдоль -heading), смотрит в поле.
 func _update_camera_pose() -> void:
 	if _phase == Phase.IDLE:
+		return
+	if not _presentation.owns_camera():
 		return
 	var eye := _spot - _heading * FootballConstants.THROW_CAM_BACK + Vector3(0.0, FootballConstants.THROW_CAM_HEIGHT, 0.0)
 	var look := _spot + _heading * FootballConstants.THROW_CAM_AHEAD + Vector3(0.0, FootballConstants.THROW_CAM_LOOK_Y, 0.0)
