@@ -38,6 +38,9 @@ var _goal_kick_cam_pose: Transform3D = Transform3D.IDENTITY
 var _throw_in                                  # ThrowInController
 var _throw_in_active: bool = false
 var _throw_in_cam_pose: Transform3D = Transform3D.IDENTITY
+var _kickoff                                   # KickoffController
+var _kickoff_active: bool = false
+var _kickoff_cam_pose: Transform3D
 var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
 var _third_person_camera: bool = false         # DEBUG: переключение 1/3 — broadcast / вид от 3-го лица
 var _tp_cam_eye: Vector3 = Vector3.ZERO        # сглаженная позиция third-person камеры
@@ -160,6 +163,10 @@ func _ready() -> void:
 	_throw_in.name = "ThrowInController"
 	add_child(_throw_in)
 	_throw_in.setup(self, ball, camera_pivot, power_bar)
+	_kickoff = preload("res://scripts/match/kickoff_controller.gd").new()
+	_kickoff.name = "KickoffController"
+	add_child(_kickoff)
+	_kickoff.setup(self, ball, camera_pivot, power_bar)
 	_action_executor = ActionExecutor.new()
 	_action_executor.name = "ActionExecutor"
 	add_child(_action_executor)
@@ -259,6 +266,7 @@ func _setup_inputs() -> void:
 		&"corner_debug":    {"keys": [KEY_C],     "buttons": [], "axes": []},
 		&"goal_kick_debug": {"keys": [KEY_G],     "buttons": [], "axes": []},
 		&"throw_in_debug":  {"keys": [KEY_T],     "buttons": [], "axes": []},
+		&"kickoff_debug":   {"keys": [KEY_O],     "buttons": [], "axes": []},
 		&"corner_call":     {"keys": [KEY_T],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"foot_left":       {"keys": [KEY_L],     "buttons": [], "axes": []},
 		&"foot_right":      {"keys": [KEY_R],     "buttons": [], "axes": []},
@@ -692,6 +700,18 @@ func set_throw_in_cam_pose(pose: Transform3D) -> void:
 	_throw_in_cam_pose = pose
 
 
+func is_kickoff_active() -> bool:
+	return _kickoff_active
+
+
+func set_kickoff_active(on: bool) -> void:
+	_kickoff_active = on
+
+
+func set_kickoff_cam_pose(pose: Transform3D) -> void:
+	_kickoff_cam_pose = pose
+
+
 ## Включить приём паса для receiver — то же самое, что обычный _fire_pass() делает для
 ## человека-получателя (наведение стика на предсказанную позицию мяча в _handle_player_input
 ## + принудительный трап на любой скорости в _handle_dribbling, минуя BALL_TRAP_MAX_SPEED).
@@ -926,6 +946,8 @@ func _process(delta: float) -> void:
 		camera_pivot.global_transform = _goal_kick_cam_pose
 	elif _throw_in_active:
 		camera_pivot.global_transform = _throw_in_cam_pose
+	elif _kickoff_active and _kickoff.camera_is_owned():
+		camera_pivot.global_transform = _kickoff_cam_pose
 	elif _third_person_camera and controlled_player != null:
 		var forward := -controlled_player.global_transform.basis.z
 		forward.y = 0.0
@@ -1044,6 +1066,15 @@ func _physics_process(delta: float) -> void:
 	# Вброс по T — только из чистого состояния (не во время празднования гола).
 	if Input.is_action_just_pressed(&"throw_in_debug") and not _celebrating:
 		_throw_in.start()
+		return
+	# Кикофф-режим: всё ведёт контроллер, обычные системы заглушены.
+	if _kickoff_active:
+		_kickoff.update(delta)
+		return
+	# Кикофф по O — вручную, всегда team_1 бьёт человеком (быстрое тестирование; реальный
+	# триггер — судья, см. _dispatch_kickoff в Task 5).
+	if Input.is_action_just_pressed(&"kickoff_debug") and not _celebrating:
+		_kickoff.start(1)
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():

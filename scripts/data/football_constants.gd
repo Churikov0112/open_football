@@ -626,3 +626,13 @@ const THROW_CAM_BACK := 4.5           # камера позади вбрасыв
 const THROW_CAM_HEIGHT := 2.2         # высота камеры (м)
 const THROW_CAM_LOOK_Y := 1.2         # высота точки, куда смотрит камера (м)
 const THROW_CAM_AHEAD := 6.0          # как далеко перед точкой вброса смотрит камера (м)
+
+# ── KICKOFF ──────────────────────────────────────────────────────────────────
+const KICKOFF_KICKER_OFFSET := 0.6      # смещение кикера от центра на ЧУЖУЮ половину, м
+const KICKOFF_HALF_MARGIN := 1.0        # минимальный отступ от центральной линии при клэмпе половины, м
+const KICKOFF_AIM_SPEED := 2.0          # рад/с, доворот стиком
+const KICKOFF_AIM_ARC := PI * 0.6       # кламп доворота от base_heading — не дать пасу уйти вперёд
+const KICKOFF_CHARGE_MAX_TIME := 0.6    # с
+const KICKOFF_CAM_BACK := 4.5
+const KICKOFF_CAM_HEIGHT := 2.2
+const KICKOFF_CAM_LOOK_Y := 1.2
