@@ -131,6 +131,7 @@ func _ready() -> void:
 	_team_away.ball = ball
 	add_child(_team_away)
 	_setup_away_player()
+	_setup_away_teammate()
 	_setup_home_player()
 	_setup_teammate()
 	_setup_keeper()
@@ -821,11 +822,34 @@ func _setup_away_player() -> void:
 		_spawn_wall_dummies()
 
 
+## Второй полевой team_2 (постоянный, не временное тело сет-писа) — партнёр для короткого паса
+## на кикоффе. Тот же ИИ, что и первый (simple_ai.gd), второй независимый экземпляр — без
+## взаимного учёта между двумя ИИ team_2 (в отличие от teammate_ai у team_1).
+func _setup_away_teammate() -> void:
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_2"
+	cfg.role = PlayerConfig.Role.MID
+	cfg.kit_color = Color(0.9, 0.1, 0.1)
+	cfg.spawn_pos = Vector3(-10, 0.5, -5)   # зеркало PlayerTeammate team_1 (10, 0.5, 5)
+	cfg.display_name = "PlayerAwayTeammate"
+	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
+	cfg.connect_action_signals = true
+	cfg.extra_fields = {
+		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
+	}
+	PlayerFactory.spawn(cfg, _team_away)
+
+
 ## Соперник-полевой по умолчанию (первый не-вратарь team_2). До 11×11 их немного.
 func _away_outfielder() -> CharacterBody3D:
 	for b in _team_away.outfield():
 		return b
 	return null
+
+
+## Все полевые team_2 (для кикоффа — нужен явный доступ ко второму, партнёру для паса).
+func _away_outfielders() -> Array:
+	return _team_away.outfield()
 
 
 ## Стенки из стоящих болванок team_2 (для теста ударов/блоков). Требует

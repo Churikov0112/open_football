@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-OpenFootball — a football (soccer) simulation game in Godot 4.7 / GDScript. Arcade rules, FIFA-scale pitch. Windows-only for now. Currently a small-scale prototype (human + AI teammate vs. one AI opponent), not yet 11v11.
+OpenFootball — a football (soccer) simulation game in Godot 4.7 / GDScript. Arcade rules, FIFA-scale pitch. Windows-only for now. Currently a small-scale prototype (human + AI teammate vs. two AI opponents), not yet 11v11.
 
 **Art is now hybrid, no longer "procedural everything."** The pitch, field markings, goals, grass, and ball are still generated in code, but **players are real rigged Mixamo models** (skeletal idle/run animations) wrapped in a `PlayerVisual` node — the old colored capsules are gone. See *Presentation layer & asset pipeline* below.
 
