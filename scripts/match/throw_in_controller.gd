@@ -198,6 +198,10 @@ func _on_thrower_contact(_action: String) -> void:
 	# Мяч был CAUGHT (dribbler=вбрасывающий) → помечаем бьющего (анти-самоблок/кулдаун).
 	if _ball.has_method(&"note_kicker"):
 		_ball.note_kicker(_thrower)
+	# Метка намеренного паса своей команды: вброс от партнёра вратарю по правилам тоже нельзя
+	# брать руками — и она же глушит сейв-рефлекс своего вратаря на вброс назад.
+	if _ball.has_method(&"note_pass_from"):
+		_ball.note_pass_from(&"team_1" if _thrower.is_in_group("team_1") else &"team_2")
 	struck.emit()
 	# Управление — тому, кому летит мяч (ближайший team_1 к приземлению, кроме вбрасывающего).
 	var receiver := _nearest_team1(land, _thrower)

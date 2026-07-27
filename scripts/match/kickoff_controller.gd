@@ -204,6 +204,11 @@ func _on_kicker_contact(_action: String) -> void:
 		_ball.launch(vel, true)
 	if _ball.has_method(&"note_kicker"):
 		_ball.note_kicker(_kicker)
+	# Метка намеренного паса СВОЕЙ команды: кикофф-пас назад летит к своим воротам, и без метки
+	# вратарь бьющей команды трактует его как удар в створ (выбегает и ныряет за мячом своих).
+	# Вратаря СОПЕРНИКА метка не глушит (флаг != его группа).
+	if _ball.has_method(&"note_pass_from"):
+		_ball.note_pass_from(&"team_1" if _kicker.is_in_group("team_1") else &"team_2")
 	struck.emit()
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:

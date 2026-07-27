@@ -317,6 +317,8 @@ func _on_kicker_contact(_action: String) -> void:
 			var vel := PassSystem.launch_ground(from, to, speed)
 			if _ball.has_method(&"launch"):
 				_ball.launch(vel, true)
+			if _ball.has_method(&"note_pass_from"):   # намеренный пас своим (не удар) — метка бэк-паса
+				_ball.note_pass_from(&"team_1" if _kicker.is_in_group("team_1") else &"team_2")
 		"lob":
 			# Навес дугой в направлении камеры; сила = дальность приземления и высота дуги (заряд).
 			var land_dist := lerpf(FootballConstants.FK_LOB_MIN_DIST, FootballConstants.FK_LOB_MAX_DIST, _pending_ratio)
@@ -333,6 +335,8 @@ func _on_kicker_contact(_action: String) -> void:
 			var vel := flat * hspeed + Vector3.UP * vy
 			if _ball.has_method(&"launch"):
 				_ball.launch(vel, false)
+			if _ball.has_method(&"note_pass_from"):   # навес своим (не удар) — метка бэк-паса
+				_ball.note_pass_from(&"team_1" if _kicker.is_in_group("team_1") else &"team_2")
 		_:
 			# Удар (прямой/кручёный) — вектор посчитан заранее в _fire_shot.
 			if _pending_curl.length_squared() > 0.0001:

@@ -288,6 +288,10 @@ func _on_kicker_contact(_action: String) -> void:
 	# иначе он сам блокирует/перехватывает свой пас (нет грейса/кулдауна). Мяч летит к цели.
 	if _ball.has_method(&"note_kicker"):
 		_ball.note_kicker(_kicker)
+	# Метка намеренного паса своей команды (короткий/навес — доставка своим): глушит сейв-рефлекс
+	# СВОЕГО вратаря (см. кикофф-баг), вратаря соперника не трогает.
+	if _ball.has_method(&"note_pass_from"):
+		_ball.note_pass_from(&"team_1" if _kicker.is_in_group("team_1") else &"team_2")
 	struck.emit()
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:

@@ -279,6 +279,9 @@ func _on_kicker_contact(_action: String) -> void:
 	# Мяч лежал на точке (dribbler=null) → помечаем бьющего явно (анти-самоблок/кулдаун).
 	if _ball.has_method(&"note_kicker"):
 		_ball.note_kicker(_kicker)
+	# Метка намеренного паса своей команды (розыгрыш от ворот — доставка своим).
+	if _ball.has_method(&"note_pass_from"):
+		_ball.note_pass_from(&"team_1" if _kicker.is_in_group("team_1") else &"team_2")
 	struck.emit()
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
