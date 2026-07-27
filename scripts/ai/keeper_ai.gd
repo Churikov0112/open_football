@@ -9,7 +9,7 @@ var save_area: Area3D
 var hold_point: Node3D   # узел-«руки»: пойманный мяч приклеивается сюда
 var manager: Node   # match_manager — для проверки празднования гола
 
-enum State { POSITION, DIVE, CATCHING, HOLD, DISTRIBUTE, PLACING, CARRY, FIELD_PASS, THROWING, HANDS, OUTFIELD }
+enum State { POSITION, DIVE, CATCHING, HOLD, DISTRIBUTE, PLACING, CARRY, FIELD_PASS, THROWING, HANDS, OUTFIELD, RETURNING }
 var _state: int = State.POSITION
 # ВРЕМЕННЫЙ хардкод-сценарий раздачи «placing ball» (для теста полевой логики вратаря):
 # HOLD → PLACING (ставит мяч рукой на газон) → CARRY (дриблинг 5м как полевой) → FIELD_PASS
@@ -105,10 +105,7 @@ func _physics_process(delta: float) -> void:
 	if _state == State.OUTFIELD:
 		var mine: bool = ball.dribbler == _body or (ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body)
 		if not mine:
-			_state = State.POSITION
-			var vis2 := _visual()
-			if vis2 != null:
-				vis2.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+			_begin_returning()   # мяч потерян — рывком ДОМОЙ (не хватать руками, не телепорт в штрафную)
 		return
 	# Празднование гола: новых сейвов/выносов не начинаем (иначе вратарь ловит осевший в сетке
 	# мяч и выносит его уже ПОСЛЕ гола). Но ТЕКУЩИЙ нырок доигрываем до конца анимации —
@@ -151,6 +148,8 @@ func _physics_process(delta: float) -> void:
 			_hands(delta)
 		State.OUTFIELD:
 			pass   # телом в OUTFIELD владеет менеджер (полевой путь); Задача 9
+		State.RETURNING:
+			_returning(delta)
 
 
 ## Держим линию: X за мячом, лицом к мячу, лёгкий выход под угол. При ударе в створ —
@@ -162,6 +161,22 @@ func _position(delta: float) -> void:
 	if _penalty_mode:
 		_penalty_hold(delta, m)
 		return
+	# Активный сбор бэк-паса: намеренный пас своих, идущий К нашим воротам — ВЫХОДИМ на мяч
+	# (магнетизм, как полевой), а не ждём пассивно на линии (иначе мяч катится мимо). Берём в НОГИ.
+	if not _freekick_mode and _is_own_backpass() and _heading_at_goal():
+		var bp_to := ball.global_position - _body.global_position
+		bp_to.y = 0.0
+		var bp_d := bp_to.length()
+		if bp_d <= FootballConstants.KEEPER_REACH:
+			_trap_backpass()
+			return
+		if bp_d < FootballConstants.KEEPER_BACKPASS_COLLECT_RANGE:
+			var bv := _visual()
+			if bv != null:
+				bv.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)   # бег на мяч, не приставные шаги
+			m.set_move_intent(bp_to.normalized(), 1.0)
+			m.set_face_direction(Vector3.ZERO)
+			return
 	# Режим «тревоги» по дистанции мяча: близко → стойка готовности + приставные шаги (KEEPER),
 	# далеко → обычный расслабленный idle/бег (NORMAL).
 	var v := _visual()
@@ -514,6 +529,8 @@ func on_ball_contact() -> void:
 		return
 	if _state == State.HOLD or _state == State.DISTRIBUTE:
 		return
+	if _state == State.RETURNING:
+		return   # бежим домой рывком — руками мяч не берём, пока не встали в стойку
 	if _pass_through:
 		return
 	if manager != null and manager.is_celebrating():
@@ -641,10 +658,13 @@ func _enter_hands() -> void:
 	var m := _motor()
 	if m != null:
 		m.set_control_locked(false)   # человек/ИИ теперь ДВИГАЕТ вратаря в штрафной (не вкопанно)
+		m.set_face_direction(Vector3.ZERO)   # лицом ПО ДВИЖЕНИЮ (как полевой), не фикс «в поле»
 	var vis := _visual()
 	if vis != null:
-		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
-		vis.play_oneshot(&"keeper_idle_ball")   # поза удержания (carry-бленд бега — План 3)
+		# Обычная локомоция (бег/idle) — вратарь двигается с мячом «как полевой», мяч приклеен к руке.
+		# keeper_idle_ball (статичная поза) при движении = «лунная походка», поэтому не залипаем в ней.
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)
+		vis.recover()
 
 
 ## Вратарь сейчас владеет мячом в руках (HANDS)? Менеджер использует, чтобы НЕ двигать его своим
@@ -686,7 +706,7 @@ func _hands(delta: float) -> void:
 			m.set_move_intent(allow.normalized(), FootballConstants.KEEPER_HANDS_MOVE_SPEED)
 		else:
 			m.set_move_intent(Vector3.ZERO)
-		m.set_face_direction(world_dir)
+		# Лицо НЕ фиксируем — мотор доворачивает по вектору скорости (как полевой), без «лунной походки».
 	else:
 		m.set_move_intent(Vector3.ZERO)
 	# Жёсткий кламп позиции (страховка от инерции мотора за пределы штрафной).
@@ -869,10 +889,51 @@ func _enter_outfield() -> void:
 	var m := _motor()
 	if m != null:
 		m.set_control_locked(false)   # менеджерский полевой ввод теперь двигает вратаря
+		m.set_face_direction(Vector3.ZERO)   # лицом ПО ДВИЖЕНИЮ (как полевой), не «спиной к воротам»
 	var vis := _visual()
 	if vis != null:
 		vis.recover()   # выйти из idle_ball one-shot
 		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)
+
+
+## Мяч у вратаря отобрали (OUTFIELD) → рывок ПО ПРЯМОЙ к своим воротам, встать в стойку и ловить.
+## НЕ хватаем мяч руками и НЕ телепортируемся в штрафную (то и другое ломало ощущение). Если
+## вратарём управлял человек — возвращаем управление полевому (иначе человек «застрянет» на
+## возвращающемся теле).
+func _begin_returning() -> void:
+	_state = State.RETURNING
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)
+		m.set_face_direction(Vector3.ZERO)   # лицом по движению (бежим домой)
+	var vis := _visual()
+	if vis != null:
+		vis.recover()
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)   # обычный бег на рывке домой
+	# Управление — полевому, только если сейчас управляли ИМЕННО этим вратарём (человек играл им).
+	if manager != null and manager.controlled_player == _body and manager.has_method(&"keeper_handoff_control"):
+		manager.keeper_handoff_control(_body.global_position)
+
+
+## Рывок к линии ворот (центр створа). Дома (в пределах 1 м) → стойка + обычный сейв-режим.
+func _returning(_delta: float) -> void:
+	var m := _motor()
+	if m == null:
+		return
+	var into := -1.0 if goal_line_z > 0.0 else 1.0
+	var home := Vector3(0.0, _body.global_position.y, goal_line_z + into * 0.5)
+	var to := home - _body.global_position
+	to.y = 0.0
+	if to.length() <= 1.0:
+		# Дома — встаём в стойку, обычная логика позиции/сейва снова активна.
+		_state = State.POSITION
+		m.set_move_intent(Vector3.ZERO)
+		var vis := _visual()
+		if vis != null:
+			vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+		return
+	m.set_move_intent(to.normalized(), 1.0)   # рывок по прямой к воротам (полный ход)
+	m.set_face_direction(Vector3.ZERO)         # лицом по движению
 
 
 ## Мяч — намеренный пас СВОЕЙ команды (бэк-пас)? Тогда руками брать нельзя (правило футбола).
