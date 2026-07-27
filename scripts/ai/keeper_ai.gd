@@ -434,7 +434,9 @@ func freeze_penalty_position() -> void:
 	_penalty_frozen = true
 
 
-func begin_penalty_dive(zone: int) -> void:
+## launch_vel — вектор запуска мяча (от контроллера): в момент удара ball.linear_velocity ещё
+## нулевая (launch применяет импульс отложенно), поэтому траекторию считаем по нему.
+func begin_penalty_dive(zone: int, launch_vel: Vector3 = Vector3.ZERO) -> void:
 	_pen_struck = true
 	if zone == PenaltyLogic.Zone.CENTER:
 		return  # остаёмся по центру; исход решит рефлекс, затем авто-сброс _penalty_mode
@@ -442,11 +444,24 @@ func begin_penalty_dive(zone: int) -> void:
 	var action := _pen_zone_to_action(zone)
 	if action == KeeperLogic.SaveAction.NONE:
 		return
+	# Репрезентативная точка угаданной зоны (сторона + высота).
 	var target := PenaltyLogic.zone_target(zone, 0.0, FootballConstants.GOAL_WIDTH * 0.5,
 		FootballConstants.PEN_KEEPER_DIVE_LOW_Y, FootballConstants.PEN_KEEPER_DIVE_HIGH_Y,
 		FootballConstants.PEN_KEEPER_DIVE_LATERAL, goal_line_z)
+	# Цепкость: если угаданная СТОРОНА совпала с реальной траекторией мяча — ныряем в НАСТОЯЩУЮ
+	# точку пересечения линии (drag-aware прогноз), а не в фикс. репрезентативную; тогда верный
+	# угад надёжно достаёт даже удар в самый угол (был баг «нырнул в ту сторону, но не дотянулся»).
+	# Неверная сторона — прогноз на другой половине, знак не совпадёт → оставляем репрезентативную
+	# точку своей (угаданной) стороны → нырок мимо → гол (угадка стороны сейв НЕ гарантирует).
+	var vel := launch_vel if launch_vel.length_squared() > 0.01 else ball.linear_velocity
+	var predicted := KeeperLogic.shot_intercept(ball.global_position, vel, goal_line_z,
+		_ball_gravity(), ball.drag_factor, ball.air_resistance, 1.0 / float(Engine.physics_ticks_per_second))
+	var guess_sign := signf(target.x)   # -1 левая зона, +1 правая
+	if guess_sign != 0.0 and signf(predicted.x) == guess_sign:
+		target.x = clampf(predicted.x, -FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_WIDTH * 0.5)
+	# no_error=true: на пенальти НЕ добавляем случайный разброс нырка (иначе цепкость снова мимо).
 	# Слепой нырок — реальной ttoi нет (INF): _begin_save держит нырок по длине клипа.
-	_begin_save({"action": action, "target": target}, ball.linear_velocity.length(), INF)
+	_begin_save({"action": action, "target": target}, ball.linear_velocity.length(), INF, true)
 
 
 func _pen_zone_to_action(zone: int) -> int:
@@ -508,7 +523,7 @@ func _penalty_hold(delta: float, m: PlayerMotor) -> void:
 ## Старт сейва: центр (CATCH/CATCH_TOP) — на месте (dive_vel≈0); угол — бросок к цели.
 ## ttoi — время до прилёта мяча: держим нырок минимум до него (+запас), иначе ранний нырок
 ## закончится раньше, чем мяч долетит, и вратарь встанет до сейва.
-func _begin_save(dec: Dictionary, ball_speed: float, ttoi: float) -> void:
+func _begin_save(dec: Dictionary, ball_speed: float, ttoi: float, no_error: bool = false) -> void:
 	_reacting = false
 	_current_action = dec.action
 	_state = State.DIVE
@@ -534,7 +549,8 @@ func _begin_save(dec: Dictionary, ball_speed: float, ttoi: float) -> void:
 		_dive_vel = Vector3.ZERO   # ловля на месте
 	else:
 		var target: Vector3 = dec.target
-		target.x += randf_range(-1.0, 1.0) * FootballConstants.KEEPER_SAVE_ERROR
+		if not no_error:
+			target.x += randf_range(-1.0, 1.0) * FootballConstants.KEEPER_SAVE_ERROR
 		var to := target - _body.global_position
 		# Импульс ПРОПОРЦИОНАЛЕН смещению (divevel = смещение × gain) — как OpenSoccer:
 		# близкий/дальний нырок доезжают за ~одинаковое время → синхрон с фикс. клипом.

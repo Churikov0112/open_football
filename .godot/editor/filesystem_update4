@@ -1,8 +1,6 @@
-res://scripts/data/football_constants.gd
+res://scripts/match/human_keeper_intent.gd
 res://scripts/match/match_manager.gd
-res://scripts/match/match_referee.gd
-res://tests/check_referee_flow.gd
-res://CLAUDE.md
-res://tests/check_kickoff_dispatch.gd
-res://scripts/match/kickoff_controller.gd
-res://scripts/ai/simple_ai.gd
+res://scripts/ai/keeper_ai.gd
+res://scripts/match/penalty_controller.gd
+res://docs/football_reference.md
+res://scripts/data/football_constants.gd

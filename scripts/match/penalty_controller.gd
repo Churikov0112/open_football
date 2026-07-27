@@ -129,9 +129,11 @@ func _place_kicker() -> void:
 		km.set_move_intent(Vector3.ZERO)
 		km.set_face_direction(_forward)
 
-## Очистить штрафную: все полевые (обе команды), кроме бьющего и вратаря, отходят ЗА мяч
+## Очистить штрафную: все полевые (обе команды), кроме бьющего и вратарей, отходят ЗА мяч
 ## (дальше от ворот) и за радиус 9.15 м от точки — по правилу их до удара не должно быть в
 ## штрафной/дуге. Поле-ИИ уже заморожен (set_field_ai_active(false)), так что стоят где поставили.
+## Вратари ОБЕИХ команд (role_gk) остаются в своих воротах — и защищающий (_keeper), и вратарь
+## бьющей команды у противоположных ворот (иначе он уезжал бы к точке пенальти).
 func _clear_box() -> void:
 	var bodies := _manager.get_tree().get_nodes_in_group("team_1")
 	bodies += _manager.get_tree().get_nodes_in_group("team_2")
@@ -141,6 +143,8 @@ func _clear_box() -> void:
 	for n in bodies:
 		if not is_instance_valid(n) or n == _kicker or n == _keeper or not (n is Node3D):
 			continue
+		if n.is_in_group("role_gk"):
+			continue   # вратари обеих команд остаются в своих воротах
 		var lateral := (float(i) - 0.5) * 5.0   # разнести вбок, чтобы не стояли стопкой
 		var pos: Vector3 = _spot + behind * FootballConstants.FK_WALL_DIST + right * lateral
 		pos.y = n.global_position.y
@@ -272,7 +276,9 @@ func _on_kicker_contact(_action: String) -> void:
 		_ball.note_kicker(_kicker)
 	_struck_zone = _keeper_intent.dive_zone()   # срез зоны в момент удара (человек-вратарь мог крутить до последнего)
 	if _keeper_brain != null and _keeper_brain.has_method(&"begin_penalty_dive"):
-		_keeper_brain.begin_penalty_dive(_struck_zone)
+		# Передаём вектор запуска: в этот кадр ball.linear_velocity ещё 0 (launch отложен), а
+		# вратарю он нужен, чтобы спрогнозировать реальную точку пересечения и надёжно достать угол.
+		_keeper_brain.begin_penalty_dive(_struck_zone, _pending_launch)
 	struck.emit()
 	if release_after_strike:
 		# Не переключаем камеру сразу (иначе рывок на самом ударе) — держим пенальти-вид PEN_WATCH_TIME,

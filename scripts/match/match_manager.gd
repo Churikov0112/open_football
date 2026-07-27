@@ -22,6 +22,7 @@ var _controlled_marker: Polygon2D
 var _match_camera: Camera3D
 var _goal_nets: Dictionary = {}
 var _celebrating: bool = false
+var _goal_pending: bool = false                # мяч вошёл в створ, ждём подтверждения (см. _confirm_goal)
 var _penalty_active: bool = false
 var _penalty                                   # PenaltyController
 var _penalty_cam_pose: Transform3D = Transform3D.IDENTITY
@@ -524,28 +525,59 @@ func _setup_goals() -> void:
 			# приклеенный к ней мяч) может качнуться за линию — это не взятие ворот.
 			if body == ball and ball.has_method(&"is_caught") and ball.is_caught():
 				return
-			if body == ball and not _celebrating:
-				_celebrating = true
-				# team_1 (_team_home) атакует −Z (см. _attack_dir_z) → забивает в ворота Home →
-				# team_2 пропустил. Одна и та же g.side задаёт и то, кто забил (счёт), и то, кто
-				# пропустил (исполнитель кикоффа) — вычисляем один раз.
-				var conceding_team := 2 if g.side == "Home" else 1
-				if _referee != null:
-					_referee.report_goal(conceding_team)
-				# Вратаря НЕ замораживаем: у keeper_ai своя обработка празднования (доигрывает
-				# нырок и встаёт в idle ТОЛЬКО по завершении клипа). Заморозка (стоп _physics_process
-				# + лок мотора) обрывала бы это, и вратарь мгновенно вставал в idle-позу посреди нырка.
-				_set_ai_frozen(true)   # прочие ИИ стоп в idle (вратари role_gk исключены внутри)
-				if g.side == "Home":
-					home_score += 1
-				else:
-					away_score += 1
-				score_label.text = "%d : %d" % [home_score, away_score]
-				var net = _goal_nets.get(g.side)
-				if net:
-					net.start_sim()
-				_celebrate_then_reset(net, conceding_team)
+			# Не фиксируем гол мгновенно: вратарь достаёт мяч ровно на линии, а зона стоит фронтом
+			# на ней — отбитый на линии мяч иначе засчитывается голом (отбой применяется кадром позже).
+			# Подтверждаем через несколько физкадров (см. _confirm_goal). fire-and-forget.
+			if body == ball and not _celebrating and not _goal_pending:
+				_goal_pending = true
+				_confirm_goal(g.side)
 		)
+
+
+## Подтверждение гола (Law 10, см. GOAL_CONFIRM_* и голевую зону в _setup_goals). Голевая Area3D
+## лишь инициирует проверку; гол засчитывается ТОЛЬКО когда мяч ВЕСЬ пересёк линию (центр за линией
+## на BALL_RADIUS). Опрашиваем каждый физкадр: отмена — если пойман/отбит обратно в поле или истёк
+## предохранитель. side задаёт и забившую сторону (счёт), и пропустившую (исполнитель кикоффа).
+func _confirm_goal(side: String) -> void:
+	var gline := -field_length if side == "Home" else field_length
+	var into := signf(gline)                     # знак «за линию» (в ворота/сетку)
+	# Точка входа: body_entered сработал, когда передняя кромка коснулась линии → центр перед линией
+	# на радиус (past ≈ -BALL_RADIUS). «Отбит» = центр отошёл в поле ещё на GOAL_CONFIRM_RETREAT дальше.
+	var retreat_thresh := -FootballConstants.BALL_RADIUS - FootballConstants.GOAL_CONFIRM_RETREAT
+	var scored := false
+	for _i in range(FootballConstants.GOAL_CONFIRM_MAX_FRAMES):
+		await get_tree().physics_frame
+		if _celebrating or not is_instance_valid(ball):
+			break
+		if ball.has_method(&"is_caught") and ball.is_caught():
+			break                                # поймал руками — сейв, не гол
+		var past := (ball.global_position.z - gline) * into   # >0 = центр за линией
+		if past >= FootballConstants.BALL_RADIUS:
+			scored = true                        # весь мяч за линией — гол
+			break
+		if past <= retreat_thresh:
+			break                                # отбит/выбит обратно в поле — не гол
+	_goal_pending = false
+	if not scored or _celebrating or not is_instance_valid(ball):
+		return
+	# --- Подтверждённый гол ---
+	_celebrating = true
+	# team_1 (_team_home) атакует −Z (см. _attack_dir_z) → забивает в ворота Home → team_2 пропустил.
+	var conceding_team := 2 if side == "Home" else 1
+	if _referee != null:
+		_referee.report_goal(conceding_team)
+	# Вратаря НЕ замораживаем: у keeper_ai своя обработка празднования (доигрывает нырок и встаёт в
+	# idle ТОЛЬКО по завершении клипа). Заморозка оборвала бы это, вратарь встал бы в idle посреди нырка.
+	_set_ai_frozen(true)   # прочие ИИ стоп в idle (вратари role_gk исключены внутри)
+	if side == "Home":
+		home_score += 1
+	else:
+		away_score += 1
+	score_label.text = "%d : %d" % [home_score, away_score]
+	var net = _goal_nets.get(side)
+	if net:
+		net.start_sim()
+	_celebrate_then_reset(net, conceding_team)
 
 
 func _make_post(x: float, y: float, z: float) -> MeshInstance3D:
@@ -1106,16 +1138,21 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed(&"penalty_debug") and _keeper_at(-field_length) != null and not _celebrating:
 		_penalty.start_single(controlled_player, -field_length)
 		return
-	# K: ИИ бьёт пенальти, человек управляет вратарём (выбор зоны нырка стиком). Бьющий — то же тело,
-	# что бьёт по P (controlled_player), но с AIKickerIntent; презентация — роль KEEPER (камера как у
-	# пенальти + cyan-маркер над вратарём, без ретикла/power_bar бьющего).
-	if Input.is_action_just_pressed(&"keeper_dive_debug") and _keeper_at(-field_length) != null and not _celebrating:
-		var kicker_rng := RandomNumberGenerator.new()
-		kicker_rng.randomize()
-		_penalty.start_single(controlled_player, -field_length,
-			AIKickerIntent.new(kicker_rng),
-			SetPiecePresentation.new(SetPiecePresentation.Role.KEEPER),
-			HumanKeeperIntent.new({"aim_lat": [&"move_left", &"move_right"], "aim_vert": [&"move_forward", &"move_back"]}))
+	# K: пенальти В НАШИ ворота (+field_length, защищает наш team_1 вратарь) — бьёт СОПЕРНИК (team_2,
+	# ИИ через AIKickerIntent), человек играет за нашего вратаря (выбор зоны нырка стиком). Презентация —
+	# роль KEEPER (камера как у пенальти + cyan-маркер над вратарём, без ретикла/power_bar бьющего).
+	# controlled_player НЕ трогаем — после розыгрыша управление остаётся за нашим полевым игроком.
+	if Input.is_action_just_pressed(&"keeper_dive_debug") and _keeper_at(field_length) != null and not _celebrating:
+		var red_kicker := _away_outfielder()
+		if red_kicker != null:
+			var kicker_rng := RandomNumberGenerator.new()
+			kicker_rng.randomize()
+			# lat_sign = _into ворот (+Z → -1): камера смотрит на ворота с -Z, экран-право = мировой -X,
+			# так что стик надо инвертировать, иначе вратарь ныряет в зеркальную сторону.
+			_penalty.start_single(red_kicker, field_length,
+				AIKickerIntent.new(kicker_rng),
+				SetPiecePresentation.new(SetPiecePresentation.Role.KEEPER),
+				HumanKeeperIntent.new({"aim_lat": [&"move_left", &"move_right"], "aim_vert": [&"move_forward", &"move_back"], "lat_sign": -1.0}))
 		return
 	# Штрафной-режим: всё ведёт контроллер, обычные системы заглушены.
 	if _free_kick_active:
