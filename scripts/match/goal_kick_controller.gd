@@ -46,6 +46,11 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 func is_active() -> bool:
 	return _phase != Phase.IDLE
 
+## Владеет ли источник камерой розыгрыша — match_manager проверяет перед парковкой (Role.NONE,
+## ИИ-удар: камера НЕ трогается, остаётся обычная ТВ/3-е лицо, как в открытой игре).
+func camera_is_owned() -> bool:
+	return _presentation != null and _presentation.owns_camera()
+
 ## Старт удара от ворот: бьющий = вратарь, его ворота = goal_line_z.
 func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
 	if _phase != Phase.IDLE or kicker == null:

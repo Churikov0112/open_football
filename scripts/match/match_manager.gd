@@ -1045,7 +1045,7 @@ func _process(delta: float) -> void:
 		camera_pivot.global_transform = _free_kick_cam_pose
 	elif _corner_active:
 		camera_pivot.global_transform = _corner_cam_pose
-	elif _goal_kick_active:
+	elif _goal_kick_active and _goal_kick.camera_is_owned():
 		camera_pivot.global_transform = _goal_kick_cam_pose
 	elif _throw_in_active:
 		camera_pivot.global_transform = _throw_in_cam_pose
@@ -1075,7 +1075,7 @@ func _process(delta: float) -> void:
 	# Пенальти с ИИ-бьющим (K, см. PenaltyController.kicker_is_local_human) — по той же причине:
 	# controlled_player сейчас управляется ИИ, маркер над ним вводит в заблуждение (человек играет
 	# вратаря, не бьющего). Маркер на время розыгрыша просто скрываем.
-	if _goal_kick_active or _throw_in_active or (_penalty_active and _penalty != null and not _penalty.kicker_is_local_human()):
+	if (_goal_kick_active and _goal_kick.camera_is_owned()) or _throw_in_active or (_penalty_active and _penalty != null and not _penalty.kicker_is_local_human()):
 		if _controlled_marker != null:
 			_controlled_marker.visible = false
 	elif _controlled_marker != null and controlled_player and _match_camera != null:
