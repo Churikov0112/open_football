@@ -1321,8 +1321,16 @@ func _handle_dribbling() -> void:
 	var pickers := get_tree().get_nodes_in_group("team_1")
 	pickers += get_tree().get_nodes_in_group("team_2")
 	for p in pickers:
-		if not is_instance_valid(p) or p.is_in_group("role_gk"):
-			continue   # вратари (оба) не подбирают бесхозный мяч как полевые
+		if not is_instance_valid(p):
+			continue
+		if p.is_in_group("role_gk"):
+			# Вратари не подбирают бесхозный мяч как полевые (у них свой захват в руки) — КРОМЕ
+			# мяча, помеченного намеренным пасом ИХ команды (бэк-пас): его руками брать нельзя,
+			# берут в ноги → keeper_ai сам уйдёт в OUTFIELD-дриблинг.
+			var pf: StringName = ball.pass_from_team() if ball.has_method(&"pass_from_team") else &""
+			var pgrp: StringName = &"team_1" if p.is_in_group("team_1") else &"team_2"
+			if pf != pgrp:
+				continue
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
 			ball.set_dribbler(p)

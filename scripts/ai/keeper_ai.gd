@@ -44,7 +44,7 @@ var _hands_charge: float = 0.0
 var _hands_charge_action: int = KeeperHandsIntent.Action.NONE
 var _hand_is_throw: bool = false         # true → бросок верхом (удержание), false → раскат низом (тап)
 var _hand_target_pos: Vector3 = Vector3.ZERO   # точка адресата для handoff
-var _collecting: bool = false            # идёт активный сбор бэк-паса (гистерезис — без мерцания стиля)
+var _bp_passive: bool = false            # пассивен: летит пас своих, телом владеет менеджер (как полевым)
 var _dbg_t: float = 0.0                  # троттл диагностических [KEEPER] логов
 
 # Пенальти-подрежим (Фаза A): держим центр, реактивный боковой сейв off; нырок — по команде.
@@ -136,6 +136,18 @@ func _physics_process(delta: float) -> void:
 				" style=", (dv._loco_style if dv != null else -1),
 				" ctrl=", (manager.controlled_player == _body if manager != null else false))
 		return
+	# Мяч оказался у ног вратаря ПОЛЕВЫМ путём (receive-assist менеджера / подбор бэк-паса) →
+	# сразу OUTFIELD (дриблинг как полевой), минуя руки.
+	if _state == State.POSITION and ball.dribbler == _body and not ball.is_caught():
+		_enter_outfield()
+		return
+	# Летит намеренный пас СВОЕЙ команды (бэк-пас/розыгрыш): вратарь ПАССИВЕН — телом владеет
+	# менеджер (receive-assist + ввод, ровно как у полевого получателя). Никаких сейв-рефлексов,
+	# выходов к линии штрафной и анимаций ловли: обычный idle, ждём трап в ноги.
+	if _state == State.POSITION and _is_own_backpass():
+		_backpass_passive()
+		return
+	_bp_passive = false
 	# Празднование гола: новых сейвов/выносов не начинаем (иначе вратарь ловит осевший в сетке
 	# мяч и выносит его уже ПОСЛЕ гола). Но ТЕКУЩИЙ нырок доигрываем до конца анимации —
 	# не дёргаем в idle посреди прыжка.
@@ -190,39 +202,17 @@ func _position(delta: float) -> void:
 	if _penalty_mode:
 		_penalty_hold(delta, m)
 		return
-	# Активный сбор бэк-паса (магнетизм, как полевой): начинаем, когда намеренный пас своих идёт К
-	# воротам и близко; ПРОДОЛЖАЕМ по гистерезису _collecting, пока флаг держится и мяч в пределах —
-	# не требуем каждый кадр строгого _heading_at_goal (иначе на замедлении мяча стиль мигал
-	# NORMAL↔KEEPER = «приставные шаги»). Берём в НОГИ.
-	var own_bp := not _freekick_mode and _is_own_backpass()
-	if own_bp:
-		var bp_to := ball.global_position - _body.global_position
-		bp_to.y = 0.0
-		var bp_d := bp_to.length()
-		if not _collecting and _heading_at_goal() and bp_d < FootballConstants.KEEPER_BACKPASS_COLLECT_RANGE:
-			_collecting = true
-		if _collecting:
-			if bp_d <= FootballConstants.KEEPER_REACH:
-				_collecting = false
-				_trap_backpass()
-				return
-			if bp_d < FootballConstants.KEEPER_BACKPASS_COLLECT_RANGE + 5.0:
-				var bv := _visual()
-				if bv != null:
-					bv.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)   # бег на мяч, не приставные шаги
-				m.set_move_intent(bp_to.normalized(), 1.0)
-				if bp_to.length() > 0.1:
-					m.set_face_direction(bp_to)   # лицом на мяч (снапко)
-				return
-			_collecting = false   # мяч ушёл далеко — бросаем сбор, назад на линию
-	else:
-		_collecting = false
 	# Режим «тревоги» по дистанции мяча: близко → стойка готовности + приставные шаги (KEEPER),
-	# далеко → обычный расслабленный idle/бег (NORMAL).
+	# далеко ИЛИ мячом владеют СВОИ (угрозы нет) → обычный расслабленный idle/бег (NORMAL).
 	var v := _visual()
 	if v != null:
 		var dist_z := absf(ball.global_position.z - goal_line_z)
-		v.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER if dist_z < FootballConstants.KEEPER_ALERT_DIST else PlayerVisual.LOCO_STYLE_NORMAL)
+		var my_grp: StringName = &"team_1" if _body.is_in_group("team_1") else &"team_2"
+		var own_poss: bool = ball.dribbler != null and is_instance_valid(ball.dribbler) \
+			and ball.dribbler.is_in_group(my_grp)
+		v.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER \
+			if (dist_z < FootballConstants.KEEPER_ALERT_DIST and not own_poss) \
+			else PlayerVisual.LOCO_STYLE_NORMAL)
 	# РЕФЛЕКС: мяч летит к воротам И уже в радиусе рук вратаря — ловим/пропускаем СХОДУ, каждый
 	# кадр, надёжно (не зависит от выравнивания с точкой удара). Это чинит scoop/catch «во вратаря».
 	if ball.is_flight() and _heading_at_goal() and _catch_radius_hit():
@@ -994,6 +984,24 @@ func _is_own_backpass() -> bool:
 		return false
 	var my_group := &"team_1" if _body.is_in_group("team_1") else &"team_2"
 	return pf == my_group
+
+
+## Пассивный режим на пас своих: одноразовый вход (обнулить мотор/лицо, обычный idle), дальше
+## keeper_ai мотор НЕ трогает — если вратарь стал controlled_player (пас на него), его ведёт
+## менеджерский полевой ввод/receive-assist без борьбы за тело.
+func _backpass_passive() -> void:
+	if _bp_passive:
+		return
+	_bp_passive = true
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)
+		m.set_move_intent(Vector3.ZERO)
+		m.set_face_direction(Vector3.ZERO)
+	var vis := _visual()
+	if vis != null:
+		vis.recover()
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)
 
 
 ## Трап бэк-паса В НОГИ (не в руки) → OUTFIELD. Зовётся из точек ловли, когда _is_own_backpass().
