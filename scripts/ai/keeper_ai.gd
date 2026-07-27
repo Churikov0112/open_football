@@ -44,6 +44,8 @@ var _hands_charge: float = 0.0
 var _hands_charge_action: int = KeeperHandsIntent.Action.NONE
 var _hand_is_throw: bool = false         # true → бросок верхом (удержание), false → раскат низом (тап)
 var _hand_target_pos: Vector3 = Vector3.ZERO   # точка адресата для handoff
+var _collecting: bool = false            # идёт активный сбор бэк-паса (гистерезис — без мерцания стиля)
+var _dbg_t: float = 0.0                  # троттл диагностических [KEEPER] логов
 
 # Пенальти-подрежим (Фаза A): держим центр, реактивный боковой сейв off; нырок — по команде.
 var _penalty_mode: bool = false
@@ -65,6 +67,25 @@ func _visual() -> PlayerVisual:
 		if c is PlayerVisual:
 			return c
 	return null
+
+
+## Камера-относительное направление из стика (как _handle_player_input). Фолбэк — мировые оси
+## (into = вглубь поля), если камера недоступна (headless-тест). mv.y>0 (стик вверх) = от камеры.
+func _cam_relative_dir(mv: Vector2, into: float) -> Vector3:
+	if manager != null:
+		var cp = manager.get(&"camera_pivot")
+		if cp != null and is_instance_valid(cp):
+			var cb: Basis = cp.global_transform.basis
+			var fwd := Vector3(-cb.z.x, 0.0, -cb.z.z)
+			var rgt := Vector3(cb.x.x, 0.0, cb.x.z)
+			if fwd.length() > 0.001:
+				fwd = fwd.normalized()
+			if rgt.length() > 0.001:
+				rgt = rgt.normalized()
+			var d := fwd * mv.y + rgt * mv.x
+			if d.length() > 0.001:
+				return d.normalized()
+	return Vector3(mv.x, 0.0, mv.y * into)   # фолбэк: мировые оси
 
 
 ## Скорость перемещения по линии относительно общей максимальной.
@@ -106,6 +127,14 @@ func _physics_process(delta: float) -> void:
 		var mine: bool = ball.dribbler == _body or (ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body)
 		if not mine:
 			_begin_returning()   # мяч потерян — рывком ДОМОЙ (не хватать руками, не телепорт в штрафную)
+			return
+		_dbg_t += delta
+		if _dbg_t >= 0.5:
+			_dbg_t = 0.0
+			var dv := _visual()
+			print("[KEEPER] OUTFIELD speed=", _body.velocity.length(), " yaw=", _body.rotation.y,
+				" style=", (dv._loco_style if dv != null else -1),
+				" ctrl=", (manager.controlled_player == _body if manager != null else false))
 		return
 	# Празднование гола: новых сейвов/выносов не начинаем (иначе вратарь ловит осевший в сетке
 	# мяч и выносит его уже ПОСЛЕ гола). Но ТЕКУЩИЙ нырок доигрываем до конца анимации —
@@ -161,22 +190,33 @@ func _position(delta: float) -> void:
 	if _penalty_mode:
 		_penalty_hold(delta, m)
 		return
-	# Активный сбор бэк-паса: намеренный пас своих, идущий К нашим воротам — ВЫХОДИМ на мяч
-	# (магнетизм, как полевой), а не ждём пассивно на линии (иначе мяч катится мимо). Берём в НОГИ.
-	if not _freekick_mode and _is_own_backpass() and _heading_at_goal():
+	# Активный сбор бэк-паса (магнетизм, как полевой): начинаем, когда намеренный пас своих идёт К
+	# воротам и близко; ПРОДОЛЖАЕМ по гистерезису _collecting, пока флаг держится и мяч в пределах —
+	# не требуем каждый кадр строгого _heading_at_goal (иначе на замедлении мяча стиль мигал
+	# NORMAL↔KEEPER = «приставные шаги»). Берём в НОГИ.
+	var own_bp := not _freekick_mode and _is_own_backpass()
+	if own_bp:
 		var bp_to := ball.global_position - _body.global_position
 		bp_to.y = 0.0
 		var bp_d := bp_to.length()
-		if bp_d <= FootballConstants.KEEPER_REACH:
-			_trap_backpass()
-			return
-		if bp_d < FootballConstants.KEEPER_BACKPASS_COLLECT_RANGE:
-			var bv := _visual()
-			if bv != null:
-				bv.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)   # бег на мяч, не приставные шаги
-			m.set_move_intent(bp_to.normalized(), 1.0)
-			m.set_face_direction(Vector3.ZERO)
-			return
+		if not _collecting and _heading_at_goal() and bp_d < FootballConstants.KEEPER_BACKPASS_COLLECT_RANGE:
+			_collecting = true
+		if _collecting:
+			if bp_d <= FootballConstants.KEEPER_REACH:
+				_collecting = false
+				_trap_backpass()
+				return
+			if bp_d < FootballConstants.KEEPER_BACKPASS_COLLECT_RANGE + 5.0:
+				var bv := _visual()
+				if bv != null:
+					bv.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)   # бег на мяч, не приставные шаги
+				m.set_move_intent(bp_to.normalized(), 1.0)
+				if bp_to.length() > 0.1:
+					m.set_face_direction(bp_to)   # лицом на мяч (снапко)
+				return
+			_collecting = false   # мяч ушёл далеко — бросаем сбор, назад на линию
+	else:
+		_collecting = false
 	# Режим «тревоги» по дистанции мяча: близко → стойка готовности + приставные шаги (KEEPER),
 	# далеко → обычный расслабленный idle/бег (NORMAL).
 	var v := _visual()
@@ -693,9 +733,11 @@ func _hands(delta: float) -> void:
 	# Движение в штрафной по move_axis, преобразованному камера-относительно НЕ нужно: вратарь и
 	# камера на одной стороне; берём оси мира (x=боковое, y=вглубь поля). Кламп цели в штрафную.
 	var mv := _hands_intent.move_axis()
+	var into := -1.0 if goal_line_z > 0.0 else 1.0
 	if mv.length() > 0.15:
-		var into := -1.0 if goal_line_z > 0.0 else 1.0
-		var world_dir := Vector3(mv.x, 0.0, mv.y * into)   # стик «вверх» (mv.y>0) = вглубь поля (into)
+		# КАМЕРА-ОТНОСИТЕЛЬНО (как весь полевой ввод): «вверх» стика = от камеры, НЕ мировой +Z.
+		# Иначе при боковой broadcast-камере движение/лицо не совпадают с экраном.
+		var world_dir := _cam_relative_dir(mv, into)
 		# Предиктивный кламп: не даём цели-намерению вывести за штрафную.
 		var next_pos := _body.global_position + world_dir.normalized() * 1.0
 		var clamped := KeeperPlayLogic.clamp_to_penalty_area(next_pos, goal_line_z, into,
@@ -706,9 +748,16 @@ func _hands(delta: float) -> void:
 			m.set_move_intent(allow.normalized(), FootballConstants.KEEPER_HANDS_MOVE_SPEED)
 		else:
 			m.set_move_intent(Vector3.ZERO)
-		# Лицо НЕ фиксируем — мотор доворачивает по вектору скорости (как полевой), без «лунной походки».
+		m.set_face_direction(world_dir)   # лицо МГНОВЕННО к направлению стика (без гейта min-speed/лага)
 	else:
 		m.set_move_intent(Vector3.ZERO)
+		m.set_face_direction(Vector3(0.0, 0.0, into))   # стоя — лицом в поле (готов раздать)
+	_dbg_t += delta
+	if _dbg_t >= 0.5:
+		_dbg_t = 0.0
+		var dv := _visual()
+		print("[KEEPER] HANDS mv=", mv, " speed=", _body.velocity.length(),
+			" yaw=", _body.rotation.y, " style=", (dv._loco_style if dv != null else -1))
 	# Жёсткий кламп позиции (страховка от инерции мотора за пределы штрафной).
 	var into2 := -1.0 if goal_line_z > 0.0 else 1.0
 	var boxed := KeeperPlayLogic.clamp_to_penalty_area(_body.global_position, goal_line_z, into2,

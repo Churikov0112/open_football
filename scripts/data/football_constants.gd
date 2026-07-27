@@ -447,7 +447,7 @@ const KEEPER_DIST_CHARGE_MAX := 0.7    # макс. время заряда ди�
 const KEEPER_HAND_THROW_CHARGE := 0.2  # заряд A < этого = тап (раскат низом), >= = удержание (бросок верхом), с
 const KEEPER_HAND_ROLL_DIST := 12.0    # дальность раската низом рукой (тап A), м
 const KEEPER_HAND_THROW_DIST := 30.0   # дальность броска верхом (удержание A) при полном заряде, м
-const KEEPER_HANDS_MOVE_SPEED := 0.6   # доля LOCO_TOP_SPEED при беге с мячом в руках (медленнее полевого)
+const KEEPER_HANDS_MOVE_SPEED := 0.85  # доля LOCO_TOP_SPEED при беге с мячом в руках (чуть медленнее полевого)
 const KEEPER_SIX_SECOND_TIME := 6.0    # макс. удержание мяча в руках до принудительного выноса, с
 const AI_KEEPER_THINK_TIME := 0.8      # пауза «обдумывания» ИИ-вратаря до выноса к центру, с
 const KEEPER_BACKPASS_COLLECT_RANGE := 20.0  # дальность, на которую вратарь ВЫХОДИТ собрать бэк-пас в ноги, м
