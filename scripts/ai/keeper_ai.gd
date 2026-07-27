@@ -171,6 +171,9 @@ func _position(delta: float) -> void:
 	# РЕФЛЕКС: мяч летит к воротам И уже в радиусе рук вратаря — ловим/пропускаем СХОДУ, каждый
 	# кадр, надёжно (не зависит от выравнивания с точкой удара). Это чинит scoop/catch «во вратаря».
 	if ball.is_flight() and _heading_at_goal() and _catch_radius_hit():
+		if _is_own_backpass():
+			_trap_backpass()   # намеренный пас своего — в ноги, не руками
+			return
 		var by := ball.global_position.y
 		print("[KEEPER] REFLEX hit: ball=", ball.global_position, " kpr=", _body.global_position, " y=", by)
 		if _should_catch_high(by):
@@ -430,6 +433,9 @@ func _penalty_hold(delta: float, m: PlayerMotor) -> void:
 		m.set_move_intent(Vector3.ZERO)
 	# Рефлекс центрального мяча: по высоте прилёта — scoop/catch/catch_head/catch_top / miss_top.
 	if ball.is_flight() and _heading_at_goal() and _catch_radius_hit():
+		if _is_own_backpass():
+			_trap_backpass()   # намеренный пас своего — в ноги, не руками
+			return
 		var by := ball.global_position.y
 		if _should_catch_high(by):
 			ball.catch(_body, hold_point)
@@ -512,6 +518,9 @@ func on_ball_contact() -> void:
 		return
 	if manager != null and manager.is_celebrating():
 		return
+	if _is_own_backpass():
+		_trap_backpass()   # намеренный пас своего — не руками, а в ноги → OUTFIELD
+		return
 	var by := ball.global_position.y
 	if by > FootballConstants.KEEPER_JUMP_REACH:
 		return  # слишком высоко — не берём (уйдёт в miss/гол)
@@ -563,6 +572,9 @@ func _catch_radius_hit() -> bool:
 
 ## Контакт в нырке: ловим (по заготовленной зоне) или отбиваем.
 func _resolve_dive_contact() -> void:
+	if _is_own_backpass():
+		_trap_backpass()   # намеренный пас своего — в ноги, не руками (даже в нырке)
+		return
 	var is_catch := KeeperLogic.resolve_save(_current_action, ball.linear_velocity.length(),
 		FootballConstants.KEEPER_CATCH_MAX_SPEED)
 	if is_catch:
@@ -786,7 +798,7 @@ func _do_hand_release() -> void:
 			ball.global_position = Vector3(bp.x, FootballConstants.BALL_RADIUS + 0.02, bp.z)
 			ball.launch(dir * speed, true)
 	# Управление адресату (как приём паса).
-	if manager != null and manager.has_method(&"keeper_handoff_control"):
+	if _hands_take_control and manager != null and manager.has_method(&"keeper_handoff_control"):
 		manager.keeper_handoff_control(_hand_target_pos)
 	var m := _motor()
 	if m != null:
@@ -807,7 +819,7 @@ func _do_center_clear() -> void:
 		ball.launch(vel)
 	# Точка приземления (грубо): по дальности выноса вдоль into.
 	var land := from + Vector3(0.0, 0.0, into) * FootballConstants.KEEPER_THROW_DISTANCE
-	if manager != null and manager.has_method(&"keeper_handoff_control"):
+	if _hands_take_control and manager != null and manager.has_method(&"keeper_handoff_control"):
 		manager.keeper_handoff_control(land)
 	var m := _motor()
 	if m != null:
@@ -836,7 +848,7 @@ func _do_directed_clear(ratio: float) -> void:
 		ball.launch(vel)
 	var flat := Vector3(vel.x, 0.0, vel.z)
 	var land := from + flat.normalized() * FootballConstants.KEEPER_THROW_DISTANCE
-	if manager != null and manager.has_method(&"keeper_handoff_control"):
+	if _hands_take_control and manager != null and manager.has_method(&"keeper_handoff_control"):
 		manager.keeper_handoff_control(land)
 	var m := _motor()
 	if m != null:
@@ -861,6 +873,25 @@ func _enter_outfield() -> void:
 	if vis != null:
 		vis.recover()   # выйти из idle_ball one-shot
 		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)
+
+
+## Мяч — намеренный пас СВОЕЙ команды (бэк-пас)? Тогда руками брать нельзя (правило футбола).
+func _is_own_backpass() -> bool:
+	if not (ball.has_method(&"pass_from_team")):
+		return false
+	var pf: StringName = ball.pass_from_team()
+	if pf == &"":
+		return false
+	var my_group := &"team_1" if _body.is_in_group("team_1") else &"team_2"
+	return pf == my_group
+
+
+## Трап бэк-паса В НОГИ (не в руки) → OUTFIELD. Зовётся из точек ловли, когда _is_own_backpass().
+func _trap_backpass() -> void:
+	var bp := ball.global_position
+	ball.global_position = Vector3(bp.x, FootballConstants.BALL_RADIUS + 0.02, bp.z)
+	ball.set_dribbler(_body, true)   # снимет и флаг _pass_from_team (set_dribbler в Плане 1)
+	_enter_outfield()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1208,6 +1239,9 @@ func _catching(delta: float) -> void:
 		m.set_face_direction(Vector3(ball.global_position.x - _body.global_position.x, 0.0, into * 4.0))
 	# Геометрический захват: мяч дотянулся → приклеиваем к рукам.
 	if ball.is_flight() and _catch_radius_hit():
+		if _is_own_backpass():
+			_trap_backpass()   # намеренный пас своего — в ноги, не руками
+			return
 		ball.catch(_body, hold_point)
 	if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body:
 		if _state_timer <= 0.0:
