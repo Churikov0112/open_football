@@ -742,6 +742,52 @@ func assign_controlled_player(p: CharacterBody3D) -> void:
 	_sync_ai_controllers()
 
 
+## Источник намерения + профиль презентации для вратаря в HANDS. ЕДИНСТВЕННОЕ место хардкода
+## «team_1 = локальный человек»: swappable под ИИ-соперника/мультиплеер без правок keeper_ai.
+## take_control=true → менеджер отдаёт управление вратарю (голубой маркер над ним, HUD-заряд).
+func _keeper_hands_dispatch(keeper: Node) -> Dictionary:
+	var is_local_human: bool = keeper != null and keeper.is_in_group("team_1")
+	if is_local_human:
+		var cfg := {
+			"move_lat": [&"move_left", &"move_right"],
+			"move_vert": [&"move_forward", &"move_back"],
+			"aim_lat": [&"move_left", &"move_right"],
+			"aim_vert": [&"move_forward", &"move_back"],
+			"hand": &"keeper_hand",
+			"clear_center": &"keeper_clear_center",
+			"clear_directed": &"keeper_clear_directed",
+			"drop": &"keeper_drop",
+		}
+		return {
+			"intent": HumanKeeperHandsIntent.new(cfg),
+			"presentation": SetPiecePresentation.new(SetPiecePresentation.Role.KICKER),
+			"take_control": true,
+		}
+	return {
+		"intent": AIKeeperHandsIntent.new(FootballConstants.AI_KEEPER_THINK_TIME),
+		"presentation": SetPiecePresentation.new(SetPiecePresentation.Role.NONE),
+		"take_control": false,
+	}
+
+
+## Передать управление ближайшему ПОЛЕВОМУ team_1 к точке (приземление выноса / позиция адресата),
+## как приём паса: assign + begin_pass_receive (принимающий бежит на мяч). Вратарей исключаем.
+func keeper_handoff_control(point: Vector3) -> void:
+	var best: CharacterBody3D = null
+	var best_d := INF
+	for n in get_tree().get_nodes_in_group("team_1"):
+		if not is_instance_valid(n) or n.is_in_group("role_gk"):
+			continue
+		var d: float = n.global_position.distance_squared_to(point)
+		if d < best_d:
+			best_d = d
+			best = n
+	if best != null:
+		assign_controlled_player(best)
+		begin_pass_receive(best)
+		_manual_swap_cooldown = 30
+
+
 ## Глушим/возвращаем полевой ИИ на время пенальти/штрафного (вратаря НЕ трогаем — он должен
 ## нырять/реагировать). Тонкая обёртка над _set_ai_frozen — раньше это была отдельная слабая
 ## реализация (только по паре именованных игроков, без лока мотора), из-за чего ИИ-соперник
