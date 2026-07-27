@@ -57,10 +57,13 @@ flow-тесты (зовут `_fire_charge`/`_fire_shot` напрямую, мин
 
 ## Не сделано
 
-Авто-диспетч рестарта (кто получает `Human` vs `AIKickerIntent`) — реальный запуск контроллера есть
-**только у кикоффа**, и делает его `match_manager` (`_dispatch_kickoff`), а не `MatchReferee` (сигнал
-`restart_awarded` судьи пока ни к чему не подключён; см. [[начальный-удар]]). AI-поведение для четырёх
-конвертированных контроллеров не добавлено — рефактор сменил лишь источник ввода. Roadmap: `docs/superpowers/specs/2026-07-22-match-orchestration-
+Реальный запуск контроллера есть у **кикоффа** (прямой `_dispatch_kickoff` в `match_manager`, минуя
+сигнал; см. [[начальный-удар]]) и у **[[ввод-от-ворот|удара от ворот]]** (через **подключённый** сигнал
+`MatchReferee.restart_awarded` → `_on_restart_awarded` → `_dispatch_goal_kick`; судья при GOAL_KICK не
+делает интерим). Удар от ворот — первый, ожививший общий сигнал; остальные его типы (throw-in/corner/
+free-kick/penalty) пока не разведены в `_on_restart_awarded`. AI-поведение добавлено для удара от ворот
+(`AIGoalKickIntent` + `GoalKickPlan`); для **трёх** конвертированных контроллеров (штрафной/угловой/
+вброс) — ещё нет (рефактор сменил лишь источник ввода). Roadmap: `docs/superpowers/specs/2026-07-22-match-orchestration-
 roadmap-design.md`. Шов-тесты (инъектят фейковый `KickerIntent`, гоняют через `update()`):
 `check_*_intent.gd`, `check_human_kicker_intent.gd`, `check_ai_kicker_intent.gd`,
 `check_setpiece_kicker_no_touch.gd`. См. [[архитектура]] про судью.

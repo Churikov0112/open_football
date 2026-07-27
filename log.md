@@ -138,3 +138,9 @@ receive-assist, give-and-go, честный перехват. Математик
 `константы.md` сверена с кодом). CLAUDE.md ужат до трип-вайров. Хуки на Python (`python3` тут —
 сломанный алиас): session-start TOC, per-edit подсказка страницы, stop-check «код изменился —
 вики нет». Скилл `wiki-lint`. Перенято из проекта signs-recognizer.
+
+## [2026-07-28] feat | ИИ-удар от ворот + реальный запуск судьёй (Этап 2)
+`GoalKickPlan` (скорер: гейт дуги / коридор `interception_time` / продвижение) + `AIGoalKickIntent`
+(directional-playback). Первый стандарт через подключённый `restart_awarded` (`_on_restart_awarded`
+→ `_dispatch_goal_kick`); судья не делает интерим для GOAL_KICK. Law 16 (соперник вне штрафной) —
+непрерывно до удара, а не одноразово на SETUP. См. [[ввод-от-ворот]].

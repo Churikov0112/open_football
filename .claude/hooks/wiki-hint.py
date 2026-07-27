@@ -45,6 +45,8 @@ PAGES = {
     "corner_logic.gd":        "угловой",
     "goal_kick_controller.gd":"ввод-от-ворот",
     "goal_kick_logic.gd":     "ввод-от-ворот",
+    "goal_kick_plan.gd":      "ввод-от-ворот",
+    "ai_goal_kick_intent.gd": "ввод-от-ворот",
     "throw_in_controller.gd": "вбрасывание",
     "throw_in_logic.gd":      "вбрасывание",
     "kickoff_controller.gd":  "начальный-удар",
