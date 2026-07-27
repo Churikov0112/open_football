@@ -1,2 +1,5 @@
 # Raw Mixamo FBX — не распространяем (public/open-source); коммитим только собранный .glb
 assets/models/mixamo_src/
+
+# Python bytecode from .claude hooks
+.claude/hooks/__pycache__/
