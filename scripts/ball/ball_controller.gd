@@ -33,6 +33,7 @@ var _wobble_dir_n: float = 0.0               # плавный случайный
 var _wobble_lead_n: float = 0.0              # плавный случайный дрейф дистанции удержания [-1..1]
 var _flat_flight: bool = false               # true → настильный удар: держим мяч на газоне (vy=0), без подскока
 var _hold_node: Node3D = null                # узел-«руки» вратаря: пока CAUGHT, мяч приклеен к нему
+var _pass_from_team: StringName = &""        # команда намеренного паса (правило бэк-паса вратаря); пусто = нет
 
 
 func _ready() -> void:
@@ -84,6 +85,7 @@ func _draw_hexagon(img: Image, cx: float, cy: float, r: float, color: Color) -> 
 ## короткий/слабый пас доходит быстрее кулдауна релиза (500мс), иначе приём блокируется и
 ## мяч проносит мимо).
 func set_dribbler(node: Node3D, force: bool = false) -> void:
+	_pass_from_team = &""   # любой трап/ловля/дриблинг снимает метку намеренного паса
 	if not force:
 		var now := Time.get_ticks_msec()
 		if now - _last_release_time < _release_cooldown_msec:
@@ -172,6 +174,7 @@ func is_flight() -> bool:
 ## мяч в OPEN (коллизия с игроками выключается). Дальше — обычная борьба за подбор. Хук под
 ## вратарский сейв — отдельная SaveArea в будущем; пока обычный блок.
 func block_in_flight() -> void:
+	_pass_from_team = &""   # отскок/блок в полёте — НЕ пас (снимаем метку)
 	linear_velocity *= 0.25
 	angular_velocity = Vector3.ZERO
 	_curl = Vector3.ZERO
@@ -263,6 +266,15 @@ func note_kicker(node: Node3D) -> void:
 	note_touch(node)
 	_last_kick_time = Time.get_ticks_msec()
 	_begin_kick_grace(node)
+
+
+## Пометить мяч намеренным пасом команды (для правила бэк-паса вратаря). Ставится в fire_pass.
+func note_pass_from(team: StringName) -> void:
+	_pass_from_team = team
+
+
+func pass_from_team() -> StringName:
+	return _pass_from_team
 
 
 func get_dribble_direction() -> Vector3:

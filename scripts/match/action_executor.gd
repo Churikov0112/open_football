@@ -23,6 +23,7 @@ var _pass_rng := RandomNumberGenerator.new()
 var _pending_launch: Vector3 = Vector3.ZERO
 var _pending_curl: Vector3 = Vector3.ZERO
 var _pending_flat: bool = false   # true → настильный удар низом (мяч катится без подскока)
+var _pending_pass_team: StringName = &""   # команда пасующего для метки бэк-паса; &"" для удара (не пас)
 
 func setup(manager: Node, ball: RigidBody3D) -> void:
 	_manager = manager
@@ -134,6 +135,7 @@ func fire_shot(action: int, player: CharacterBody3D, charge_ratio: float, facing
 	_pending_launch = launch_vel
 	_pending_curl = curl
 	_pending_flat = ground_shot
+	_pending_pass_team = &""   # удар — не пас: мяч не помечаем меткой бэк-паса
 	var visual: PlayerVisual = _manager._player_visual(player)
 	if visual != null and visual.trigger("kick"):
 		return  # ждём action_contact
@@ -297,6 +299,9 @@ func fire_pass(action: int, player: CharacterBody3D, charge_ratio: float, facing
 	_pending_launch = launch_vel
 	_pending_curl = Vector3.ZERO  # пас не крутится (сброс остаточного curl от прошлого кручёного удара)
 	_pending_flat = false         # пас — не настильный удар (сброс флага от прошлого удара низом)
+	# Метка намеренного паса команды (правило бэк-паса вратаря). Проставляется на мяч в момент
+	# реального launch (fallback ниже И on_action_contact) — не здесь, т.к. мяч ещё у ног.
+	_pending_pass_team = &"team_1" if player.is_in_group("team_1") else &"team_2"
 	# Передать управление принимающему сразу.
 	if receiver != null:
 		_manager.controlled_player = receiver
@@ -317,6 +322,8 @@ func fire_pass(action: int, player: CharacterBody3D, charge_ratio: float, facing
 	if visual != null and visual.trigger("pass"):
 		return
 	_ball.launch(launch_vel)
+	if _pending_pass_team != &"" and _ball.has_method(&"note_pass_from"):
+		_ball.note_pass_from(_pending_pass_team)
 	_action_player = null
 	_kick_action_active = false
 
@@ -352,6 +359,10 @@ func on_action_contact(_action: String, player: Node) -> void:
 			_ball.launch_curl(_pending_launch, _pending_curl, _pending_flat)
 		else:
 			_ball.launch(_pending_launch, _pending_flat)
+		# Метка бэк-паса — ПОСЛЕ launch (launch не трогает _pass_from_team). Только для паса
+		# (_pending_pass_team != &""); удар сбрасывает поле в &"" в fire_shot.
+		if _pending_pass_team != &"" and _ball.has_method(&"note_pass_from"):
+			_ball.note_pass_from(_pending_pass_team)
 	elif _ball.has_method(&"kick"):
 		_ball.kick(_action_dir, _action_power)
 
