@@ -640,6 +640,11 @@ func hands_charge_ratio() -> float:
 
 func _hands(delta: float) -> void:
 	_hands_timer -= delta
+	if _hands_timer <= 0.0:
+		# Правило 6 секунд: принудительный вынос к центру + управление уходит (как CLEAR_CENTER).
+		print("[KEEPER] 6-second rule → forced center clear")
+		_do_center_clear()
+		return
 	var m := _motor()
 	if m == null or _hands_intent == null:
 		return
