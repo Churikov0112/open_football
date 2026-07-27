@@ -178,6 +178,7 @@ func _ready() -> void:
 	# (team_2 при текущей расстановке). Выводим из ростера, без singleton-вратаря.
 	var tdn := 2 if _team_away.attack_z_sign > 0.0 else 1
 	_referee.setup(self, ball, tdn)
+	_referee.restart_awarded.connect(_on_restart_awarded)
 	# Старт матча: жеребьёвка, кто разводит первым — реальный кикофф вместо старого «мяч человеку
 	# в ноги напрямую». KickoffLogic.coin_flip — чистая функция (тестируется с фиксированным seed
 	# отдельно, см. check_kickoff_logic.gd); здесь — обычный randomize() для реальной игры.
@@ -2272,6 +2273,58 @@ func _dispatch_kickoff(kicking_team: int) -> void:
 		intent = AIKickoffIntent.new(kicker_pos, base_heading, partner_pos)
 		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.NONE)
 	_kickoff.start(kicking_team, intent, presentation)
+
+
+## Слушатель сигнала судьи. Пока обрабатывает только GOAL_KICK (кикофф едет своим путём
+## _dispatch_kickoff; throw-in/corner остаются на интериме судьи до своих этапов).
+func _on_restart_awarded(restart_type: int, team: int, spot: Vector3) -> void:
+	if restart_type == RefereeLogic.Restart.GOAL_KICK:
+		_dispatch_goal_kick(team, spot)
+
+
+## Поднять реальный контроллер удара от ворот. team_1 (человек) → рулит вратарём, Role.KICKER.
+## team_2 (ИИ) → GoalKickPlan решает получателя/вариант/силу, AIGoalKickIntent проигрывает,
+## Role.NONE («наблюдатель», камера не трогается). Сторона ворот — по знаку spot.z.
+func _dispatch_goal_kick(team: int, spot: Vector3) -> void:
+	if _goal_kick == null:
+		return
+	var goal_line_z := -field_length if spot.z < 0.0 else field_length
+	var keeper := _keeper_at(goal_line_z)
+	if keeper == null:
+		return
+	var intent: KickerIntent = null
+	var presentation: SetPiecePresentation
+	if team == 1:
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
+	else:
+		var into := -signf(goal_line_z)
+		var attack_dir := Vector3(0.0, 0.0, into)
+		var spot_c := GoalKickLogic.spot_position(goal_line_z, into,
+			FootballConstants.GOAL_AREA_DEPTH, FootballConstants.BALL_RADIUS)
+		# Кандидаты (свои полевые team_2) и соперники (полевые team_1) — в ПОСТ-расчистных позициях
+		# (иначе скорер решает по устаревшей геометрии: соперник в штрафной будет вытолкнут к удару).
+		var candidates: Array = []
+		for b in _team_away.outfield():
+			candidates.append(GoalKickLogic.push_out_of_goal_area((b as Node3D).global_position,
+				goal_line_z, into, FootballConstants.GOAL_AREA_DEPTH,
+				FootballConstants.GOAL_AREA_WIDTH * 0.5, FootballConstants.GK_CLEAR_MARGIN))
+		var opponents: Array = []
+		for b in _team_home.outfield():
+			opponents.append(GoalKickLogic.push_out_of_penalty_area((b as Node3D).global_position,
+				goal_line_z, into, FootballConstants.PENALTY_AREA_DEPTH,
+				FootballConstants.PENALTY_AREA_WIDTH * 0.5, FootballConstants.GK_ENCROACH_MARGIN))
+		var plan := GoalKickPlan.choose(spot_c, attack_dir, FootballConstants.GK_AIM_ARC,
+			candidates, opponents,
+			FootballConstants.GK_GROUND_MIN_DIST, FootballConstants.GK_GROUND_MAX_DIST,
+			FootballConstants.GK_LOB_MIN_DIST, FootballConstants.GK_LOB_MAX_DIST,
+			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED,
+			FootballConstants.AI_GOALKICK_OPP_SPEED,
+			FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD,
+			FootballConstants.AI_GOALKICK_UPFIELD_WEIGHT)
+		intent = AIGoalKickIntent.new(attack_dir, plan["aim_dir"], plan["variant"], plan["power_ratio"])
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.NONE)
+	_goal_kick.start(keeper, goal_line_z, intent, presentation)
 
 
 ## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через NET_CELEBRATION_TIME —
