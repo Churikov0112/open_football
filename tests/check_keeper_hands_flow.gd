@@ -26,10 +26,13 @@ func _initialize() -> void:
 func _tick() -> void:
 	_frames += 1
 	if _frames == 5:
+		_mm.set_kickoff_active(false)   # живая игра: кикофф больше не держит мяч в центре
 		_keeper = _mm._team_home.keeper()
 		_brain = _keeper.brain()
 		# Инжектируем фейк-интент: keeper_ai возьмёт его вместо диспетча (см. _enter_hands override-хук).
 		_brain._hands_intent_override = _fake
+		# Мяч К ВРАТАРЮ перед ловлей: иначе _handle_dribbling видит пойманный мяч далеко и отпускает.
+		_mm.ball.global_position = _keeper.global_position + Vector3(0, 1.0, 0)
 		# Ставим мяч в руки вратаря и запускаем HANDS напрямую (минуя всю сейв-цепочку).
 		_mm.ball.catch(_keeper, _brain.hold_point)
 		_brain._enter_hands()
@@ -64,6 +67,10 @@ func _tick() -> void:
 	if _frames == 140:
 		if _mm.ball.dribbler == _keeper or _mm.ball.is_caught():
 			print("CHECK FAIL: мяч всё ещё в руках после раздачи A"); quit(1); return
+		# Мяч реально ВЫПУЩЕН (улетел рукой от вратаря), а не просто отпущен на месте.
+		var flew: float = _mm.ball.global_position.distance_to(_keeper.global_position)
+		if flew < 3.0:
+			print("CHECK FAIL: мяч не улетел рукой от вратаря (flew=", flew, ")"); quit(1); return
 		if _mm.controlled_player == _keeper:
 			print("CHECK FAIL: управление не ушло с вратаря после раздачи A"); quit(1); return
 		print("CHECK PASS: keeper hands: enter+move+charge+hand-release")
