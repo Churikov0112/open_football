@@ -32,6 +32,9 @@ func _tick() -> void:
 		_fail("нет controlled_player"); return
 	match _phase:
 		0:
+			# Кикофф при старте матча держит мяч в центре и глушит нашу инъекцию (тест старше
+			# авто-кикоффа) — гасим, как в check_keeper_clear/HANDS-тестах.
+			_mm.set_kickoff_active(false)
 			# Мяч в ноги игроку, гасим его скорость — чистая точка старта паса.
 			ball.global_position = player.global_position + Vector3(0, 0.1, 0)
 			ball.linear_velocity = Vector3.ZERO

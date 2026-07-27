@@ -847,7 +847,11 @@ func _setup_keeper(team: Team, goal_line_z: float, kit_color: Color) -> Characte
 	cfg.spawn_pos = Vector3(0, 0.5, goal_line_z + into_field * 0.5)
 	cfg.display_name = "Keeper_" + str(team.team_group)
 	cfg.ai_script = preload("res://scripts/ai/keeper_ai.gd")
-	cfg.connect_action_signals = false        # keeper_ai сам коннектит visual.action_contact
+	# Сигналы visual идут И менеджеру (ActionExecutor: полевые пасы/удары вратаря в OUTFIELD —
+	# без этого armed-пас никогда не получает контакт и мяч не запускается), И keeper_ai
+	# (self-connect в _ensure_wired: свои клипы раздачи). Оба обработчика гейтятся: экзекьютор —
+	# по player == _action_player, keeper_ai — по своим клипам/состояниям; двойной запуск исключён.
+	cfg.connect_action_signals = true
 	cfg.locomotion_style = PlayerVisual.LOCO_STYLE_KEEPER
 	var k := PlayerFactory.spawn(cfg, team)
 	var kb: Node = k.brain()                    # keeper теперь Brain-компонент
@@ -1181,7 +1185,12 @@ func _physics_process(delta: float) -> void:
 	var opp_has_ball: bool = ball.has_method(&"set_dribbler") and ball.dribbler and ball.dribbler.is_in_group("team_2")
 	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess() \
 			and (opp_has_ball or _opponent_closer_to_ball(controlled_player)):
-		var team := get_tree().get_nodes_in_group("team_1")
+		# Вратарь исключён из пула кандидатов: в обороне (мяч не у нас) он всегда ИИ —
+		# управляемым он становится только сам, через ловлю (HANDS) или приём бэк-паса (OUTFIELD).
+		var team: Array = []
+		for tn in get_tree().get_nodes_in_group("team_1"):
+			if is_instance_valid(tn) and not tn.is_in_group("role_gk"):
+				team.append(tn)
 		if team.size() > 1:
 			var ball_pos := ball.global_position
 			var sorted: Array = team.duplicate()
