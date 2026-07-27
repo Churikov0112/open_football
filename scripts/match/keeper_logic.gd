@@ -13,6 +13,26 @@ static func line_position(ball_pos: Vector3, goal_line_z: float, goal_half_width
 	var into_field := -1.0 if goal_line_z > 0.0 else 1.0
 	return Vector3(x, 0.0, goal_line_z + into_field * off)
 
+## Угловое позиционирование (перенято из OpenSoccer moveKeeper): стоим на луче «центр ворот →
+## (предсказанный по скорости) мяч» на расстоянии aggression от линии. base_off — покой (центр
+## вратарской), max_off — выход навстречу удару; danger∈[0,1] лерпит между ними. Никогда не
+## забегаем ЗА мяч (кламп по дистанции); X ограничен шириной створа. Так X корректно следует за
+## УГЛОМ на ворота (а не просто = X мяча), и покойная точка — центр вратарской, не линия.
+static func angle_position(ball_pos: Vector3, ball_vel: Vector3, goal_line_z: float, goal_half_width: float, look: float, base_off: float, max_off: float, danger: float) -> Vector3:
+	var goal_center := Vector3(0.0, 0.0, goal_line_z)
+	var predicted := ball_pos + ball_vel * look
+	var to_ball := Vector3(predicted.x - goal_center.x, 0.0, predicted.z - goal_center.z)
+	var dist := to_ball.length()
+	if dist < 0.001:
+		return Vector3(0.0, 0.0, goal_line_z)
+	var dir := to_ball / dist
+	var aggression := lerpf(base_off, max_off, clampf(danger, 0.0, 1.0))
+	aggression = clampf(aggression, 0.5, maxf(dist - 0.5, 0.5))   # не за мяч, но всегда чуть от линии
+	var pos := goal_center + dir * aggression
+	pos.y = 0.0
+	pos.x = clampf(pos.x, -goal_half_width, goal_half_width)
+	return pos
+
 ## Точка пересечения траектории удара с плоскостью линии ворот (z=goal_line_z).
 ## ЧИСЛЕННО, тем же интегратором, что и настоящий мяч: гравитация по Y + драг
 ## (drag_xz/drag_y — множители скорости ЗА ФИЗКАДР dt, как в ball_controller).

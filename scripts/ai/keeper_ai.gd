@@ -241,17 +241,17 @@ func _position(delta: float) -> void:
 	if _freekick_mode:
 		target = _freekick_anchor
 	else:
-		target = KeeperLogic.line_position(ball.global_position, goal_line_z, FootballConstants.GOAL_WIDTH * 0.5,
-			FootballConstants.KEEPER_LINE_NARROW_GAIN, FootballConstants.KEEPER_MAX_OFF_LINE)
-		# «Выход из ворот» (off-line advance) — ТОЛЬКО против реальной угрозы (мяч летит В створ
-		# прямо сейчас), а не по голой дистанции мяча до линии. Раньше line_position реагировала
-		# на любую близость мяча к линии — включая обычный пас между СВОИМИ игроками рядом со
-		# штрафной (мяч ничем не угрожает воротам), и вратарь всё равно рвался вперёд на 2.5м.
-		# Без угрозы держим X (следим за мячом по горизонтали) но Z фиксируем на линии ворот.
-		if not (ball.is_flight() and _heading_at_goal()):
-			# Базовая стойка — глубина ЦЕНТРА вратарской площади (не линия ворот): и выглядит
-			# правильно, и бэк-пас к вратарю не пересекает линию у него за спиной (см. плейтест).
-			target.z = goal_line_z + into * (FootballConstants.GOAL_AREA_DEPTH * 0.5)
+		# Угловое позиционирование (OpenSoccer-стиль): стоим на луче «центр ворот → мяч». Покой
+		# (danger=0) — центр вратарской; выход навстречу — ТОЛЬКО против реального удара в створ,
+		# тем дальше, чем ближе мяч (danger растёт по близости). Без угрозы (пас своих/дриблинг
+		# рядом с боксом) вратарь НЕ рвётся вперёд — сидит на базовой глубине под углом на мяч.
+		var danger := 0.0
+		if ball.is_flight() and _heading_at_goal():
+			var dz_ball := absf(ball.global_position.z - goal_line_z)
+			danger = clampf(1.0 - dz_ball / FootballConstants.KEEPER_ALERT_DIST, 0.0, 1.0)
+		target = KeeperLogic.angle_position(ball.global_position, ball.linear_velocity, goal_line_z,
+			FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.KEEPER_POS_LOOK,
+			FootballConstants.KEEPER_BASE_OFF_LINE, FootballConstants.KEEPER_MAX_OFF_LINE, danger)
 	# База: вратарь-ИИ не покидает штрафную (фикс over-rush на шальной мяч рядом с боксом).
 	target = KeeperPlayLogic.clamp_to_penalty_area(target, goal_line_z, into,
 		FootballConstants.PENALTY_AREA_DEPTH, FootballConstants.PENALTY_AREA_WIDTH * 0.5)
@@ -988,13 +988,20 @@ func _returning(_delta: float) -> void:
 
 ## Мяч — намеренный пас СВОЕЙ команды (бэк-пас)? Тогда руками брать нельзя (правило футбола).
 func _is_own_backpass() -> bool:
-	if not (ball.has_method(&"pass_from_team")):
-		return false
-	var pf: StringName = ball.pass_from_team()
-	if pf == &"":
-		return false
 	var my_group := &"team_1" if _body.is_in_group("team_1") else &"team_2"
-	return pf == my_group
+	# (a) Явная метка намеренного паса своих (note_pass_from — полевой пас/сет-пис) — ЛЮБОЙ скорости.
+	if ball.has_method(&"pass_from_team") and ball.pass_from_team() == my_group:
+		return true
+	# (b) Перенято из OpenSoccer («не беру мяч своих»): мяч БЕСХОЗНЫЙ (не под контролем), последним
+	# трогал СВОЙ полевой (не сам вратарь) и он МЕДЛЕННЫЙ — пас/скидка/скатившийся мяч, берём в
+	# ноги. Быстрый мяч своих (возможный рикошет удара) НЕ считаем бэк-пасом — его ловит/отбивает
+	# сейв-рефлекс (руки/нырок). Мяч под контролем (дриблит кто-либо) — тоже не трогаем (владение).
+	if ball.dribbler == null:
+		var lt: Node = ball.last_touch
+		if lt != null and is_instance_valid(lt) and lt != _body and lt.is_in_group(my_group) \
+				and ball.linear_velocity.length() < FootballConstants.KEEPER_BACKPASS_SPEED_CAP:
+			return true
+	return false
 
 
 ## Пассивный режим на пас своих: одноразовый вход (обнулить мотор/лицо, обычный idle), дальше
