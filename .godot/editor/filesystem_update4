@@ -1,6 +1,1 @@
-res://scripts/match/human_keeper_intent.gd
-res://scripts/match/match_manager.gd
 res://scripts/ai/keeper_ai.gd
-res://scripts/match/penalty_controller.gd
-res://docs/football_reference.md
-res://scripts/data/football_constants.gd
