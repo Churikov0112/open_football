@@ -694,7 +694,9 @@ func _fire_hands(action: int, ratio: float) -> void:
 	match action:
 		KeeperHandsIntent.Action.HAND:
 			_begin_hand(ratio)
-		# CLEAR_CENTER — Задача 6; CLEAR_DIRECTED — Задача 7; DROP — Задача 9.
+		KeeperHandsIntent.Action.CLEAR_CENTER:
+			_do_center_clear()
+		# CLEAR_DIRECTED — Задача 7; DROP — Задача 9.
 		_:
 			print("[KEEPER] _fire_hands unhandled action=", action)
 
@@ -772,6 +774,29 @@ func _do_hand_release() -> void:
 	if m != null:
 		m.set_control_locked(false)
 	_hand_target_pos = Vector3.ZERO
+	_state = State.POSITION
+
+
+## Вынос ногой к центру поля (drop-kick), фикс-сильно. Управление — ближайшему team_1 у приземления.
+func _do_center_clear() -> void:
+	var into := signf(-goal_line_z)
+	var vel := KeeperPlayLogic.clear_center_vector(into, FootballConstants.KEEPER_CLEAR_SPEED,
+		FootballConstants.KEEPER_CLEAR_LIFT)
+	var from := _body.global_position
+	if ball.dribbler == _body or ball.is_caught():
+		var bp := ball.global_position
+		ball.global_position = Vector3(bp.x, FootballConstants.BALL_RADIUS + 0.3, bp.z)
+		ball.launch(vel)
+	# Точка приземления (грубо): по дальности выноса вдоль into.
+	var land := from + Vector3(0.0, 0.0, into) * FootballConstants.KEEPER_THROW_DISTANCE
+	if manager != null and manager.has_method(&"keeper_handoff_control"):
+		manager.keeper_handoff_control(land)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)
+	var vis := _visual()
+	if vis != null:
+		vis.trigger("keeper_drop_kick")   # визуал выноса (мяч уже запущен — клип косметический)
 	_state = State.POSITION
 
 
