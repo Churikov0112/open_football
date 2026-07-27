@@ -9,7 +9,7 @@ var save_area: Area3D
 var hold_point: Node3D   # узел-«руки»: пойманный мяч приклеивается сюда
 var manager: Node   # match_manager — для проверки празднования гола
 
-enum State { POSITION, DIVE, CATCHING, HOLD, DISTRIBUTE, PLACING, CARRY, FIELD_PASS, THROWING }
+enum State { POSITION, DIVE, CATCHING, HOLD, DISTRIBUTE, PLACING, CARRY, FIELD_PASS, THROWING, HANDS, OUTFIELD }
 var _state: int = State.POSITION
 # ВРЕМЕННЫЙ хардкод-сценарий раздачи «placing ball» (для теста полевой логики вратаря):
 # HOLD → PLACING (ставит мяч рукой на газон) → CARRY (дриблинг 5м как полевой) → FIELD_PASS
@@ -32,6 +32,18 @@ var _state_timer: float = 0.0
 var _distribute_fired: bool = false
 var _ground_y: float = 0.5   # уровень газона (высота тела в стойке), для приземления после нырка
 var _high_roll: int = -1   # бросок «взять/пропустить» высокий центр (зона 2.0..2.5): -1=нет, 0=пропуск, 1=ловля
+
+# HANDS-режим (мяч в руках, управляемый актёр — План 2).
+var _hands_intent: KeeperHandsIntent = null
+var _hands_presentation: SetPiecePresentation = null
+var _hands_intent_override: KeeperHandsIntent = null   # тест инжектит фейк-интент, минуя диспетч
+var _hands_take_control: bool = false
+var _hands_timer: float = 0.0            # обратный отсчёт 6 секунд
+var _hands_charging: bool = false
+var _hands_charge: float = 0.0
+var _hands_charge_action: int = KeeperHandsIntent.Action.NONE
+var _hand_is_throw: bool = false         # true → бросок верхом (удержание), false → раскат низом (тап)
+var _hand_target_pos: Vector3 = Vector3.ZERO   # точка адресата для handoff
 
 # Пенальти-подрежим (Фаза A): держим центр, реактивный боковой сейв off; нырок — по команде.
 var _penalty_mode: bool = false
@@ -125,6 +137,10 @@ func _physics_process(delta: float) -> void:
 			_field_pass(delta)
 		State.THROWING:
 			_throwing(delta)
+		State.HANDS:
+			_hands(delta)
+		State.OUTFIELD:
+			pass   # телом в OUTFIELD владеет менеджер (полевой путь); Задача 9
 
 
 ## Держим линию: X за мячом, лицом к мячу, лёгкий выход под угол. При ударе в створ —
@@ -469,7 +485,7 @@ func _dive(delta: float) -> void:
 	_dive_time_left -= delta
 	if _dive_time_left <= 0.0:
 		if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body:
-			_to_hold()   # поймали в нырке — мяч в руках, держим и выносим
+			_enter_hands()   # поймали в нырке — мяч в руках, управляемый актёр (План 2)
 		else:
 			_finish_dive()
 
@@ -577,6 +593,82 @@ func _hold(delta: float) -> void:
 		# ВРЕМЕННО активна раздача БРОСКОМ ВЕРХОМ (_to_overhand_throw). Сценарии placing-ball
 		# (_to_placing) и раскат низом (_to_distribute) сохранены, но не вызываются.
 		_to_overhand_throw()
+
+
+## Мяч пойман → HANDS: спрашиваем менеджера, кто ведёт (диспетч), берём мяч в руки, стартуем 6 сек.
+## Заменяет авто-цепочку _to_hold→_hold→_to_overhand_throw для управляемого вратаря.
+func _enter_hands() -> void:
+	_state = State.HANDS
+	_hands_timer = FootballConstants.KEEPER_SIX_SECOND_TIME
+	_hands_charging = false
+	_hands_charge = 0.0
+	_pass_through = false
+	# Источник намерения + презентация: тест инжектит override; иначе диспетч менеджера.
+	if _hands_intent_override != null:
+		_hands_intent = _hands_intent_override
+		_hands_presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
+		_hands_take_control = true
+	elif manager != null and manager.has_method(&"_keeper_hands_dispatch"):
+		var d: Dictionary = manager._keeper_hands_dispatch(_body)
+		_hands_intent = d.get("intent", null)
+		_hands_presentation = d.get("presentation", null)
+		_hands_take_control = d.get("take_control", false)
+	# Управление человеку: keeper становится controlled_player (голубой маркер над ним сам появится).
+	if _hands_take_control and manager != null and manager.has_method(&"assign_controlled_player"):
+		manager.assign_controlled_player(_body)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)   # человек/ИИ теперь ДВИГАЕТ вратаря в штрафной (не вкопанно)
+	var vis := _visual()
+	if vis != null:
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+		vis.play_oneshot(&"keeper_idle_ball")   # поза удержания (carry-бленд бега — План 3)
+
+
+## Вратарь сейчас владеет мячом в руках (HANDS)? Менеджер использует, чтобы НЕ двигать его своим
+## полевым вводом (в HANDS телом владеет keeper_ai через KeeperHandsIntent).
+func is_hands_active() -> bool:
+	return _state == State.HANDS
+
+
+## Текущий заряд дистанции (A/B) как доля [0..1], либо -1 если не заряжает. Менеджер рисует power-bar.
+func hands_charge_ratio() -> float:
+	if not _hands_charging:
+		return -1.0
+	return clampf(_hands_charge / FootballConstants.KEEPER_DIST_CHARGE_MAX, 0.0, 1.0)
+
+
+func _hands(delta: float) -> void:
+	_hands_timer -= delta
+	var m := _motor()
+	if m == null or _hands_intent == null:
+		return
+	# Движение в штрафной по move_axis, преобразованному камера-относительно НЕ нужно: вратарь и
+	# камера на одной стороне; берём оси мира (x=боковое, y=вглубь поля). Кламп цели в штрафную.
+	var mv := _hands_intent.move_axis()
+	if mv.length() > 0.15:
+		var into := -1.0 if goal_line_z > 0.0 else 1.0
+		var world_dir := Vector3(mv.x, 0.0, -mv.y * into)   # стик «вверх» = вглубь поля (into)
+		# Предиктивный кламп: не даём цели-намерению вывести за штрафную.
+		var next_pos := _body.global_position + world_dir.normalized() * 1.0
+		var clamped := KeeperPlayLogic.clamp_to_penalty_area(next_pos, goal_line_z, into,
+			FootballConstants.PENALTY_AREA_DEPTH, FootballConstants.PENALTY_AREA_WIDTH * 0.5)
+		var allow := clamped - _body.global_position
+		allow.y = 0.0
+		if allow.length() > 0.05:
+			m.set_move_intent(allow.normalized(), FootballConstants.KEEPER_HANDS_MOVE_SPEED)
+		else:
+			m.set_move_intent(Vector3.ZERO)
+		m.set_face_direction(world_dir)
+	else:
+		m.set_move_intent(Vector3.ZERO)
+	# Жёсткий кламп позиции (страховка от инерции мотора за пределы штрафной).
+	var into2 := -1.0 if goal_line_z > 0.0 else 1.0
+	var boxed := KeeperPlayLogic.clamp_to_penalty_area(_body.global_position, goal_line_z, into2,
+		FootballConstants.PENALTY_AREA_DEPTH, FootballConstants.PENALTY_AREA_WIDTH * 0.5)
+	_body.global_position.x = boxed.x
+	_body.global_position.z = boxed.z
+	# Раздача A/X/B/Y — Задачи 5–8. 6 секунд — Задача 8. Пока действия игнорируются.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -919,7 +1011,7 @@ func _catching(delta: float) -> void:
 		ball.catch(_body, hold_point)
 	if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body:
 		if _state_timer <= 0.0:
-			_to_hold()   # клип доиграл — держим мяч и выносим
+			_enter_hands()   # клип доиграл — мяч в руках, управляемый актёр (План 2)
 		return
 	# Не поймал: мяч пересёк линию (за спиной) или окно давно истекло → в стойку (гол).
 	var into2 := -1.0 if goal_line_z > 0.0 else 1.0

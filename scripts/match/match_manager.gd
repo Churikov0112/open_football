@@ -1333,6 +1333,13 @@ func _handle_player_input(delta: float) -> void:
 		return
 	if not controlled_player:
 		return
+	# Вратарь с мячом в руках (HANDS) сам ведёт своё тело через KeeperHandsIntent — менеджер его
+	# НЕ двигает (иначе два владельца тела дерутся). В OUTFIELD (мяч в ногах) keeper_ai заглушён,
+	# и вратарь ведётся обычным полевым путём ниже — тогда этот гейт НЕ срабатывает.
+	if controlled_player.is_in_group("role_gk"):
+		var kb: Node = _ai_of(controlled_player)
+		if kb.has_method(&"is_hands_active") and kb.is_hands_active():
+			return
 	if _action_executor.action_player() == controlled_player and not _action_executor.is_kick_action_active():
 		return
 	var input_vec := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
