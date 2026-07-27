@@ -172,12 +172,17 @@ func _pass_params(action: int, charge_ratio: float) -> PassParams:
 
 
 ## Позиции/скорости/узлы группы в параллельных массивах (индекс общий). Исключает except_node.
+## Вратарь (role_gk) исключён: авто-аим паса НЕ выбирает его получателем (иначе управление
+## отдавалось бы ему в полёте, и он стоял бы в воротах, пока мяч закатывается) — пас «на вратаря»
+## летит как помеченный бэк-пас, и вратарь-ИИ сам бежит на мяч, принимает в ноги → OUTFIELD, и
+## лишь ТОГДА авто-свап делает его controlled. Для перехвата соперником вратарь тоже не кандидат.
 func _team_arrays(group: StringName, except_node: Node) -> Dictionary:
 	var positions := PackedVector3Array()
 	var velocities := PackedVector3Array()
 	var nodes: Array[Node3D] = []
 	for n in get_tree().get_nodes_in_group(group):
-		if n == except_node or not (n is CharacterBody3D) or not is_instance_valid(n):
+		if n == except_node or not (n is CharacterBody3D) or not is_instance_valid(n) \
+				or n.is_in_group("role_gk"):
 			continue
 		positions.append(n.global_position)
 		velocities.append(n.velocity)
