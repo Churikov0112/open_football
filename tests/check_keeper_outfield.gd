@@ -48,7 +48,7 @@ func _tick() -> void:
 			print("CHECK FAIL: вратарь схватил мяч руками в возврате"); quit(1); return
 		if _b._state != _b.State.POSITION:
 			print("CHECK FAIL: не вернулся в POSITION домой (state=", _b._state, ")"); quit(1); return
-		# Дома: близко к линии ворот.
-		if absf(_k.global_position.z - _b.goal_line_z) > 3.0:
+		# Дома: в пределах вратарской площади (базовая стойка — её центр, ~2.75м + допуск прибытия).
+		if absf(_k.global_position.z - _b.goal_line_z) > FootballConstants.GOAL_AREA_DEPTH:
 			print("CHECK FAIL: вратарь не добежал домой (z=", _k.global_position.z, ")"); quit(1); return
 		print("CHECK PASS: keeper outfield loss → sprint home → POSITION (no hands, no teleport)"); quit(0); return

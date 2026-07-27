@@ -844,7 +844,9 @@ func _setup_keeper(team: Team, goal_line_z: float, kit_color: Color) -> Characte
 	cfg.team_group = team.team_group
 	cfg.role = PlayerConfig.Role.GK
 	cfg.kit_color = kit_color
-	cfg.spawn_pos = Vector3(0, 0.5, goal_line_z + into_field * 0.5)
+	# Базовая позиция — центр ВРАТАРСКОЙ площади (не линия ворот); на линию его ставят только
+	# пенальти/штрафной сами (set_penalty_mode/set_freekick_anchor телепортируют куда им надо).
+	cfg.spawn_pos = Vector3(0, 0.5, goal_line_z + into_field * (FootballConstants.GOAL_AREA_DEPTH * 0.5))
 	cfg.display_name = "Keeper_" + str(team.team_group)
 	cfg.ai_script = preload("res://scripts/ai/keeper_ai.gd")
 	# Сигналы visual идут И менеджеру (ActionExecutor: полевые пасы/удары вратаря в OUTFIELD —

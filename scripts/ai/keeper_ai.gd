@@ -141,11 +141,16 @@ func _physics_process(delta: float) -> void:
 	if _state == State.POSITION and ball.dribbler == _body and not ball.is_caught():
 		_enter_outfield()
 		return
-	# Летит намеренный пас СВОЕЙ команды (бэк-пас/розыгрыш): вратарь ПАССИВЕН — телом владеет
-	# менеджер (receive-assist + ввод, ровно как у полевого получателя). Никаких сейв-рефлексов,
-	# выходов к линии штрафной и анимаций ловли: обычный idle, ждём трап в ноги.
+	# Летит намеренный пас СВОЕЙ команды (бэк-пас/розыгрыш). Никаких сейв-рефлексов и анимаций
+	# ловли. Пас НА вратаря (он controlled) → полностью пассивен, телом владеет менеджер
+	# (receive-assist, как полевой получатель). Иначе → подстраховка: держимся между мячом и
+	# створом, мяч дотянулся → трап В НОГИ (мимо вратаря пас больше не закатывается в ворота).
 	if _state == State.POSITION and _is_own_backpass():
-		_backpass_passive()
+		if manager != null and manager.controlled_player == _body:
+			_backpass_passive()
+		else:
+			_bp_passive = false
+			_backpass_guard()
 		return
 	_bp_passive = false
 	# Празднование гола: новых сейвов/выносов не начинаем (иначе вратарь ловит осевший в сетке
@@ -244,7 +249,9 @@ func _position(delta: float) -> void:
 		# штрафной (мяч ничем не угрожает воротам), и вратарь всё равно рвался вперёд на 2.5м.
 		# Без угрозы держим X (следим за мячом по горизонтали) но Z фиксируем на линии ворот.
 		if not (ball.is_flight() and _heading_at_goal()):
-			target.z = goal_line_z + into * 0.5
+			# Базовая стойка — глубина ЦЕНТРА вратарской площади (не линия ворот): и выглядит
+			# правильно, и бэк-пас к вратарю не пересекает линию у него за спиной (см. плейтест).
+			target.z = goal_line_z + into * (FootballConstants.GOAL_AREA_DEPTH * 0.5)
 	# База: вратарь-ИИ не покидает штрафную (фикс over-rush на шальной мяч рядом с боксом).
 	target = KeeperPlayLogic.clamp_to_penalty_area(target, goal_line_z, into,
 		FootballConstants.PENALTY_AREA_DEPTH, FootballConstants.PENALTY_AREA_WIDTH * 0.5)
@@ -956,11 +963,15 @@ func _begin_returning() -> void:
 
 ## Рывок к линии ворот (центр створа). Дома (в пределах 1 м) → стойка + обычный сейв-режим.
 func _returning(_delta: float) -> void:
+	# Страховка каждый тик: возвращающийся вратарь — всегда ИИ; если управление каким-то путём
+	# осталось/вернулось на него — снять немедленно (LB-свап на вратаря уже исключён в менеджере).
+	if manager != null and manager.controlled_player == _body and manager.has_method(&"keeper_handoff_control"):
+		manager.keeper_handoff_control(_body.global_position)
 	var m := _motor()
 	if m == null:
 		return
 	var into := -1.0 if goal_line_z > 0.0 else 1.0
-	var home := Vector3(0.0, _body.global_position.y, goal_line_z + into * 0.5)
+	var home := Vector3(0.0, _body.global_position.y, goal_line_z + into * (FootballConstants.GOAL_AREA_DEPTH * 0.5))
 	var to := home - _body.global_position
 	to.y = 0.0
 	if to.length() <= 1.0:
@@ -1002,6 +1013,36 @@ func _backpass_passive() -> void:
 	if vis != null:
 		vis.recover()
 		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)
+
+
+## Подстраховка при пасе своих НЕ на вратаря: держимся между мячом и створом на глубине центра
+## вратарской, лицом на мяч; мяч в досягаемости → трап В НОГИ. Обычный бег, без сейв-анимаций —
+## шальной бэк-пас больше не закатывается в пустые ворота мимо стоящего на линии вратаря.
+func _backpass_guard() -> void:
+	var m := _motor()
+	if m == null:
+		return
+	var to_ball := ball.global_position - _body.global_position
+	to_ball.y = 0.0
+	if to_ball.length() <= FootballConstants.KEEPER_REACH:
+		_trap_backpass()
+		return
+	var into := -1.0 if goal_line_z > 0.0 else 1.0
+	var tx := clampf(ball.global_position.x,
+		-FootballConstants.GOAL_AREA_WIDTH * 0.5, FootballConstants.GOAL_AREA_WIDTH * 0.5)
+	var target := Vector3(tx, _body.global_position.y,
+		goal_line_z + into * (FootballConstants.GOAL_AREA_DEPTH * 0.5))
+	var to := target - _body.global_position
+	to.y = 0.0
+	var vis := _visual()
+	if vis != null:
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)
+	if to.length() > 0.2:
+		m.set_move_intent(to.normalized(), 1.0)
+	else:
+		m.set_move_intent(Vector3.ZERO)
+	if to_ball.length() > 0.1:
+		m.set_face_direction(to_ball)
 
 
 ## Трап бэк-паса В НОГИ (не в руки) → OUTFIELD. Зовётся из точек ловли, когда _is_own_backpass().
