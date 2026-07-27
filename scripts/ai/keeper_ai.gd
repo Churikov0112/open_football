@@ -648,7 +648,7 @@ func _hands(delta: float) -> void:
 	var mv := _hands_intent.move_axis()
 	if mv.length() > 0.15:
 		var into := -1.0 if goal_line_z > 0.0 else 1.0
-		var world_dir := Vector3(mv.x, 0.0, -mv.y * into)   # стик «вверх» = вглубь поля (into)
+		var world_dir := Vector3(mv.x, 0.0, mv.y * into)   # стик «вверх» (mv.y>0) = вглубь поля (into)
 		# Предиктивный кламп: не даём цели-намерению вывести за штрафную.
 		var next_pos := _body.global_position + world_dir.normalized() * 1.0
 		var clamped := KeeperPlayLogic.clamp_to_penalty_area(next_pos, goal_line_z, into,
@@ -696,7 +696,9 @@ func _fire_hands(action: int, ratio: float) -> void:
 			_begin_hand(ratio)
 		KeeperHandsIntent.Action.CLEAR_CENTER:
 			_do_center_clear()
-		# CLEAR_DIRECTED — Задача 7; DROP — Задача 9.
+		KeeperHandsIntent.Action.CLEAR_DIRECTED:
+			_do_directed_clear(ratio)
+		# DROP — Задача 9.
 		_:
 			print("[KEEPER] _fire_hands unhandled action=", action)
 
@@ -716,7 +718,7 @@ func _begin_hand(ratio: float) -> void:
 		mate_pos.append(n.global_position)
 	var aim := _hands_intent.aim_axis()
 	var into := signf(-goal_line_z)
-	var aim_dir := Vector3(aim.x, 0.0, -aim.y * into)
+	var aim_dir := Vector3(aim.x, 0.0, aim.y * into)   # прицел «вглубь» (aim.y>0) = в поле (into)
 	if aim_dir.length() < 0.01:
 		aim_dir = Vector3(0.0, 0.0, into)   # нет прицела → в поле
 	aim_dir = aim_dir.normalized()
@@ -797,6 +799,35 @@ func _do_center_clear() -> void:
 	var vis := _visual()
 	if vis != null:
 		vis.trigger("keeper_drop_kick")   # визуал выноса (мяч уже запущен — клип косметический)
+	_state = State.POSITION
+
+
+## Направленный вынос ногой по прицелу; скорость по заряду (min = CLEAR_SPEED*0.6, max = CLEAR_SPEED*1.4).
+func _do_directed_clear(ratio: float) -> void:
+	var aim := _hands_intent.aim_axis() if _hands_intent != null else Vector2.ZERO
+	var into := signf(-goal_line_z)
+	var aim_flat := Vector3(aim.x, 0.0, aim.y * into)   # прицел «вглубь» (aim.y>0) = в поле (into)
+	if aim_flat.length() < 0.01:
+		aim_flat = Vector3(0.0, 0.0, into)
+	var vmin := FootballConstants.KEEPER_CLEAR_SPEED * 0.6
+	var vmax := FootballConstants.KEEPER_CLEAR_SPEED * 1.4
+	var vel := KeeperPlayLogic.directed_clear_vector(aim_flat, ratio, vmin, vmax,
+		FootballConstants.KEEPER_CLEAR_LIFT)
+	var from := _body.global_position
+	if ball.dribbler == _body or ball.is_caught():
+		var bp := ball.global_position
+		ball.global_position = Vector3(bp.x, FootballConstants.BALL_RADIUS + 0.3, bp.z)
+		ball.launch(vel)
+	var flat := Vector3(vel.x, 0.0, vel.z)
+	var land := from + flat.normalized() * FootballConstants.KEEPER_THROW_DISTANCE
+	if manager != null and manager.has_method(&"keeper_handoff_control"):
+		manager.keeper_handoff_control(land)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)
+	var vis := _visual()
+	if vis != null:
+		vis.trigger("keeper_drop_kick")
 	_state = State.POSITION
 
 
