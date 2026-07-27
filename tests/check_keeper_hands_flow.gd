@@ -50,5 +50,16 @@ func _tick() -> void:
 		# Кламп: остался в штрафной по X (|x| <= полуширина).
 		if absf(_keeper.global_position.x) > FootballConstants.PENALTY_AREA_WIDTH * 0.5 + 0.5:
 			print("CHECK FAIL: вратарь вышел за штрафную по X: ", _keeper.global_position); quit(1); return
+		return
+	if _frames == 45:
+		_fake.mv = Vector2.ZERO
+		_fake.act = KeeperHandsIntent.Action.HAND   # зажали «рука» — заряжается
+		return
+	if _frames == 55:
+		if _brain.hands_charge_ratio() <= 0.0:
+			print("CHECK FAIL: заряд A не копится (ratio=", _brain.hands_charge_ratio(), ")"); quit(1); return
+		_fake.act = KeeperHandsIntent.Action.NONE   # отпустили (выпуск — Задача 5; тут не проверяем гол)
+		return
+	if _frames == 60:
 		print("CHECK PASS: keeper enters HANDS + moves in box")
 		quit(0)

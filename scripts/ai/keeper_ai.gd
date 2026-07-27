@@ -668,7 +668,36 @@ func _hands(delta: float) -> void:
 		FootballConstants.PENALTY_AREA_DEPTH, FootballConstants.PENALTY_AREA_WIDTH * 0.5)
 	_body.global_position.x = boxed.x
 	_body.global_position.z = boxed.z
-	# Раздача A/X/B/Y — Задачи 5–8. 6 секунд — Задача 8. Пока действия игнорируются.
+	# Заряд-как-таймер: HAND и CLEAR_DIRECTED заряжаемые; CLEAR_CENTER/DROP — мгновенные.
+	var act := _hands_intent.held_action()
+	var chargeable: bool = act == KeeperHandsIntent.Action.HAND or act == KeeperHandsIntent.Action.CLEAR_DIRECTED
+	if chargeable:
+		_hands_charging = true
+		_hands_charge_action = act
+		_hands_charge = minf(_hands_charge + delta, FootballConstants.KEEPER_DIST_CHARGE_MAX)
+	elif _hands_charging:
+		# Отпустили заряжаемую → выпуск по накопленному заряду (Задачи 5/7 реализуют _fire_hands).
+		var ratio := clampf(_hands_charge / FootballConstants.KEEPER_DIST_CHARGE_MAX, 0.0, 1.0)
+		_hands_charging = false
+		_fire_hands(_hands_charge_action, ratio)
+		return
+	elif act == KeeperHandsIntent.Action.CLEAR_CENTER:
+		_fire_hands(act, 0.0)
+		return
+	elif act == KeeperHandsIntent.Action.DROP:
+		_fire_hands(act, 0.0)
+		return
+
+
+## Выпуск вратарской раздачи по действию. Ветки A/X/B/Y наполняются в Задачах 5–8.
+func _fire_hands(action: int, ratio: float) -> void:
+	print("[KEEPER] _fire_hands action=", action, " ratio=", ratio, " (stub)")
+	# Задачи 5–8 заменят это на реальную раздачу. Пока просто возвращаемся в POSITION,
+	# чтобы не зависнуть (мяч всё ещё в руках — временно; полноценный выпуск позже).
+	_state = State.POSITION
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

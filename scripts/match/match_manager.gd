@@ -1069,6 +1069,21 @@ func _process(delta: float) -> void:
 		power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
 			or (_is_queued() and _queue_player == controlled_player)
 
+	# Вратарский HANDS-заряд (A/B): power-bar рисует менеджер, ТОЛЬКО если человек владеет HUD
+	# (presentation KICKER). keeper_ai держит сам заряд; менеджер лишь визуализирует ratio.
+	if controlled_player != null and controlled_player.is_in_group("role_gk"):
+		var kb: Node = _ai_of(controlled_player)
+		if kb.has_method(&"is_hands_active") and kb.is_hands_active() and kb.has_method(&"hands_charge_ratio"):
+			var r: float = kb.hands_charge_ratio()
+			if r >= 0.0:
+				power_bar.visible = true
+				power_bar.value = r
+				var fill := power_bar.get_theme_stylebox("fill")
+				if fill:
+					fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, r * r)
+			elif not _is_charging():
+				power_bar.visible = false
+
 
 
 func _physics_process(delta: float) -> void:
