@@ -171,6 +171,9 @@ func _position(delta: float) -> void:
 		# Без угрозы держим X (следим за мячом по горизонтали) но Z фиксируем на линии ворот.
 		if not (ball.is_flight() and _heading_at_goal()):
 			target.z = goal_line_z + into * 0.5
+	# База: вратарь-ИИ не покидает штрафную (фикс over-rush на шальной мяч рядом с боксом).
+	target = KeeperPlayLogic.clamp_to_penalty_area(target, goal_line_z, into,
+		FootballConstants.PENALTY_AREA_DEPTH, FootballConstants.PENALTY_AREA_WIDTH * 0.5)
 	var to := target - _body.global_position
 	to.y = 0.0
 	if to.length() > 0.15:
