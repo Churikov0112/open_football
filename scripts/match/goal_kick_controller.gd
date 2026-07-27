@@ -163,8 +163,10 @@ func update(delta: float) -> void:
 	match _phase:
 		Phase.AIM:
 			_pin_ball()
+			_clear_opponent_box()   # Law 16 непрерывно до удара, а не одноразово на SETUP
 			_aim_update(delta)
 		Phase.STRIKE:
+			_clear_opponent_box()   # держим и на разбеге — окно закроется на action_contact (_release → IDLE)
 			_strike_update(delta)
 	_update_camera_pose()
 
