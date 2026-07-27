@@ -1242,7 +1242,7 @@ func _to_distribute() -> void:
 	_state = State.DISTRIBUTE
 	_distribute_fired = false
 	_state_timer = 1.9   # страховка > длины клипа (1.4с) и контакта (0.8с): раскатим принудительно,
-	                     # только если action_contact реально не пришёл
+						 # только если action_contact реально не пришёл
 	var vis := _visual()
 	if vis != null:
 		vis.recover()                 # выйти из idle_ball one-shot в локомоцию-хаб
@@ -1349,7 +1349,7 @@ func _catch_clip_for_height(y: float) -> StringName:
 ## мячу и геометрически приклеиваем его к рукам, как только дотянулись (см. _catching).
 func _begin_central_catch(y: float) -> void:
 	_reacting = false   # сбросить реакцию, как _begin_save/_begin_miss_top: иначе после выноса
-	                    # POSITION стартует с «дозревшим» таймером и ловит первый же кадр
+						# POSITION стартует с «дозревшим» таймером и ловит первый же кадр
 	_pass_through = false
 	_state = State.CATCHING
 	var m := _motor()
