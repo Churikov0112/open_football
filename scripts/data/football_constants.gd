@@ -630,7 +630,11 @@ const GK_CLEAR_MARGIN := 5.0          # запас вокруг вратарск
                                        # кроме вратаря — ни соперников, ни своей же команды, м
 const GK_CAM_BACK := 8.0              # отступ камеры назад от точки вдоль -heading, м
 const GK_CAM_HEIGHT := 3.5            # высота камеры, м
-const GK_CAM_LOOK_Y := 1.4            # высота точки взгляда камеры, м
+const GK_CAM_LOOK_Y := 1.4           # высота точки взгляда камеры, м
+# ИИ-бьющий удар от ворот (Этап 2).
+const AI_GOALKICK_THINK_TIME := 0.7   # с — пауза обдумывания ИИ перед доворотом (как AI_KICKOFF_THINK_TIME)
+const AI_GOALKICK_UPFIELD_WEIGHT := 1.0  # вес продвижения к чужим воротам в GoalKickPlan
+const AI_GOALKICK_OPP_SPEED := 8.0    # = LOCO_TOP_SPEED, представительная скорость соперника для оценки перехвата
 
 
 # --- THROW-IN (вбрасывание из аута, Фаза A) ---
