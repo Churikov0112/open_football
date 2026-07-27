@@ -263,7 +263,7 @@ func _setup_inputs() -> void:
 		&"combo_curl":      {"keys": [KEY_E],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
-		&"keeper_dive_debug": {"keys": [KEY_K], "buttons": [], "axes": []},
+		&"keeper_dive_debug": {"keys": [KEY_K], "buttons": [], "axes": [], "alt": true},   # Alt+K: пенальти в НАШИ ворота (играем вратаря)
 		&"keeper_hand":          {"keys": [KEY_H], "buttons": [JOY_BUTTON_A], "axes": []},
 		&"keeper_clear_center":  {"keys": [KEY_J], "buttons": [JOY_BUTTON_X], "axes": []},
 		&"keeper_clear_directed":{"keys": [KEY_B], "buttons": [JOY_BUTTON_B], "axes": []},
@@ -284,9 +284,11 @@ func _setup_inputs() -> void:
 			InputMap.erase_action(action)
 		InputMap.add_action(action)
 		InputMap.action_set_deadzone(action, 0.2)
+		var need_alt: bool = actions[action].get("alt", false)
 		for keycode in actions[action]["keys"]:
 			var ek := InputEventKey.new()
 			ek.keycode = keycode
+			ek.alt_pressed = need_alt   # true → срабатывает только с зажатым Alt (напр. Alt+K)
 			InputMap.action_add_event(action, ek)
 		for btn in actions[action]["buttons"]:
 			var eb := InputEventJoypadButton.new()
@@ -1138,7 +1140,7 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed(&"penalty_debug") and _keeper_at(-field_length) != null and not _celebrating:
 		_penalty.start_single(controlled_player, -field_length)
 		return
-	# K: пенальти В НАШИ ворота (+field_length, защищает наш team_1 вратарь) — бьёт СОПЕРНИК (team_2,
+	# Alt+K: пенальти В НАШИ ворота (+field_length, защищает наш team_1 вратарь) — бьёт СОПЕРНИК (team_2,
 	# ИИ через AIKickerIntent), человек играет за нашего вратаря (выбор зоны нырка стиком). Презентация —
 	# роль KEEPER (камера как у пенальти + cyan-маркер над вратарём, без ретикла/power_bar бьющего).
 	# controlled_player НЕ трогаем — после розыгрыша управление остаётся за нашим полевым игроком.
