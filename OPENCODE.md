@@ -100,7 +100,6 @@ OpenFootball/
 │   ├── match/
 │   │   └── match_manager.gd  — вся логика матча
 │   ├── player/
-│   │   ├── player_controller.gd — управление игроком
 │   │   ├── player_motor.gd  — PlayerMotor: velocity+inertia locomotion (accel/decel/turn/lean/sprint)
 │   │   ├── player_visual.gd — PlayerVisual: AnimationTree локомоция + действия + подкат/падение + apply_appearance
 │   │   └── ragdoll_skeleton.gd — МЁРТВЫЙ КОД (физический ragdoll, заменён анимационным падением; тесты остались и проходят, но в игре не используется)
