@@ -689,15 +689,90 @@ func _hands(delta: float) -> void:
 		return
 
 
-## Выпуск вратарской раздачи по действию. Ветки A/X/B/Y наполняются в Задачах 5–8.
+## Выпуск вратарской раздачи по действию. Ветки X/B/Y наполняются в Задачах 6–9.
 func _fire_hands(action: int, ratio: float) -> void:
-	print("[KEEPER] _fire_hands action=", action, " ratio=", ratio, " (stub)")
-	# Задачи 5–8 заменят это на реальную раздачу. Пока просто возвращаемся в POSITION,
-	# чтобы не зависнуть (мяч всё ещё в руках — временно; полноценный выпуск позже).
-	_state = State.POSITION
+	match action:
+		KeeperHandsIntent.Action.HAND:
+			_begin_hand(ratio)
+		# CLEAR_CENTER — Задача 6; CLEAR_DIRECTED — Задача 7; DROP — Задача 9.
+		_:
+			print("[KEEPER] _fire_hands unhandled action=", action)
+
+
+## Раздача рукой: тап (заряд < порога) = раскат низом ближнему; удержание = бросок верхом дальнему.
+## Автонаведение по прицелу среди team_1-своих; банд дистанции растёт с зарядом.
+func _begin_hand(ratio: float) -> void:
+	var charge_time := ratio * FootballConstants.KEEPER_DIST_CHARGE_MAX
+	_hand_is_throw = charge_time >= FootballConstants.KEEPER_HAND_THROW_CHARGE
+	# Кандидаты — свои полевые (та же команда, что и вратарь), исключая себя и второго вратаря.
+	# Прицел — по aim_axis. (my_group выводим из группы тела, не из хардкода team_1.)
+	var my_group := &"team_1" if _body.is_in_group("team_1") else &"team_2"
+	var mate_pos: Array = []
+	for n in _body.get_tree().get_nodes_in_group(my_group):
+		if n == _body or not is_instance_valid(n) or n.is_in_group("role_gk"):
+			continue
+		mate_pos.append(n.global_position)
+	var aim := _hands_intent.aim_axis()
+	var into := signf(-goal_line_z)
+	var aim_dir := Vector3(aim.x, 0.0, -aim.y * into)
+	if aim_dir.length() < 0.01:
+		aim_dir = Vector3(0.0, 0.0, into)   # нет прицела → в поле
+	aim_dir = aim_dir.normalized()
+	var idx := KeeperPlayLogic.select_hand_target(_body.global_position, aim_dir, mate_pos, ratio,
+		FootballConstants.KEEPER_HAND_ROLL_DIST, FootballConstants.KEEPER_HAND_THROW_DIST)
+	if idx >= 0:
+		_hand_target_pos = mate_pos[idx]
+	else:
+		# Фолбэк: точка по прицелу на дистанцию по банду (раскат/бросок).
+		var dist := FootballConstants.KEEPER_HAND_THROW_DIST if _hand_is_throw else FootballConstants.KEEPER_HAND_ROLL_DIST
+		_hand_target_pos = _body.global_position + aim_dir * dist
+	_state = State.THROWING
+	_distribute_fired = false
+	_state_timer = 1.3
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(true)
+	var vis := _visual()
+	var clip := &"keeper_overhand_throw" if _hand_is_throw else &"keeper_pass"
+	if vis == null or not vis.trigger(clip):
+		_do_hand_release()   # фолбэк без анимации
+
+
+## Выпуск по action_contact клипа руки: бросок верхом (дуга) или раскат низом (flat), к _hand_target_pos.
+func _do_hand_release() -> void:
+	if _distribute_fired:
+		return
+	_distribute_fired = true
+	if ball.dribbler == _body or ball.is_caught():
+		var from := _body.global_position
+		var flat_to := Vector3(_hand_target_pos.x, from.y, _hand_target_pos.z)
+		var dist := Vector3(flat_to.x - from.x, 0.0, flat_to.z - from.z).length()
+		var dt := 1.0 / float(Engine.physics_ticks_per_second)
+		if _hand_is_throw:
+			# Бросок верхом: дуга через launch_lob-стиль (как _do_overhand_throw), драг-поправка.
+			var g := _ball_gravity()
+			var vy := sqrt(2.0 * g * FootballConstants.KEEPER_THROW_PEAK)
+			var flight_t := 2.0 * vy / g
+			var dir := Vector3(flat_to.x - from.x, 0.0, flat_to.z - from.z)
+			dir = dir.normalized() if dir.length() > 0.01 else Vector3(0, 0, signf(-goal_line_z))
+			var hspeed := KeeperLogic.drag_horizontal_speed(dist, flight_t, ball.drag_factor, dt)
+			ball.launch(dir * hspeed + Vector3.UP * vy)
+		else:
+			# Раскат низом: мяч с руки на газон, катится к цели (flat), скорость из драга.
+			var speed := KeeperLogic.roll_speed(maxf(dist, 1.0), ball.drag_factor, dt)
+			var dir := Vector3(flat_to.x - from.x, 0.0, flat_to.z - from.z)
+			dir = dir.normalized() if dir.length() > 0.01 else Vector3(0, 0, signf(-goal_line_z))
+			var bp := ball.global_position
+			ball.global_position = Vector3(bp.x, FootballConstants.BALL_RADIUS + 0.02, bp.z)
+			ball.launch(dir * speed, true)
+	# Управление адресату (как приём паса).
+	if manager != null and manager.has_method(&"keeper_handoff_control"):
+		manager.keeper_handoff_control(_hand_target_pos)
 	var m := _motor()
 	if m != null:
 		m.set_control_locked(false)
+	_hand_target_pos = Vector3.ZERO
+	_state = State.POSITION
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -911,6 +986,14 @@ func _distribute(delta: float) -> void:
 func _on_visual_contact(action: String) -> void:
 	if _goalkick_mode:
 		return   # контактом на ударе от ворот владеет GoalKickController, не распас вратаря
+	# HANDS-раздача рукой (План 2) переиспользует клипы keeper_pass/keeper_overhand_throw. Гейт
+	# _hand_target_pos != ZERO отличает её от авто-_do_overhand_throw/_do_pass_roll — ПРИОРИТЕТ выше
+	# авто-веток ниже (иначе авто-overhand перехватил бы контакт «удержания» раньше hand-release).
+	if _state == State.THROWING and not _distribute_fired \
+			and (action == "keeper_overhand_throw" or action == "keeper_pass") \
+			and _hand_target_pos != Vector3.ZERO:
+		_do_hand_release()
+		return
 	if action == "keeper_placing_ball" and _state == State.PLACING and not _place_fired:
 		_begin_carry()
 		return

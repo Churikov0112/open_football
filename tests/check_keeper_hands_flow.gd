@@ -55,11 +55,17 @@ func _tick() -> void:
 		_fake.mv = Vector2.ZERO
 		_fake.act = KeeperHandsIntent.Action.HAND   # зажали «рука» — заряжается
 		return
-	if _frames == 55:
+	if _frames == 50:
 		if _brain.hands_charge_ratio() <= 0.0:
 			print("CHECK FAIL: заряд A не копится (ratio=", _brain.hands_charge_ratio(), ")"); quit(1); return
-		_fake.act = KeeperHandsIntent.Action.NONE   # отпустили (выпуск — Задача 5; тут не проверяем гол)
+		_fake.act = KeeperHandsIntent.Action.NONE   # короткий тап (<THROW_CHARGE) → раскат низом (keeper_pass)
 		return
-	if _frames == 60:
-		print("CHECK PASS: keeper enters HANDS + moves in box")
+	# contact клипа keeper_pass — на 0.8с (~48 кадров) после trigger (~кадр 51); финал с запасом.
+	if _frames == 140:
+		if _mm.ball.dribbler == _keeper or _mm.ball.is_caught():
+			print("CHECK FAIL: мяч всё ещё в руках после раздачи A"); quit(1); return
+		if _mm.controlled_player == _keeper:
+			print("CHECK FAIL: управление не ушло с вратаря после раздачи A"); quit(1); return
+		print("CHECK PASS: keeper hands: enter+move+charge+hand-release")
 		quit(0)
+		return
