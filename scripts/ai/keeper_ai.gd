@@ -256,8 +256,10 @@ func _position(delta: float) -> void:
 		# (danger=0) — центр вратарской; выход навстречу — ТОЛЬКО против реального удара в створ,
 		# тем дальше, чем ближе мяч (danger растёт по близости). Без угрозы (пас своих/дриблинг
 		# рядом с боксом) вратарь НЕ рвётся вперёд — сидит на базовой глубине под углом на мяч.
+		# danger>0 (выход навстречу) — только на РЕАЛЬНУЮ угрозу. Пас/скидка/вынос СВОИХ (бэк-пас,
+		# в т.ч. кикофф-пас назад) — НЕ угроза: danger=0, вратарь остаётся на базовой глубине.
 		var danger := 0.0
-		if ball.is_flight() and _heading_at_goal():
+		if ball.is_flight() and _heading_at_goal() and not _is_own_backpass():
 			var dz_ball := absf(ball.global_position.z - goal_line_z)
 			danger = clampf(1.0 - dz_ball / FootballConstants.KEEPER_ALERT_DIST, 0.0, 1.0)
 		target = KeeperLogic.angle_position(ball.global_position, ball.linear_velocity, goal_line_z,
@@ -280,6 +282,12 @@ func _position(delta: float) -> void:
 	# shot_intercept для улетающего мяча вырождается в позицию мяча, is_on_target ложно даёт
 	# «в створе», и вратарь мгновенно ловит СВОЙ вынос обратно (петля ловля→вынос→ловля).
 	if not _heading_at_goal():
+		_reacting = false
+		return
+	# Пас/скидка/вынос СВОИХ (бэк-пас, кикофф-пас назад и т.п.) — это НЕ удар: НЕ реагируем сейв-
+	# рефлексом (никаких выходов навстречу и нырков за мячом своих). Сбор в ноги — отдельным
+	# путём (backpass-блок в _physics_process, когда мяч подойдёт в радиус KEEPER_BACKPASS_COLLECT_RANGE).
+	if _is_own_backpass():
 		_reacting = false
 		return
 	# Мяч уже пересёк линию (за спиной вратаря, в сетке) — не реагируем: иначе вратарь ловит

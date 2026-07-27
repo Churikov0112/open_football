@@ -172,17 +172,15 @@ func _pass_params(action: int, charge_ratio: float) -> PassParams:
 
 
 ## Позиции/скорости/узлы группы в параллельных массивах (индекс общий). Исключает except_node.
-## Вратарь (role_gk) исключён: авто-аим паса НЕ выбирает его получателем (иначе управление
-## отдавалось бы ему в полёте, и он стоял бы в воротах, пока мяч закатывается) — пас «на вратаря»
-## летит как помеченный бэк-пас, и вратарь-ИИ сам бежит на мяч, принимает в ноги → OUTFIELD, и
-## лишь ТОГДА авто-свап делает его controlled. Для перехвата соперником вратарь тоже не кандидат.
+## Вратарь ОСТАЁТСЯ кандидатом (мяч наводится и долетает до него) — но пас на вратаря НЕ отдаёт
+## ему управление в полёте (см. гейт role_gk в fire_pass): он остаётся ИИ, сам бежит на мяч,
+## принимает в ноги → OUTFIELD, и лишь ТОГДА авто-свап делает его controlled.
 func _team_arrays(group: StringName, except_node: Node) -> Dictionary:
 	var positions := PackedVector3Array()
 	var velocities := PackedVector3Array()
 	var nodes: Array[Node3D] = []
 	for n in get_tree().get_nodes_in_group(group):
-		if n == except_node or not (n is CharacterBody3D) or not is_instance_valid(n) \
-				or n.is_in_group("role_gk"):
+		if n == except_node or not (n is CharacterBody3D) or not is_instance_valid(n):
 			continue
 		positions.append(n.global_position)
 		velocities.append(n.velocity)
@@ -307,14 +305,18 @@ func fire_pass(action: int, player: CharacterBody3D, charge_ratio: float, facing
 	# Метка намеренного паса команды (правило бэк-паса вратаря). Проставляется на мяч в момент
 	# реального launch (fallback ниже И on_action_contact) — не здесь, т.к. мяч ещё у ног.
 	_pending_pass_team = &"team_1" if player.is_in_group("team_1") else &"team_2"
-	# Передать управление принимающему сразу.
-	if receiver != null:
+	# Передать управление принимающему сразу — КРОМЕ вратаря: пас на вратаря наводится и долетает
+	# до него, но управление ему НЕ отдаём (иначе он «выбран» и стоит в воротах, мяч закатывается).
+	# Вратарь остаётся ИИ, сам бежит на мяч (помеченный бэк-пас), принимает в ноги → OUTFIELD, и
+	# лишь ТОГДА авто-свап делает его controlled. begin_receiving/receive-assist ему тоже не нужны.
+	var recv_is_keeper: bool = receiver != null and receiver.is_in_group("role_gk")
+	if receiver != null and not recv_is_keeper:
 		_manager.controlled_player = receiver
 		_manager._sync_ai_controllers()
 		_manager._manual_swap_cooldown = 30
-	if receiver != null and receiver != _manager.controlled_player and _manager._ai_of(receiver).has_method(&"begin_receiving"):
+	if receiver != null and not recv_is_keeper and receiver != _manager.controlled_player and _manager._ai_of(receiver).has_method(&"begin_receiving"):
 		_manager._ai_of(receiver).begin_receiving(launch_vel, params.extra_lead)
-	if receiver != null and receiver == _manager.controlled_player:
+	if receiver != null and not recv_is_keeper and receiver == _manager.controlled_player:
 		_manager.begin_pass_receive(receiver)
 	if params.is_wall and is_instance_valid(player) and _manager._ai_of(player).has_method(&"begin_give_and_go"):
 		if receiver != null:
