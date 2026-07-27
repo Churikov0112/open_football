@@ -89,23 +89,10 @@ func _award_ball_out(exit: int, last_touch: Node) -> void:
 	var lt_team := 1 if last_touch.is_in_group("team_1") else 2
 	var res := RefereeLogic.ball_out_restart(exit, lt_team, _team_defending_neg)
 	var spot := _spot_for(res["restart"], exit)
-	print("[REFEREE] out: ", _restart_name(res["restart"]), " → team_", res["team"],
-		" (last touch: ", last_touch.name, " team_", lt_team, ")")
 	_state = State.DEAD
 	restart_awarded.emit(res["restart"], res["team"], spot)
 	_interim_award(res["team"], spot)
 	_state = State.LIVE
-
-## Читаемое имя типа рестарта (для отладочного лога).
-func _restart_name(restart: int) -> String:
-	match restart:
-		RefereeLogic.Restart.THROW_IN: return "ВБРОС"
-		RefereeLogic.Restart.CORNER: return "УГЛОВОЙ"
-		RefereeLogic.Restart.GOAL_KICK: return "УДАР ОТ ВОРОТ"
-		RefereeLogic.Restart.KICKOFF: return "КИКОФФ"
-		RefereeLogic.Restart.FREE_KICK: return "ШТРАФНОЙ"
-		RefereeLogic.Restart.PENALTY: return "ПЕНАЛЬТИ"
-		_: return "?"
 
 ## Точка рестарта по типу и стороне выхода.
 func _spot_for(restart: int, exit: int) -> Vector3:
@@ -140,7 +127,6 @@ func _interim_award(team: int, spot: Vector3) -> void:
 	var idx := RefereeLogic.select_taker(spot, positions)
 	if idx >= 0 and _ball.has_method(&"set_dribbler"):
 		_ball.set_dribbler(nodes[idx], true)
-		print("[REFEREE] мяч → ", nodes[idx].name, " (team_", team, ") на точке ", spot)
 
 ## Гол (зовёт менеджер из goal-area с уже вычисленной пропустившей командой — атрибуция по тому,
 ## в какие ворота влетел мяч, не по last_touch). Эмитит сигнал (для будущих слушателей — напр.
@@ -148,7 +134,6 @@ func _interim_award(team: int, spot: Vector3) -> void:
 ## после окончания празднования (см. _celebrate_then_reset) — не через подписку на этот сигнал,
 ## т.к. кикофф не должен стартовать, пока идёт 5-секундная церемония гола.
 func report_goal(conceding_team: int) -> void:
-	print("[REFEREE] ГОЛ → кикофф team_", conceding_team)
 	restart_awarded.emit(RefereeLogic.Restart.KICKOFF, conceding_team, Vector3.ZERO)
 
 ## Фол подката (зовёт менеджер). Интерим: сигнал foul_called + restart_awarded, без запуска

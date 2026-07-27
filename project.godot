@@ -25,7 +25,7 @@ FootballConstants="*res://scripts/data/football_constants.gd"
 
 [debug]
 
-file_logging/enable_file_logging=true
+file_logging/enable_file_logging=false
 
 [display]
 

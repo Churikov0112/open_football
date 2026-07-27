@@ -133,7 +133,6 @@ func set_dribble_suppressed(on: bool) -> void:
 ## Вратарь поймал мяч в РУКИ: мяч приклеивается к hold_node (точка рук) и висит там (CAUGHT),
 ## пока не будет выброшен (launch/kick). В отличие от set_dribbler (мяч у ног, дриблинг).
 func catch(holder: Node3D, hold_node: Node3D) -> void:
-	print("[BALL] catch() at ", global_position, " hold_node=", hold_node)
 	dribbler = holder
 	note_touch(holder)
 	_hold_node = hold_node

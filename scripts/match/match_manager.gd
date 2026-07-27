@@ -2176,14 +2176,12 @@ func _on_ball_collision(body: Node) -> void:
 	if body.is_in_group("role_gk") and body.has_method(&"brain"):
 		var kb: Node = body.brain()
 		if kb != null and kb.has_method(&"on_ball_contact"):
-			print("[MATCH] ball hit KEEPER capsule")
 			kb.on_ball_contact()
 		return
 	# Блок: летящий мяч коснулся игрока (защитник на пути / попал в своего). Гасим и роняем
 	# мяч в OPEN (без мгновенной передачи владения — дальше обычная борьба за подбор).
 	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
 			and ball.has_method(&"is_flight") and ball.is_flight() and ball.has_method(&"block_in_flight"):
-		print("[MATCH] block_in_flight by ", body.name, " kicker=", ball.last_kicker)
 		ball.block_in_flight()
 
 
