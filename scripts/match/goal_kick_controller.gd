@@ -78,7 +78,14 @@ func _default_intent() -> KickerIntent:
 func _setup() -> void:
 	_phase = Phase.SETUP
 	_manager.set_goal_kick_active(true)
-	_manager.set_field_ai_active(false)
+	# Человек бьёт (Role.KICKER) → морозим всё поле. ИИ-соперник бьёт (Role.NONE) → морозим только
+	# бьющую команду, защищающаяся (человек) играет: бегает/переключается, но без подката/захода в
+	# штрафную (гейт в match_manager + не-локирующий _clear_opponent_box).
+	if _presentation.owns_camera():
+		_manager.set_field_ai_active(false)
+	else:
+		var kicking_group: StringName = &"team_2" if _kicker.is_in_group("team_2") else &"team_1"
+		_manager.set_field_ai_active(false, kicking_group)
 	# Точка мяча — центр линии вратарской; направление разбега/прицела — вверх поля.
 	_spot = GoalKickLogic.spot_position(_goal_line_z, _into, FootballConstants.GOAL_AREA_DEPTH, FootballConstants.BALL_RADIUS)
 	_base_heading = Vector3(0.0, 0.0, _into).normalized()
@@ -140,10 +147,14 @@ func _clear_opponent_box() -> void:
 			FootballConstants.GK_ENCROACH_MARGIN)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
-		var m := PlayerMotor.find_on(n)
-		if m != null:
-			m.set_control_locked(true)
-			m.set_move_intent(Vector3.ZERO)
+		# Лочим мотор ТОЛЬКО когда бьёт человек (соперники — ИИ, морозим). При ИИ-ударе соперники —
+		# это команда человека: выталкиваем из штрафной, но НЕ лочим (он ими играет; заход в штрафную
+		# так остаётся заблокирован пер-кадровым push, но вне штрафной бегать можно).
+		if _presentation != null and _presentation.owns_camera():
+			var m := PlayerMotor.find_on(n)
+			if m != null:
+				m.set_control_locked(true)
+				m.set_move_intent(Vector3.ZERO)
 
 ## Никто (ОБЕ команды, включая свою же), кроме вратаря, не должен стоять во вратарской площади
 ## ±GK_CLEAR_MARGIN. Отдельно от _clear_opponent_box (та трогает только соперников и на полную
@@ -159,10 +170,13 @@ func _clear_goal_area_buffer() -> void:
 			FootballConstants.GK_CLEAR_MARGIN)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
-		var m := PlayerMotor.find_on(n)
-		if m != null:
-			m.set_control_locked(true)
-			m.set_move_intent(Vector3.ZERO)
+		# Лочим только при ударе человека (см. _clear_opponent_box). При ИИ-ударе бьющая команда уже
+		# заморожена team-scoped-заморозкой, а защищающуюся не лочим — она играет.
+		if _presentation != null and _presentation.owns_camera():
+			var m := PlayerMotor.find_on(n)
+			if m != null:
+				m.set_control_locked(true)
+				m.set_move_intent(Vector3.ZERO)
 
 func update(delta: float) -> void:
 	match _phase:

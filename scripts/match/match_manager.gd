@@ -830,8 +830,10 @@ func keeper_handoff_control(point: Vector3) -> void:
 ## НЕ останавливался: их PlayerMotor — отдельный узел со своим _physics_process, отключение
 ## ТОЛЬКО скрипта ИИ не мешало мотору доигрывать последнее заданное направление движения —
 ## соперник продолжал бежать к мячу/игроку сквозь всю расстановку.
-func set_field_ai_active(on: bool) -> void:
-	_set_ai_frozen(not on)
+## only_group (опц.) — морозить/размораживать ТОЛЬКО эту группу (для стандартов соперника:
+## бьющую команду морозим, защищающаяся играет). Пусто → всё поле (team_1+team_2), как раньше.
+func set_field_ai_active(on: bool, only_group: StringName = &"") -> void:
+	_set_ai_frozen(not on, only_group)
 
 
 ## Останавливаем/возвращаем ИИ-игроков (team_1+team_2) в чистый idle. `keep_active` (если
@@ -850,9 +852,13 @@ func set_field_ai_active(on: bool) -> void:
 ## заморозке, но ставший controlled_player к моменту разморозки, остался бы залоченным
 ## навсегда (мотор игнорирует ввод, маркер выбран, но тело не бежит). Разморозка чужого/не-AI
 ## тела безвредна — его собственный скрипт self-гейтится по `controlled_player == self`.
-func _set_ai_frozen(on: bool) -> void:
-	var bodies := get_tree().get_nodes_in_group("team_1")
-	bodies += get_tree().get_nodes_in_group("team_2")
+func _set_ai_frozen(on: bool, only_group: StringName = &"") -> void:
+	var bodies: Array
+	if only_group != &"":
+		bodies = get_tree().get_nodes_in_group(only_group)
+	else:
+		bodies = get_tree().get_nodes_in_group("team_1")
+		bodies += get_tree().get_nodes_in_group("team_2")
 	for n in bodies:
 		if not is_instance_valid(n) or n.is_in_group("role_gk"):
 			continue   # вратари (role_gk) НИКОГДА не трогаем — сами управляют своим локом/мотором
@@ -1173,10 +1179,14 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed(&"corner_debug") and _keeper_at(-field_length) != null and not _celebrating:
 		_corner.start(controlled_player, -field_length)
 		return
-	# Удар от ворот — свой контроллер, обычные системы заглушены.
+	# Удар от ворот. Человек бьёт (Role.KICKER) → рулит вратарём, всё поле заморожено, ранний return.
+	# ИИ-соперник бьёт (Role.NONE) → человек ЗАЩИЩАЕТСЯ своей командой: НЕ делаем ранний return, падаем
+	# в обычную игру, но без подката и захода в штрафную (мяч ещё не в игре) — гарды ниже (_referee.tick/
+	# _handle_dribbling/_try_tackle/_poll_ai_tackles) и не-локирующий _clear_opponent_box это держат.
 	if _goal_kick_active:
 		_goal_kick.update(delta)
-		return
+		if _goal_kick.camera_is_owned():
+			return
 	# Удар от ворот по G — только из чистого состояния (не во время празднования гола). Бьющий —
 	# ВРАТАРЬ (team_2 у -Z), не controlled_player: человек драйвит вратаря на время розыгрыша.
 	if Input.is_action_just_pressed(&"goal_kick_debug") and _keeper_at(-field_length) != null and not _celebrating:
@@ -1203,9 +1213,10 @@ func _physics_process(delta: float) -> void:
 	if _try_fire_queue():
 		_handle_player_input(delta)
 		return
-	if _referee != null and not _celebrating:
-		_referee.tick()
-	_handle_dribbling()
+	if _referee != null and not _celebrating and not _goal_kick_active:
+		_referee.tick()   # во время удара от ворот судья не судит (мяч ещё не в игре, приколот к точке)
+	if not _goal_kick_active:
+		_handle_dribbling()   # у защищающегося мяча нет — дриблинг/подбор приколотого мяча не нужен
 	_handle_player_input(delta)
 
 	# Auto-switch to whoever on our team has the ball (skip if Q was just pressed)
@@ -1827,6 +1838,8 @@ func _can_tackle(tackler: Node3D) -> bool:
 
 
 func _try_tackle(player: CharacterBody3D) -> bool:
+	if _goal_kick_active:
+		return false   # мяч ещё не введён в игру — подкат запрещён (Law: соперник не мешает розыгрышу)
 	if _tackle_state != TackleState.NORMAL:
 		return false
 	if not _can_tackle(player):
@@ -2344,7 +2357,9 @@ func _poll_ai_tackles() -> void:
 	# слайдом посреди празднования (падение + анимация вставания) — заметнее всего на голе со
 	# штрафного/пенальти, где мяч и забивший остаются в штрафной. Подкат стартует МЕНЕДЖЕР (не мозг
 	# ИИ), поэтому одной заморозки ИИ мало — нужен явный гейт здесь. Снимется на _reset_ball.
-	if _celebrating:
+	# Во время удара от ворот — тоже без подката (мяч не в игре; бьющая команда заморожена, но
+	# гейт держит и на случай живой защиты, падающей сюда сквозным проходом _physics_process).
+	if _celebrating or _goal_kick_active:
 		return
 	for node in get_tree().get_nodes_in_group("team_2"):
 		if not is_instance_valid(node):
