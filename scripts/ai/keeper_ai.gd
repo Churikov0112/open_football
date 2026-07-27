@@ -100,6 +100,16 @@ func _physics_process(delta: float) -> void:
 	# Собственную логику сейва/позиции глушим полностью.
 	if _goalkick_mode:
 		return
+	# OUTFIELD: телом владеет менеджер (полевой путь). keeper_ai молчит, пока мяч у ног вратаря.
+	# Мяч потерян/отдан (не у ног и не пойман) → возврат в AI-режим (держим линию).
+	if _state == State.OUTFIELD:
+		var mine: bool = ball.dribbler == _body or (ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body)
+		if not mine:
+			_state = State.POSITION
+			var vis2 := _visual()
+			if vis2 != null:
+				vis2.set_locomotion_style(PlayerVisual.LOCO_STYLE_KEEPER)
+		return
 	# Празднование гола: новых сейвов/выносов не начинаем (иначе вратарь ловит осевший в сетке
 	# мяч и выносит его уже ПОСЛЕ гола). Но ТЕКУЩИЙ нырок доигрываем до конца анимации —
 	# не дёргаем в idle посреди прыжка.
@@ -703,7 +713,8 @@ func _fire_hands(action: int, ratio: float) -> void:
 			_do_center_clear()
 		KeeperHandsIntent.Action.CLEAR_DIRECTED:
 			_do_directed_clear(ratio)
-		# DROP — Задача 9.
+		KeeperHandsIntent.Action.DROP:
+			_enter_outfield()
 		_:
 			print("[KEEPER] _fire_hands unhandled action=", action)
 
@@ -834,6 +845,22 @@ func _do_directed_clear(ratio: float) -> void:
 	if vis != null:
 		vis.trigger("keeper_drop_kick")
 	_state = State.POSITION
+
+
+## Дроп Y: мяч из рук к ногам (force — мимо кулдаунов, БЕЗ клипа placing_ball), вратарь → OUTFIELD.
+## controlled_player уже = keeper (взят в _enter_hands) — менеджер поведёт его как полевого.
+func _enter_outfield() -> void:
+	_state = State.OUTFIELD
+	var bp := ball.global_position
+	ball.global_position = Vector3(bp.x, FootballConstants.BALL_RADIUS + 0.02, bp.z)
+	ball.set_dribbler(_body, true)
+	var m := _motor()
+	if m != null:
+		m.set_control_locked(false)   # менеджерский полевой ввод теперь двигает вратаря
+	var vis := _visual()
+	if vis != null:
+		vis.recover()   # выйти из idle_ball one-shot
+		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
