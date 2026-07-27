@@ -32,12 +32,19 @@ func _process(delta: float) -> bool:
 					_mm._kickoff._release()
 				_mm._celebrating = false
 				_gl = -_mm.field_length
+				var into := -signf(_gl)
+				# Защитник ДО дспетча стоит В штрафной — SETUP-расстановка обязана вытолкнуть его один раз.
+				var defender = _mm._team_home.outfield()[0]
+				defender.global_position = Vector3(0.0, 0.5, _gl + into * 5.0)
 				_mm._dispatch_goal_kick(2, Vector3(0, 0.11, _gl))   # team_2 (ИИ) бьёт у -Z
 				if not _mm.is_goal_kick_active() or _mm._goal_kick.camera_is_owned():
 					print("CHECK FAIL: ожидался активный ИИ-удар (Role.NONE)"); return true
 
+				# SETUP выставил защитника вне штрафной (одноразовая начальная расстановка).
+				if _in_box(defender):
+					print("CHECK FAIL: SETUP не вытолкнул защитника из штрафной"); return true
+
 				# Защищающаяся команда (team_1) — ЖИВАЯ: моторы не залочены.
-				var defender = _mm._team_home.outfield()[0]
 				if _locked(defender):
 					print("CHECK FAIL: защитник team_1 залочен (должен играть)"); return true
 
@@ -50,15 +57,19 @@ func _process(delta: float) -> bool:
 				if _mm._try_tackle(_mm.controlled_player) != false:
 					print("CHECK FAIL: подкат разрешён во время удара от ворот"); return true
 
-				# Заход в штрафную блокируется push'ем БЕЗ лока: телепорт защитника в штрафную →
-				# update() выталкивает его, но мотор остаётся свободным.
-				var into := -signf(_gl)
-				defender.global_position = Vector3(0.0, 0.5, _gl + into * 5.0)
-				_mm._goal_kick.update(1.0 / 60.0)
-				if _in_box(defender):
-					print("CHECK FAIL: защитник не вытолкнут из штрафной"); return true
-				if _locked(defender):
-					print("CHECK FAIL: защитник залочен после выталкивания (должен остаться свободным)"); return true
+				# Заход в штрафную держит физическая стена, а не пер-кадровый телепорт: коллайдер
+				# построен и защитник получил его бит в collision_mask (упрётся через move_and_slide).
+				if _mm._goal_kick._block_wall == null or not is_instance_valid(_mm._goal_kick._block_wall):
+					print("CHECK FAIL: стена штрафной не построена"); return true
+				if (defender.collision_mask & FootballConstants.SETPIECE_BLOCK_LAYER) == 0:
+					print("CHECK FAIL: защитник не слушает стену (нет бита в mask)"); return true
+
+				# После удара стена снимается и бит возвращается.
+				_mm._goal_kick._release()
+				if _mm._goal_kick._block_wall != null:
+					print("CHECK FAIL: стена не снята после розыгрыша"); return true
+				if (defender.collision_mask & FootballConstants.SETPIECE_BLOCK_LAYER) != 0:
+					print("CHECK FAIL: бит стены не убран из mask защитника"); return true
 
 				print("CHECK PASS: goal_kick_defend")
 				quit(0)

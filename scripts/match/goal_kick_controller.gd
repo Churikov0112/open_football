@@ -36,6 +36,8 @@ var _locked: bool = false              # коммит нажат (камера �
 var _contact_connected := false
 var _intent: KickerIntent
 var _presentation: SetPiecePresentation
+var _block_wall: StaticBody3D = null    # невидимая стена штрафной при живой защите (ИИ-удар)
+var _blocked_bodies: Array = []         # защитники, которым временно добавлен бит стены в mask
 
 func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
@@ -110,10 +112,15 @@ func _setup() -> void:
 	if kvis != null:
 		kvis.cancel_action()
 		kvis.recover()
-	# Правило: соперники бьющей команды — вне штрафной у goal_line_z.
+	# Правило: соперники бьющей команды — вне штрафной у goal_line_z (одноразовая начальная
+	# расстановка; телепорт тут допустим — это стартовая позиция, не рантайм-глитч).
 	_clear_opponent_box()
 	# Правило: НИКОГО (даже своей команды), кроме вратаря, — во вратарской ±5м.
 	_clear_goal_area_buffer()
+	# ИИ-удар (живая защита): вместо пер-кадрового телепорта — физическая «стена» штрафной, об
+	# которую защитник упирается и слайдит (move_and_slide), без рывков назад.
+	if not _presentation.owns_camera():
+		_build_block_wall()
 	_charging = false
 	_charge = 0.0
 	_locked = false
@@ -178,14 +185,52 @@ func _clear_goal_area_buffer() -> void:
 				m.set_control_locked(true)
 				m.set_move_intent(Vector3.ZERO)
 
+## Невидимая стена штрафной для живой защиты (ИИ-удар): сплошной box-коллайдер размером со штрафную
+## на своём слое SETPIECE_BLOCK_LAYER. Защитники (соперники бьющей команды = команда человека)
+## получают этот бит в collision_mask и упираются в стену через move_and_slide (слайд вдоль, без
+## телепорта). Мяч/вратарь/бьющая команда бита не имеют — проходят свободно (вратарь и мяч внутри).
+func _build_block_wall() -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = FootballConstants.SETPIECE_BLOCK_LAYER
+	body.collision_mask = 0
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(FootballConstants.PENALTY_AREA_WIDTH, 4.0, FootballConstants.PENALTY_AREA_DEPTH)
+	col.shape = shape
+	body.add_child(col)
+	body.global_position = Vector3(0.0, 2.0, _goal_line_z + _into * FootballConstants.PENALTY_AREA_DEPTH * 0.5)
+	_manager.add_child(body)
+	_block_wall = body
+	_blocked_bodies.clear()
+	for n in _manager.get_tree().get_nodes_in_group(_opp_group):
+		if not is_instance_valid(n) or n == _keeper or not (n is CollisionObject3D):
+			continue
+		(n as CollisionObject3D).collision_mask |= FootballConstants.SETPIECE_BLOCK_LAYER
+		_blocked_bodies.append(n)
+
+func _teardown_block_wall() -> void:
+	for n in _blocked_bodies:
+		if is_instance_valid(n) and n is CollisionObject3D:
+			(n as CollisionObject3D).collision_mask &= ~FootballConstants.SETPIECE_BLOCK_LAYER
+	_blocked_bodies.clear()
+	if _block_wall != null and is_instance_valid(_block_wall):
+		_block_wall.queue_free()
+	_block_wall = null
+
 func update(delta: float) -> void:
+	# Пер-кадровый телепорт-выталкивание держим ТОЛЬКО когда бьёт человек (соперники — заморожены,
+	# рывка не видно). При ИИ-ударе живую защиту держит физическая стена (_build_block_wall) — телепорт
+	# тут дал бы «отброс на полметра», см. [[ввод-от-ворот]].
+	var enforce := _presentation.owns_camera()
 	match _phase:
 		Phase.AIM:
 			_pin_ball()
-			_clear_opponent_box()   # Law 16 непрерывно до удара, а не одноразово на SETUP
+			if enforce:
+				_clear_opponent_box()   # Law 16 непрерывно до удара, а не одноразово на SETUP
 			_aim_update(delta)
 		Phase.STRIKE:
-			_clear_opponent_box()   # держим и на разбеге — окно закроется на action_contact (_release → IDLE)
+			if enforce:
+				_clear_opponent_box()   # держим и на разбеге — окно закроется на action_contact (_release → IDLE)
 			_strike_update(delta)
 	_update_camera_pose()
 
@@ -311,6 +356,7 @@ func _on_kicker_contact(_action: String) -> void:
 	_release()
 
 func _release() -> void:
+	_teardown_block_wall()
 	if _keeper_brain != null and _keeper_brain.has_method(&"set_goalkick_mode"):
 		_keeper_brain.set_goalkick_mode(false)
 	var km := PlayerMotor.find_on(_kicker)
