@@ -442,6 +442,15 @@ const KEEPER_PLACE_DRIBBLE_DIST := 10.0 # ВРЕМЕННО: сколько ме�
 const KEEPER_THROW_DISTANCE := 25.0    # дальность броска верхом рукой (keeper_overhand_throw), м — к центру поля
 const KEEPER_THROW_PEAK := 6.0         # высота дуги броска верхом, м
 
+# Управляемый вратарь — HANDS-раздача (План 2).
+const KEEPER_DIST_CHARGE_MAX := 0.7    # макс. время заряда дистанции (A/B), с
+const KEEPER_HAND_THROW_CHARGE := 0.2  # заряд A < этого = тап (раскат низом), >= = удержание (бросок верхом), с
+const KEEPER_HAND_ROLL_DIST := 12.0    # дальность раската низом рукой (тап A), м
+const KEEPER_HAND_THROW_DIST := 30.0   # дальность броска верхом (удержание A) при полном заряде, м
+const KEEPER_HANDS_MOVE_SPEED := 0.6   # доля LOCO_TOP_SPEED при беге с мячом в руках (медленнее полевого)
+const KEEPER_SIX_SECOND_TIME := 6.0    # макс. удержание мяча в руках до принудительного выноса, с
+const AI_KEEPER_THINK_TIME := 0.8      # пауза «обдумывания» ИИ-вратаря до выноса к центру, с
+
 # Приставные шаги вратаря по линии до разбега бьющего (K-режим пенальти, см. keeper_ai._penalty_hold).
 const KEEPER_PEN_STEP_SPEED := 3.0     # скорость бокового дрейфа по линии, м/с
 const KEEPER_PEN_STEP_MARGIN := 0.5    # отступ от штанги, дальше не смещаться, м
