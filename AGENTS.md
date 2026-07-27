@@ -1,5 +1,10 @@
 # OpenFootball — Agent Guide
 
+> **Текущее состояние проекта живёт в вики: `docs/wiki/index.md` — начинать оттуда.** Это живой,
+> поддерживаемый слой (страница на подсистему, перекрёстные `[[ссылки]]`, `константы.md` сверена с
+> кодом). Хронология — `log.md` в корне. Правила поддержки вики и краткие трип-вайры — в `CLAUDE.md`.
+> Разделы ниже — исторический подробный гайд; при расхождении доверяй вике и коду, и правь вику.
+
 ## Dev commands
 - **Validate, menu-load only (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit`
 - **Validate match scene (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit-after 2 res://scenes/match.tscn`
