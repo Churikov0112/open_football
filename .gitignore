@@ -1,3 +1,8 @@
+# Godot editor cache and state
+.godot/
+*.cfg.user
+user.cfg
+
 # Raw Mixamo FBX — не распространяем (public/open-source); коммитим только собранный .glb
 assets/models/mixamo_src/
 
