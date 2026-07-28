@@ -653,6 +653,11 @@ const THROW_CAM_BACK := 4.5           # камера позади вбрасыв
 const THROW_CAM_HEIGHT := 2.2         # высота камеры (м)
 const THROW_CAM_LOOK_Y := 1.2         # высота точки, куда смотрит камера (м)
 const THROW_CAM_AHEAD := 6.0          # как далеко перед точкой вброса смотрит камера (м)
+# ИИ-вбрасывающий (Этап 2).
+const AI_THROWIN_THINK_TIME := 0.7    # с — пауза обдумывания ИИ перед доворотом (как AI_GOALKICK_THINK_TIME)
+const AI_THROWIN_UPFIELD_WEIGHT := 1.0  # вес продвижения к чужим воротам в ThrowInPlan
+const AI_THROWIN_OPP_SPEED := 8.0     # = LOCO_TOP_SPEED, скорость соперника для оценки перехвата
+const AI_THROWIN_BALL_SPEED := 12.0   # представительная скорость навеса для interception_time, м/с
 
 # ── KICKOFF ──────────────────────────────────────────────────────────────────
 const KICKOFF_KICKER_OFFSET := 0.6      # смещение кикера от центра на ЧУЖУЮ половину, м
