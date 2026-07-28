@@ -43,6 +43,8 @@ PAGES = {
     "free_kick_logic.gd":     "штрафной угловой вбрасывание начальный-удар",
     "corner_controller.gd":   "угловой",
     "corner_logic.gd":        "угловой",
+    "corner_plan.gd":         "угловой",
+    "ai_corner_intent.gd":    "угловой",
     "goal_kick_controller.gd":"ввод-от-ворот",
     "goal_kick_logic.gd":     "ввод-от-ворот",
     "goal_kick_plan.gd":      "ввод-от-ворот",

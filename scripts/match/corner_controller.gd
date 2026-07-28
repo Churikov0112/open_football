@@ -39,6 +39,10 @@ var _kicker_mask_saved: int = 0      # маска коллизий бьющег�
 
 var _intent: KickerIntent
 var _presentation: SetPiecePresentation
+var _att_group: StringName = &"team_1"   # команда, подающая угловой (атакующая)
+var _def_group: StringName = &"team_2"   # защищающаяся
+var _block_wall: StaticBody3D = null     # невидимая стена Law 17 (9.15 м) при живой защите (ИИ-угловой)
+var _blocked_bodies: Array = []          # защитники с временным битом стены в mask
 
 var _cn_rng := RandomNumberGenerator.new()
 var _spawned: Array = []             # [{body, team_group}] — ВРЕМЕННЫЕ тела углового (все деспавнятся)
@@ -57,8 +61,15 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 func is_active() -> bool:
 	return _phase != Phase.IDLE
 
-## Старт углового: сторона по X игрока в момент вызова; ворота вратаря (goal_line_z).
-func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
+## Владеет ли источник камерой розыгрыша — match_manager проверяет перед парковкой (Role.NONE,
+## ИИ-угловой: камера НЕ трогается, остаётся обычная ТВ/3-е лицо, человек защищается своей командой).
+func camera_is_owned() -> bool:
+	return _presentation != null and _presentation.owns_camera()
+
+## Старт углового. Атакующая команда — по группе `kicker`. Сторона: `side_override` (±1, от точки
+## судьи) либо по X бьющего (ручной запуск C-клавишей, где бьющий — controlled_player). goal_line_z —
+## лицевая линия атакуемых ворот (там вратарь, которого достаёт _keeper_at).
+func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null, side_override: float = 0.0) -> void:
 	if _phase != Phase.IDLE or kicker == null:
 		return
 	_kicker = kicker
@@ -66,7 +77,9 @@ func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = n
 	_keeper = _manager._keeper_at(goal_line_z)
 	_keeper_brain = _keeper.brain() if _keeper != null and _keeper.has_method(&"brain") else null
 	_into = -signf(goal_line_z)
-	_side = CornerLogic.side_for_player(kicker.global_position.x)
+	_side = signf(side_override) if absf(side_override) > 0.001 else CornerLogic.side_for_player(kicker.global_position.x)
+	_att_group = &"team_1" if kicker.is_in_group("team_1") else &"team_2"
+	_def_group = &"team_2" if _att_group == &"team_1" else &"team_1"
 	_foot = CornerLogic.foot_for_side(_side)
 	_intent = intent if intent != null else _default_intent()
 	_presentation = presentation if presentation != null else SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
@@ -86,7 +99,12 @@ func _setup() -> void:
 	_phase = Phase.SETUP
 	_cleanup_spawned()
 	_manager.set_corner_active(true)
-	_manager.set_field_ai_active(false)
+	# Человек подаёт (Role.KICKER) → морозим всё поле. ИИ-соперник (Role.NONE) → морозим только
+	# подающую команду, защищающаяся (человек) играет; правило 9.15 м держит физическая стена ниже.
+	if _presentation.owns_camera():
+		_manager.set_field_ai_active(false)
+	else:
+		_manager.set_field_ai_active(false, _att_group)
 	_spot = CornerLogic.corner_spot(_side, FootballConstants.HALF_FIELD_WIDTH, _goal_line_z,
 		FootballConstants.CORNER_INSET, FootballConstants.BALL_RADIUS)
 	var goal_center := Vector3(0.0, 0.0, _goal_line_z)
@@ -117,6 +135,13 @@ func _setup() -> void:
 		_keeper_brain.set_freekick_anchor(Vector3(0.0, 0.5, _goal_line_z + _into * FootballConstants.FK_KEEPER_STEP_OUT))
 	_spawn_targets()
 	_spawn_defenders()
+	# Живая защита (ИИ-угловой): невидимая стена 9.15 м вокруг флажка держит защитников-людей вне дуги.
+	# Человек подаёт → управление бьющему (судья мог назначить бьющим не текущего controlled_player, а
+	# ближайшего к флажку полевого; Role.NONE тело подающей ИИ-команды человеку не отдаёт).
+	if not _presentation.owns_camera():
+		_build_block_wall()
+	elif _presentation.owns_hud():
+		_manager.assign_controlled_player(_kicker)
 	_peak_height = FootballConstants.CORNER_LOB_PEAK_STANDARD
 	_charging = false
 	_charge = 0.0
@@ -296,11 +321,13 @@ func _on_kicker_contact(_action: String) -> void:
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
 		km.set_control_locked(false)
-	# Управление получателю ДО _release()/конверта тел (та же причина, что в FK).
-	if is_instance_valid(receiver) and _manager.has_method(&"assign_controlled_player"):
+	# Управление получателю ДО _release()/конверта тел (та же причина, что в FK) — ТОЛЬКО при подаче
+	# человека (Role.NONE не отдаёт тело подающей ИИ-команды человеку; ИИ-получатель подберёт мяч сам).
+	var give_control := _presentation.owns_hud() and is_instance_valid(receiver)
+	if give_control and _manager.has_method(&"assign_controlled_player"):
 		_manager.assign_controlled_player(receiver)
 	_release()
-	if is_instance_valid(receiver) and _manager.has_method(&"begin_pass_receive"):
+	if give_control and _manager.has_method(&"begin_pass_receive"):
 		_manager.begin_pass_receive(receiver)
 
 ## Получатель — РЕАЛЬНЫЙ тиммейт (_real_mate), если подача направлена примерно на него (dot по
@@ -342,11 +369,14 @@ func _drive_short_mate(_delta: float) -> void:
 # ── Спавны ─────────────────────────────────────────────────────────────────────
 func _spawn_targets() -> void:
 	# Временная «толпа» атакующих в штрафной (визуал корнера) — все деспавнятся на резолве и
-	# получателями НЕ являются (иначе состав рос бы каждый угловой).
-	var positions := CornerLogic.box_target_positions(_goal_line_z, _into,
-		FootballConstants.CORNER_TARGET_LATERAL, FootballConstants.CORNER_TARGET_DEPTH, 0.5)
-	for pos in positions:
-		_spawned.append({"body": _make_body(&"team_1", Color(0.1, 0.1, 0.9), pos), "team_group": &"team_1"})
+	# получателями НЕ являются (иначе состав рос бы каждый угловой). Толпа — ТОЛЬКО при подаче
+	# человека: при ИИ-угловом поле живое, декоративные фризнутые тела своей команды путались бы с
+	# реальными живыми игроками — не спавним, обходимся одним реальным получателем.
+	if _presentation.owns_camera():
+		var positions := CornerLogic.box_target_positions(_goal_line_z, _into,
+			FootballConstants.CORNER_TARGET_LATERAL, FootballConstants.CORNER_TARGET_DEPTH, 0.5)
+		for pos in positions:
+			_spawned.append({"body": _make_body(_att_group, _group_color(_att_group), pos), "team_group": _att_group})
 	# Короткая опция И единственный получатель навеса/паса — РЕАЛЬНЫЙ тиммейт из ростера (не новое
 	# тело): переставляем существующего в штрафную (у ближней штанги, на стороне угла), а не спавним
 	# нового. На резолве он остаётся в игре (был в ростере) — состав не растёт. По RB выбегает к
@@ -362,26 +392,33 @@ func _spawn_targets() -> void:
 			mpm.set_control_locked(true)
 			mpm.set_move_intent(Vector3.ZERO)
 
-## Первый реальный полевой тиммейт (team_1) кроме бьющего/вратаря и не временное corner-тело.
+## Первый реальный полевой тиммейт атакующей команды кроме бьющего/вратаря и не временное corner-тело.
 func _find_home_mate() -> CharacterBody3D:
-	for n in _manager.get_tree().get_nodes_in_group("team_1"):
-		if n == _kicker or n == _keeper or n.is_in_group("corner_spawned"):
+	for n in _manager.get_tree().get_nodes_in_group(_att_group):
+		if n == _kicker or n == _keeper or n.is_in_group("corner_spawned") or n.is_in_group("role_gk"):
 			continue
 		if n is CharacterBody3D:
 			return n
 	return null
 
+## Декоративные защитники в штрафной — ТОЛЬКО при подаче человека (при ИИ-угловом защищается живая
+## команда человека, свои реальные тела; фейковые фризнутые не нужны).
 func _spawn_defenders() -> void:
+	if not _presentation.owns_camera():
+		return
 	var into := _into
 	for sx in [-1.0, 1.0]:
 		var pos := Vector3(sx * FootballConstants.CORNER_TARGET_LATERAL * 0.7, 0.5,
 			_goal_line_z + into * (FootballConstants.CORNER_TARGET_DEPTH - 3.0))
-		_spawned.append({"body": _make_body(&"team_2", Color(0.9, 0.1, 0.1), pos), "team_group": &"team_2"})
+		_spawned.append({"body": _make_body(_def_group, _group_color(_def_group), pos), "team_group": _def_group})
+
+func _group_color(g: StringName) -> Color:
+	return Color(0.1, 0.1, 0.9) if g == &"team_1" else Color(0.9, 0.1, 0.1)
 
 func _make_body(team_group: StringName, color: Color, pos: Vector3) -> CharacterBody3D:
 	var cfg := PlayerConfig.new()
 	cfg.team_group = team_group
-	cfg.role = PlayerConfig.Role.FWD if team_group == &"team_1" else PlayerConfig.Role.DEF
+	cfg.role = PlayerConfig.Role.FWD if team_group == _att_group else PlayerConfig.Role.DEF
 	cfg.kit_color = color
 	cfg.spawn_pos = pos
 	cfg.display_name = "CornerBody"
@@ -416,6 +453,7 @@ func _free_all_spawned() -> void:
 	_spawned.clear()
 
 func _release() -> void:
+	_teardown_block_wall()
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
 		km.set_face_direction(Vector3.ZERO)
@@ -443,6 +481,39 @@ func _release() -> void:
 		_manager.set_field_ai_active(true)
 	_manager.set_corner_active(false)
 	_phase = Phase.IDLE
+
+## Невидимая стена Law 17 для живой защиты (ИИ-угловой): цилиндр радиуса CORNER_DEFEND_DIST (9.15 м)
+## вокруг флажка на слое SETPIECE_BLOCK_LAYER, который слушают ТОЛЬКО защитники (временный бит в mask)
+## — упираются и слайдят через move_and_slide, без телепорта. Мяч/атакующая команда бита не имеют.
+## (Аналог стены 2 м во вбрасывании и стены штрафной в ударе от ворот.)
+func _build_block_wall() -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = FootballConstants.SETPIECE_BLOCK_LAYER
+	body.collision_mask = 0
+	var col := CollisionShape3D.new()
+	var shape := CylinderShape3D.new()
+	shape.radius = FootballConstants.CORNER_DEFEND_DIST
+	shape.height = 4.0
+	col.shape = shape
+	body.add_child(col)
+	_manager.add_child(body)
+	body.global_position = Vector3(_spot.x, 2.0, _spot.z)
+	_block_wall = body
+	_blocked_bodies.clear()
+	for n in _manager.get_tree().get_nodes_in_group(_def_group):
+		if not is_instance_valid(n) or not (n is CollisionObject3D):
+			continue
+		(n as CollisionObject3D).collision_mask |= FootballConstants.SETPIECE_BLOCK_LAYER
+		_blocked_bodies.append(n)
+
+func _teardown_block_wall() -> void:
+	for n in _blocked_bodies:
+		if is_instance_valid(n) and n is CollisionObject3D:
+			(n as CollisionObject3D).collision_mask &= ~FootballConstants.SETPIECE_BLOCK_LAYER
+	_blocked_bodies.clear()
+	if _block_wall != null and is_instance_valid(_block_wall):
+		_block_wall.queue_free()
+	_block_wall = null
 
 ## Фикс-камера от 3-го лица за бьющим (за углом, смотрит по heading). Держится только до контакта —
 ## на _release() _corner_active сбрасывается и обычная камера возвращается сама.
