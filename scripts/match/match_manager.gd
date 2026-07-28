@@ -2303,6 +2303,8 @@ func _dispatch_kickoff(kicking_team: int) -> void:
 func _on_restart_awarded(restart_type: int, team: int, spot: Vector3) -> void:
 	if restart_type == RefereeLogic.Restart.GOAL_KICK:
 		_dispatch_goal_kick(team, spot)
+	elif restart_type == RefereeLogic.Restart.THROW_IN:
+		_dispatch_throw_in(team, spot)
 
 
 ## Поднять реальный контроллер удара от ворот. team_1 (человек) → рулит вратарём, Role.KICKER.
@@ -2348,6 +2350,51 @@ func _dispatch_goal_kick(team: int, spot: Vector3) -> void:
 		intent = AIGoalKickIntent.new(attack_dir, plan["aim_dir"], plan["variant"], plan["power_ratio"])
 		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.NONE)
 	_goal_kick.start(keeper, goal_line_z, intent, presentation)
+
+
+## Ближайший к точке ПОЛЕВОЙ (не GK) команды по плоской дистанции — тем же критерием, что
+## ThrowInController._nearest_teammate, чтобы вбрасывающий совпал (детерминизм исключения из кандидатов).
+func _nearest_outfielder(to: Vector3, team: Team) -> Node3D:
+	var best: Node3D = null
+	var best_d := INF
+	for b in team.outfield():
+		var d := Vector3(b.global_position.x - to.x, 0.0, b.global_position.z - to.z).length_squared()
+		if d < best_d:
+			best_d = d
+			best = b
+	return best
+
+
+## Поднять реальный контроллер вброса. team_1 (человек) → Human + Role.KICKER. team_2 (ИИ) →
+## ThrowInPlan решает получателя/силу, AIThrowInIntent проигрывает, Role.NONE. spot от судьи не нужен —
+## контроллер сам берёт точку из позиции мяча (та же aut_point).
+func _dispatch_throw_in(team: int, _spot: Vector3) -> void:
+	if _throw_in == null:
+		return
+	if team == 1:
+		_throw_in.start(1, null, SetPiecePresentation.new(SetPiecePresentation.Role.KICKER))
+		return
+	var spot_c := ThrowInLogic.aut_point(ball.global_position,
+		FootballConstants.HALF_FIELD_WIDTH, FootballConstants.BALL_RADIUS)
+	var into := ThrowInLogic.base_heading(spot_c.x)
+	var attack_dir := Vector3(0.0, 0.0, _team_away.attack_z_sign)
+	var thrower := _nearest_outfielder(spot_c, _team_away)   # тот же выбор, что контроллер в start()
+	var candidates: Array = []
+	for b in _team_away.outfield():
+		if b == thrower:
+			continue
+		candidates.append((b as Node3D).global_position)
+	var opponents: Array = []
+	for b in _team_home.outfield():
+		opponents.append((b as Node3D).global_position)
+	var plan := ThrowInPlan.choose(spot_c, into, attack_dir, FootballConstants.THROW_AIM_ARC,
+		candidates, opponents,
+		FootballConstants.THROW_MIN_DIST, FootballConstants.THROW_MAX_DIST,
+		FootballConstants.AI_THROWIN_BALL_SPEED, FootballConstants.AI_THROWIN_OPP_SPEED,
+		FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD,
+		FootballConstants.AI_THROWIN_UPFIELD_WEIGHT)
+	var intent := AIThrowInIntent.new(into, plan["aim_dir"], plan["power_ratio"])
+	_throw_in.start(2, intent, SetPiecePresentation.new(SetPiecePresentation.Role.NONE))
 
 
 ## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через NET_CELEBRATION_TIME —
