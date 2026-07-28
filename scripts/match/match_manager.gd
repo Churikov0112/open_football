@@ -840,7 +840,7 @@ func set_field_ai_active(on: bool, only_group: StringName = &"") -> void:
 ## В этом окне обычная игра проходит сквозным путём _physics_process, но подкат/дриблинг/суд заглушены
 ## (мяч у контроллера, не в игре). Остальные стандарты делают ранний return и сюда не попадают.
 func _live_defend_setpiece_active() -> bool:
-	return _goal_kick_active or _kickoff_active or _throw_in_active
+	return _goal_kick_active or _kickoff_active or _throw_in_active or _corner_active
 
 
 ## Останавливаем/возвращаем ИИ-игроков (team_1+team_2) в чистый idle. `keep_active` (если
@@ -1056,7 +1056,7 @@ func _process(delta: float) -> void:
 		camera_pivot.global_transform = _penalty_cam_pose
 	elif _free_kick_active:
 		camera_pivot.global_transform = _free_kick_cam_pose
-	elif _corner_active:
+	elif _corner_active and _corner.camera_is_owned():
 		camera_pivot.global_transform = _corner_cam_pose
 	elif _goal_kick_active and _goal_kick.camera_is_owned():
 		camera_pivot.global_transform = _goal_kick_cam_pose
@@ -1178,10 +1178,13 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper_at(-field_length) != null and not _celebrating:
 		_free_kick.start(controlled_player, -field_length)
 		return
-	# Угловой-режим: всё ведёт контроллер, обычные системы заглушены.
+	# Угловой. Человек подаёт (Role.KICKER) → всё заморожено, ранний return. ИИ-соперник (Role.NONE) →
+	# человек ЗАЩИЩАЕТСЯ своей командой: провал в обычную игру (без подката/дриблинга/суда — гарды ниже),
+	# заход в дугу держит стена 9.15 м.
 	if _corner_active:
 		_corner.update(delta)
-		return
+		if _corner.camera_is_owned():
+			return
 	# Угловой по C — только из чистого состояния (не во время празднования гола).
 	if Input.is_action_just_pressed(&"corner_debug") and _keeper_at(-field_length) != null and not _celebrating:
 		_corner.start(controlled_player, -field_length)
@@ -2308,6 +2311,8 @@ func _on_restart_awarded(restart_type: int, team: int, spot: Vector3) -> void:
 		_dispatch_goal_kick(team, spot)
 	elif restart_type == RefereeLogic.Restart.THROW_IN:
 		_dispatch_throw_in(team, spot)
+	elif restart_type == RefereeLogic.Restart.CORNER:
+		_dispatch_corner(team, spot)
 
 
 ## Поднять реальный контроллер удара от ворот. team_1 (человек) → рулит вратарём, Role.KICKER.
@@ -2398,6 +2403,54 @@ func _dispatch_throw_in(team: int, _spot: Vector3) -> void:
 		FootballConstants.AI_THROWIN_UPFIELD_WEIGHT)
 	var intent := AIThrowInIntent.new(into, plan["aim_dir"], plan["power_ratio"])
 	_throw_in.start(2, intent, SetPiecePresentation.new(SetPiecePresentation.Role.NONE))
+
+
+## Поднять реальный контроллер углового. Сторона — по знаку spot.x (флажок судьи), атакуемые ворота —
+## по знаку spot.z. team_1 (человек) → Human + Role.KICKER (камера/бар, всё поле заморожено). team_2
+## (ИИ) → CornerPlan решает получателя/вариант/силу навесом-first, AICornerIntent проигрывает, Role.NONE
+## («наблюдатель»); человек ЗАЩИЩАЕТСЯ живой командой, стена 9.15 м держит его вне дуги. Бьющий —
+## ближайший полевой атакующей команды к флажку.
+func _dispatch_corner(team: int, spot: Vector3) -> void:
+	if _corner == null:
+		return
+	var goal_line_z := -field_length if spot.z < 0.0 else field_length
+	var side := signf(spot.x)
+	var att_team: Team = _team_home if team == 1 else _team_away
+	var kicker := _nearest_outfielder(spot, att_team)
+	if kicker == null:
+		return
+	var intent: KickerIntent = null
+	var presentation: SetPiecePresentation
+	if team == 1:
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
+	else:
+		var into := -signf(goal_line_z)
+		var attack_dir := Vector3(0.0, 0.0, into)
+		var spot_c := CornerLogic.corner_spot(side, FootballConstants.HALF_FIELD_WIDTH, goal_line_z,
+			FootballConstants.CORNER_INSET, FootballConstants.BALL_RADIUS)
+		var base_heading := FreeKickLogic.base_heading(spot_c, Vector3(0.0, 0.0, goal_line_z))
+		# Цель — box-позиция реального тиммейта (та же, что контроллер выставит в _spawn_targets:
+		# short_mate_start_pos). Соперники — полевые защищающейся команды (для коридора наземного паса).
+		var mate_pos := CornerLogic.short_mate_start_pos(side, goal_line_z, into,
+			FootballConstants.CORNER_SHORT_START_LATERAL, FootballConstants.CORNER_SHORT_START_DEPTH, 0.5)
+		var candidates: Array = [mate_pos]
+		var def_team: Team = _team_away if team == 1 else _team_home
+		var opponents: Array = []
+		for b in def_team.outfield():
+			opponents.append((b as Node3D).global_position)
+		var plan := CornerPlan.choose(spot_c, base_heading, attack_dir, FootballConstants.CORNER_AIM_ARC,
+			candidates, opponents,
+			2.0, FootballConstants.CORNER_LOB_MIN_DIST,
+			FootballConstants.CORNER_LOB_MIN_DIST, FootballConstants.CORNER_LOB_MAX_DIST,
+			FootballConstants.AI_CORNER_LOB_BIAS,
+			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED,
+			FootballConstants.AI_CORNER_OPP_SPEED,
+			FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD,
+			FootballConstants.AI_CORNER_UPFIELD_WEIGHT)
+		intent = AICornerIntent.new(base_heading, plan["aim_dir"], plan["variant"], plan["power_ratio"])
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.NONE)
+	_corner.start(kicker as CharacterBody3D, goal_line_z, intent, presentation, side)
 
 
 ## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через NET_CELEBRATION_TIME —

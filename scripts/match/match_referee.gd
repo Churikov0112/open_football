@@ -93,7 +93,8 @@ func _award_ball_out(exit: int, last_touch: Node) -> void:
 	# Сигнал синхронен: подписчик-диспетчер (match_manager) поднимает реальный контроллер ПРЯМО
 	# здесь, до возврата. Для GOAL_KICK интерим не нужен — контроллер уже владеет мячом.
 	restart_awarded.emit(res["restart"], res["team"], spot)
-	if res["restart"] != RefereeLogic.Restart.GOAL_KICK and res["restart"] != RefereeLogic.Restart.THROW_IN:
+	if res["restart"] != RefereeLogic.Restart.GOAL_KICK and res["restart"] != RefereeLogic.Restart.THROW_IN \
+			and res["restart"] != RefereeLogic.Restart.CORNER:
 		_interim_award(res["team"], spot)
 	_state = State.LIVE
 
