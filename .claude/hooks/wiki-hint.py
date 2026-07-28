@@ -49,6 +49,8 @@ PAGES = {
     "ai_goal_kick_intent.gd": "ввод-от-ворот",
     "throw_in_controller.gd": "вбрасывание",
     "throw_in_logic.gd":      "вбрасывание",
+    "throw_in_plan.gd":       "вбрасывание",
+    "ai_throw_in_intent.gd":  "вбрасывание",
     "kickoff_controller.gd":  "начальный-удар",
     "kickoff_logic.gd":       "начальный-удар",
     # --- intent-шов ---
