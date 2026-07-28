@@ -37,8 +37,13 @@ func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: Pr
 func is_active() -> bool:
 	return _phase != Phase.IDLE
 
+## Владеет ли источник камерой розыгрыша — match_manager проверяет перед парковкой (Role.NONE,
+## ИИ-вброс: камера НЕ трогается, остаётся обычная ТВ/3-е лицо).
+func camera_is_owned() -> bool:
+	return _presentation != null and _presentation.owns_camera()
+
 ## Старт вброса: точка = проекция мяча на ближайшую боковую линию; бьющий = ближайший team_1.
-func start(intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
+func start(team: int = 1, intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
 	if _phase != Phase.IDLE:
 		return
 	_intent = intent if intent != null else _default_intent()
@@ -47,7 +52,8 @@ func start(intent: KickerIntent = null, presentation: SetPiecePresentation = nul
 		FootballConstants.HALF_FIELD_WIDTH, FootballConstants.BALL_RADIUS)
 	_into = ThrowInLogic.base_heading(_spot.x)
 	_heading = _into
-	_thrower = _nearest_team1(_spot, null)
+	var group: StringName = &"team_1" if team == 1 else &"team_2"
+	_thrower = _nearest_teammate(_spot, group, null)
 	if _thrower == null:
 		return   # некому вбрасывать — отменяем старт
 	_opp_group = &"team_2" if _thrower.is_in_group("team_1") else &"team_1"
@@ -86,8 +92,9 @@ func _setup() -> void:
 		vis.hold_pose("throw_in")
 	# Правило 2 м: соперники вбрасывающего не ближе THROW_ENCROACH_DIST к точке вброса.
 	_clear_opponents_from_spot()
-	# Управление — на вбрасывающего (человек драйвит прицел); полевой AI заморожен.
-	_manager.assign_controlled_player(_thrower)
+	# Управление — вбрасывающему ТОЛЬКО когда бьёт человек (Role.NONE не отдаёт team_2-тело человеку).
+	if _presentation.owns_hud():
+		_manager.assign_controlled_player(_thrower)
 	_manager.set_field_ai_active(false)
 	_charging = false
 	_charge = 0.0
@@ -96,10 +103,10 @@ func _setup() -> void:
 	_phase = Phase.AIM
 
 ## Ближайший к точке `to` полевой игрок team_1 (вратарь исключён по группе role_gk), кроме exclude.
-func _nearest_team1(to: Vector3, exclude: Node) -> CharacterBody3D:
+func _nearest_teammate(to: Vector3, group: StringName, exclude: Node) -> CharacterBody3D:
 	var best: CharacterBody3D = null
 	var best_d := INF
-	for n in _manager.get_tree().get_nodes_in_group(&"team_1"):
+	for n in _manager.get_tree().get_nodes_in_group(group):
 		if not is_instance_valid(n) or n == exclude or n.is_in_group(&"role_gk") or not (n is CharacterBody3D):
 			continue
 		var d := Vector3(n.global_position.x - to.x, 0.0, n.global_position.z - to.z).length_squared()
@@ -203,12 +210,14 @@ func _on_thrower_contact(_action: String) -> void:
 	if _ball.has_method(&"note_pass_from"):
 		_ball.note_pass_from(&"team_1" if _thrower.is_in_group("team_1") else &"team_2")
 	struck.emit()
-	# Управление — тому, кому летит мяч (ближайший team_1 к приземлению, кроме вбрасывающего).
-	var receiver := _nearest_team1(land, _thrower)
-	if receiver != null:
-		_manager.assign_controlled_player(receiver)
-		if _manager.has_method(&"begin_pass_receive"):
-			_manager.begin_pass_receive(receiver)
+	# Управление получателю — ТОЛЬКО при человеческом вбросе (Role.NONE не отдаёт красное тело).
+	if _presentation.owns_hud():
+		var recv_group: StringName = &"team_1" if _thrower.is_in_group("team_1") else &"team_2"
+		var receiver := _nearest_teammate(land, recv_group, _thrower)
+		if receiver != null:
+			_manager.assign_controlled_player(receiver)
+			if _manager.has_method(&"begin_pass_receive"):
+				_manager.begin_pass_receive(receiver)
 	_release()
 
 func _release() -> void:

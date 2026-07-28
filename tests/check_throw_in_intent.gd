@@ -35,7 +35,7 @@ func _process(delta: float) -> bool:
 				if _ti == null:
 					print("CHECK FAIL: нет узла ThrowInController"); return true
 				_fake = FakeKickerIntent.new()
-				_ti.start(_fake)
+				_ti.start(1, _fake)   # сторона-агностичная сигнатура: team, intent, presentation
 				if not _mm.is_throw_in_active():
 					print("CHECK FAIL: throw-in-режим не включился"); return true
 				_state = 1
