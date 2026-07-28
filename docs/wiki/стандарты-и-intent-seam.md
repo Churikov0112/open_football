@@ -58,13 +58,14 @@ flow-тесты (зовут `_fire_charge`/`_fire_shot` напрямую, мин
 ## Не сделано
 
 Реальный запуск контроллера есть у **кикоффа** (прямой `_dispatch_kickoff` в `match_manager`, минуя
-сигнал; см. [[начальный-удар]]), **[[ввод-от-ворот|удара от ворот]]** и **[[вбрасывание|вброса]]** (оба
-через **подключённый** сигнал `MatchReferee.restart_awarded` → `_on_restart_awarded` →
-`_dispatch_goal_kick`/`_dispatch_throw_in`; судья при GOAL_KICK и THROW_IN не делает интерим). Удар от
-ворот — первый, ожививший общий сигнал; остальные его типы (corner/free-kick/penalty) пока не разведены в
-`_on_restart_awarded`. AI-поведение добавлено для удара от ворот (`AIGoalKickIntent` + `GoalKickPlan`) и
-вброса (`AIThrowInIntent` + `ThrowInPlan`); для **двух** конвертированных контроллеров (штрафной/угловой) —
-ещё нет (рефактор сменил лишь источник ввода). Roadmap: `docs/superpowers/specs/2026-07-22-match-orchestration-
-roadmap-design.md`. Шов-тесты (инъектят фейковый `KickerIntent`, гоняют через `update()`):
+сигнал; см. [[начальный-удар]]), **[[ввод-от-ворот|удара от ворот]]**, **[[вбрасывание|вброса]]** и
+**[[угловой|углового]]** (все три через **подключённый** сигнал `MatchReferee.restart_awarded` →
+`_on_restart_awarded` → `_dispatch_goal_kick`/`_dispatch_throw_in`/`_dispatch_corner`; судья при
+GOAL_KICK, THROW_IN и CORNER не делает интерим). Удар от ворот — первый, ожививший общий сигнал;
+остаётся развести в `_on_restart_awarded` только free-kick/penalty. AI-поведение добавлено для удара от
+ворот (`AIGoalKickIntent` + `GoalKickPlan`), вброса (`AIThrowInIntent` + `ThrowInPlan`) и углового
+(`AICornerIntent` + `CornerPlan`); для **штрафного** — ещё нет (рефактор сменил лишь источник ввода).
+Roadmap: `docs/superpowers/specs/2026-07-22-match-orchestration-roadmap-design.md`. Шов-тесты (инъектят
+фейковый `KickerIntent`, гоняют через `update()`):
 `check_*_intent.gd`, `check_human_kicker_intent.gd`, `check_ai_kicker_intent.gd`,
 `check_setpiece_kicker_no_touch.gd`. См. [[архитектура]] про судью.
