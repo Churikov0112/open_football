@@ -225,7 +225,7 @@ func _position(delta: float) -> void:
 	# кадр, надёжно (не зависит от выравнивания с точкой удара). Это чинит scoop/catch «во вратаря».
 	if ball.is_flight() and _heading_at_goal() and _catch_radius_hit():
 		if _is_own_backpass():
-			_trap_backpass()   # намеренный пас своего — в ноги, не руками
+			_trap_backpass_if_low()   # низкий пас своего — в ноги; высокий навес не хватаем (летит дальше)
 			return
 		var by := ball.global_position.y
 		if _should_catch_high(by):
@@ -504,7 +504,7 @@ func _penalty_hold(delta: float, m: PlayerMotor) -> void:
 	# Рефлекс центрального мяча: по высоте прилёта — scoop/catch/catch_head/catch_top / miss_top.
 	if ball.is_flight() and _heading_at_goal() and _catch_radius_hit():
 		if _is_own_backpass():
-			_trap_backpass()   # намеренный пас своего — в ноги, не руками
+			_trap_backpass_if_low()   # низкий пас своего — в ноги; высокий навес не хватаем (летит дальше)
 			return
 		var by := ball.global_position.y
 		if _should_catch_high(by):
@@ -591,7 +591,7 @@ func on_ball_contact() -> void:
 	if manager != null and manager.is_celebrating():
 		return
 	if _is_own_backpass():
-		_trap_backpass()   # намеренный пас своего — не руками, а в ноги → OUTFIELD
+		_trap_backpass_if_low()   # низкий пас своего — в ноги; высокий навес не хватаем (летит дальше)
 		return
 	var by := ball.global_position.y
 	if by > FootballConstants.KEEPER_JUMP_REACH:
@@ -645,7 +645,7 @@ func _catch_radius_hit() -> bool:
 ## Контакт в нырке: ловим (по заготовленной зоне) или отбиваем.
 func _resolve_dive_contact() -> void:
 	if _is_own_backpass():
-		_trap_backpass()   # намеренный пас своего — в ноги, не руками (даже в нырке)
+		_trap_backpass_if_low()   # низкий пас своего — в ноги; высокий навес не хватаем (даже в нырке)
 		return
 	var is_catch := KeeperLogic.resolve_save(_current_action, ball.linear_velocity.length(),
 		FootballConstants.KEEPER_CATCH_MAX_SPEED)
@@ -1045,7 +1045,10 @@ func _backpass_guard() -> void:
 	var vis := _visual()
 	if vis != null:
 		vis.set_locomotion_style(PlayerVisual.LOCO_STYLE_NORMAL)   # обычный run, не вратарская стойка
-	if d <= FootballConstants.KEEPER_REACH:
+	if d <= FootballConstants.KEEPER_REACH and ball.global_position.y <= FootballConstants.KEEPER_BACKPASS_TRAP_HEIGHT:
+		# Мяч по горизонтали у нас И НИЗКО — берём в ноги. Высокий навес НЕ хватаем: пусть перелетит
+		# над головой (без «прилипания» — гейт по высоте), а вратарь бежит за ним и добирает
+		# опускающимся. Без высотного гейта решение шло только по горизонтали → навес липнул к ногам.
 		_trap_backpass()
 		return
 	# Бежим ПРЯМО на мяч (предсказание по скорости — чуть впереди, чтобы встретить, а не догонять сзади).
@@ -1055,6 +1058,16 @@ func _backpass_guard() -> void:
 	m.set_move_intent(dir, 1.0)
 	if to_ball.length() > 0.1:
 		m.set_face_direction(to_ball)
+
+
+## Взять бэк-пас в НОГИ, только если мяч НИЗКО (в пределах ног/груди). Высокий навес здесь НЕ
+## хватаем — пусть перелетит над головой: вратарь побежит за ним и добёрет опускающимся (сбор в
+## _backpass_guard). Так рефлекс-ветки ловли не «прилипают» к летящему высоко мячу. True — взяли в ноги.
+func _trap_backpass_if_low() -> bool:
+	if ball.global_position.y <= FootballConstants.KEEPER_BACKPASS_TRAP_HEIGHT:
+		_trap_backpass()
+		return true
+	return false
 
 
 ## Трап бэк-паса В НОГИ (не в руки) → OUTFIELD. Зовётся из точек ловли, когда _is_own_backpass().
@@ -1397,7 +1410,7 @@ func _catching(delta: float) -> void:
 	# Геометрический захват: мяч дотянулся → приклеиваем к рукам.
 	if ball.is_flight() and _catch_radius_hit():
 		if _is_own_backpass():
-			_trap_backpass()   # намеренный пас своего — в ноги, не руками
+			_trap_backpass_if_low()   # низкий пас своего — в ноги; высокий навес не хватаем (летит дальше)
 			return
 		ball.catch(_body, hold_point)
 	if ball.has_method(&"is_caught") and ball.is_caught() and ball.dribbler == _body:
