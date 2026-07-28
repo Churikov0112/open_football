@@ -16,6 +16,24 @@ func _initialize() -> void:
 	if not is_equal_approx(lp2.x, 3.66):
 		print("CHECK FAIL: line_position x clamp → ", lp2.x); ok = false
 
+	# angle_position: луч «центр ворот (0,0,52.5) → мяч». Мяч по центру (x=0) далеко, danger=0 →
+	# стоим на базовой глубине по центру: x≈0, off=base=2.75 → z=52.5-2.75=49.75.
+	var ap := KeeperLogic.angle_position(Vector3(0, 0, 10.0), Vector3.ZERO, 52.5, 3.66, 0.0, 2.75, 5.0, 0.0)
+	if absf(ap.x) > 0.01 or not is_equal_approx(ap.z, 49.75):
+		print("CHECK FAIL: angle_position center base → ", ap); ok = false
+	# Мяч ШИРОКО (x=20) далеко: X = доля по лучу (не =20, но >0 и в пределах створа); off=2.75.
+	var ap2 := KeeperLogic.angle_position(Vector3(20.0, 0, 10.0), Vector3.ZERO, 52.5, 3.66, 0.0, 2.75, 5.0, 0.0)
+	if ap2.x <= 0.05 or ap2.x > 3.66 + 0.001:
+		print("CHECK FAIL: angle_position wide x on ray → ", ap2.x); ok = false
+	# danger=1 → выход дальше (aggression=max=5.0), т.е. дальше от линии, чем при danger=0.
+	var ap3 := KeeperLogic.angle_position(Vector3(0, 0, 10.0), Vector3.ZERO, 52.5, 3.66, 0.0, 2.75, 5.0, 1.0)
+	if absf(ap3.z - 52.5) <= absf(ap.z - 52.5):
+		print("CHECK FAIL: angle_position danger advances → ", ap3.z, " vs ", ap.z); ok = false
+	# Не забегаем ЗА мяч: мяч близко (2м от центра ворот), base=2.75 → aggression клампится к dist-0.5=1.5.
+	var ap4 := KeeperLogic.angle_position(Vector3(0, 0, 50.5), Vector3.ZERO, 52.5, 3.66, 0.0, 2.75, 5.0, 0.0)
+	if absf(ap4.z - 52.5) > 1.5 + 0.001:
+		print("CHECK FAIL: angle_position not past ball → off=", absf(ap4.z - 52.5)); ok = false
+
 	# shot_intercept (гравитация 0 = прямая): (0,0.5,40) скорость (2,1,25) → t=0.5 → (1, 1.0, 52.5)
 	var si := KeeperLogic.shot_intercept(Vector3(0, 0.5, 40.0), Vector3(2, 1, 25), 52.5, 0.0)
 	if not si.is_equal_approx(Vector3(1.0, 1.0, 52.5)):

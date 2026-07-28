@@ -23,10 +23,6 @@ config/features=PackedStringArray("4.7")
 
 FootballConstants="*res://scripts/data/football_constants.gd"
 
-[debug]
-
-file_logging/enable_file_logging=true
-
 [display]
 
 window/size/viewport_width=1920

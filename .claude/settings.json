@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/wiki-toc.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/wiki-hint.py",
+            "timeout": 15,
+            "statusMessage": "Ищу страницу вики"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/wiki-stop-check.py",
+            "timeout": 20,
+            "statusMessage": "Проверяю, обновлена ли вики"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -16,9 +16,10 @@ func _initialize() -> void:
 func _process(delta: float) -> bool:
 	_elapsed += delta
 	if _elapsed > 0.15 and _phase == 0:
-		_kb = _mm._keeper_brain
+		var kbody = _mm._keeper_at(-_mm.field_length)
+		_kb = kbody.brain() if kbody != null else null
 		if _kb == null:
-			print("CHECK FAIL: нет _keeper_brain")
+			print("CHECK FAIL: нет вратаря/brain у -Z")
 			return true
 		_kb.set_goalkick_mode(true)
 		if not _kb._goalkick_mode:
@@ -27,12 +28,12 @@ func _process(delta: float) -> bool:
 		if _kb._state != 0:   # State.POSITION == 0
 			print("CHECK FAIL: state != POSITION после on, state=", _kb._state)
 			return true
-		_pos_on = _mm._keeper.global_position
+		_pos_on = _mm._keeper_at(-_mm.field_length).global_position
 		_phase = 1
 		return false
 	# Несколько кадров в режиме: тело не должно уезжать (physics_process рано выходит).
 	if _phase == 1 and _elapsed > 0.5:
-		var moved: float = _mm._keeper.global_position.distance_to(_pos_on)
+		var moved: float = _mm._keeper_at(-_mm.field_length).global_position.distance_to(_pos_on)
 		if moved > 0.25:
 			print("CHECK FAIL: вратарь сместился в goalkick-режиме на ", moved)
 			return true

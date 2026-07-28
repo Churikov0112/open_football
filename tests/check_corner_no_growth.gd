@@ -36,7 +36,7 @@ func _process(delta: float) -> bool:
 				_base_t1 = _c("team_1")
 				_base_t2 = _c("team_2")
 				print("baseline: team_1=%d team_2=%d" % [_base_t1, _base_t2])
-				_corner.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
+				_corner.start(_mm.controlled_player, -_mm.field_length)
 				_stage = 1
 				_st = 0.0
 		1:  # навес 1
@@ -54,7 +54,7 @@ func _process(delta: float) -> bool:
 				print("after corner 1: team_1=%d team_2=%d" % [t1, t2])
 				if t1 != _base_t1 or t2 != _base_t2:
 					return _fail("состав вырос после углового 1 (t1=%d/%d t2=%d/%d)" % [t1, _base_t1, t2, _base_t2])
-				_corner.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
+				_corner.start(_mm.controlled_player, -_mm.field_length)
 				_stage = 3
 				_st = 0.0
 		3:  # навес 2

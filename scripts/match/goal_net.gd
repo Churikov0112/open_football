@@ -15,20 +15,23 @@ var _mat: StandardMaterial3D
 
 func initialize(ball_ref: RigidBody3D) -> void:
 	ball = ball_ref
-	var C := FootballConstants
-	_net = NetSim.build_box_net(C.GOAL_WIDTH, C.GOAL_HEIGHT, C.NET_DEPTH,
-		C.NET_WIDTH_DIV, C.NET_HEIGHT_DIV, C.NET_DEPTH_DIV, C.NET_SLACK)
+	# Прямой FootballConstants.X (статический резолв константы), НЕ `var C := FootballConstants`:
+	# алиас автозагрузки-как-ЗНАЧЕНИЯ не резолвится при -s-компиляции по цепочке зависимостей
+	# (класс грузится раньше регистрации автозагрузки) — ломал любой -s-тест с компайл-тайм
+	# ссылкой на MatchManager (напр. check_action_executor). Статический доступ к const этого не имеет.
+	_net = NetSim.build_box_net(FootballConstants.GOAL_WIDTH, FootballConstants.GOAL_HEIGHT, FootballConstants.NET_DEPTH,
+		FootballConstants.NET_WIDTH_DIV, FootballConstants.NET_HEIGHT_DIV, FootballConstants.NET_DEPTH_DIV, FootballConstants.NET_SLACK)
 	_params = {
-		"gravity": C.NET_GRAVITY,
-		"damping": C.NET_DAMPING,
-		"stiffness": C.NET_SPRING_STIFFNESS,
-		"shape_return": C.NET_SHAPE_RETURN,
-		"ball_radius": C.NET_BALL_RADIUS,
-		"ball_vel_scale": C.NET_BALL_VEL_SCALE,
-		"ball_force": C.NET_BALL_FORCE,
-		"ball_min_speed": C.NET_BALL_MIN_SPEED,
-		"constraint_iterations": C.NET_CONSTRAINT_ITERATIONS,
-		"constraint_stiffness": C.NET_STIFFNESS,
+		"gravity": FootballConstants.NET_GRAVITY,
+		"damping": FootballConstants.NET_DAMPING,
+		"stiffness": FootballConstants.NET_SPRING_STIFFNESS,
+		"shape_return": FootballConstants.NET_SHAPE_RETURN,
+		"ball_radius": FootballConstants.NET_BALL_RADIUS,
+		"ball_vel_scale": FootballConstants.NET_BALL_VEL_SCALE,
+		"ball_force": FootballConstants.NET_BALL_FORCE,
+		"ball_min_speed": FootballConstants.NET_BALL_MIN_SPEED,
+		"constraint_iterations": FootballConstants.NET_CONSTRAINT_ITERATIONS,
+		"constraint_stiffness": FootballConstants.NET_STIFFNESS,
 	}
 	_mat = StandardMaterial3D.new()
 	_mat.albedo_color = Color(1, 1, 1, 0.55)

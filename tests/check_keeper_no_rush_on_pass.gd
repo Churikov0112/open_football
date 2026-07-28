@@ -24,12 +24,12 @@ func _tick() -> void:
 	_frames += 1
 	if _frames < 15:
 		return
-	var keeper: Node3D = _mm.get(&"_keeper")
-	var kbrain = _mm.get(&"_keeper_brain")
+	var keeper: Node3D = _mm._keeper_at(-_mm.field_length)
+	var kbrain = keeper.brain() if keeper != null else null
 	var ball := _mm.get_node("Ball") as RigidBody3D
-	var goal_line_z: float = kbrain.get(&"goal_line_z")
 	if keeper == null or kbrain == null:
 		return
+	var goal_line_z: float = kbrain.get(&"goal_line_z")
 	match _phase:
 		0:
 			# Мяч рядом со штрафной (в 6м от линии), но ТРАПНУТ (дриблинг) — не угроза, не в полёте.
@@ -48,9 +48,12 @@ func _tick() -> void:
 		1:
 			if _frames < 180:
 				return
-			var off_line: float = absf(keeper.global_position.z - goal_line_z) - 0.5
+			# Базовая стойка теперь — глубина центра ВРАТАРСКОЙ площади (~2.75м), не линия ворот
+			# (плейтест-фикс). Регресс ловит именно «выбегание» (~14м как в исходном баге):
+			# вратарь обязан остаться В ПРЕДЕЛАХ вратарской площади.
+			var off_line: float = absf(keeper.global_position.z - goal_line_z)
 			print("SMOKE: keeper z=", keeper.global_position.z, " goal_line_z=", goal_line_z, " off_line=", off_line)
-			if off_line > 0.6:
+			if off_line > FootballConstants.GOAL_AREA_DEPTH + 0.5:
 				_fail("keeper advanced " + str(off_line) + "m off the line for a non-threatening dribbled ball near the box")
 				return
 			print("CHECK PASS: keeper does not rush out for a dribbled/passed ball near the box (no shot threat)")

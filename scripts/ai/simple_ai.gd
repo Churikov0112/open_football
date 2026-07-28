@@ -158,7 +158,7 @@ func _dribble_toward_goal(delta: float) -> void:
 	if home_goal:
 		target = home_goal.global_position
 	else:
-		target = Vector3(0, 0, -field_length)
+		target = Vector3(0, 0, field_length)   # фолбэк: team_2 (единственный владелец simple_ai) атакует +Z (Away)
 
 	var to_target := target - _body.global_position
 	var dist := to_target.length()
@@ -201,7 +201,7 @@ func _kick_towards_goal() -> void:
 	if home_goal:
 		target = home_goal.global_position
 	else:
-		target = Vector3(0, 0, -field_length)
+		target = Vector3(0, 0, field_length)   # фолбэк: team_2 (единственный владелец simple_ai) атакует +Z (Away)
 	# Add X offset for shot variety so shots don't always go center
 	target.x += randf_range(-2.0, 2.0)
 	var dir := (target - ball.global_position).normalized()

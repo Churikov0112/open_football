@@ -100,7 +100,6 @@ OpenFootball/
 │   ├── match/
 │   │   └── match_manager.gd  — вся логика матча
 │   ├── player/
-│   │   ├── player_controller.gd — управление игроком
 │   │   ├── player_motor.gd  — PlayerMotor: velocity+inertia locomotion (accel/decel/turn/lean/sprint)
 │   │   ├── player_visual.gd — PlayerVisual: AnimationTree локомоция + действия + подкат/падение + apply_appearance
 │   │   └── ragdoll_skeleton.gd — МЁРТВЫЙ КОД (физический ragdoll, заменён анимационным падением; тесты остались и проходят, но в игре не используется)
@@ -126,7 +125,7 @@ OpenFootball/
 
 - [x] Матч 1v1 (человек + AI)
 - [x] Поле с полной разметкой (FIFA-стандарт)
-- [x] Ворота с Area3D-детекцией голов
+- [x] Ворота с Area3D-детекцией голов (Law 10: гол — только когда мяч ВЕСЬ пересёк линию; `Area3D` лишь инициирует проверку, подтверждает `match_manager._confirm_goal` — центр за линией на `BALL_RADIUS`, отбитый/пойманный на линии не засчитывается)
 - [x] HUD со счётом
 - [x] FIFA-style камера (слежение за мячом сверху-сзади)
 - [x] Управление WASD + Space (удар) + E (пас)

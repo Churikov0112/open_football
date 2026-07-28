@@ -35,26 +35,51 @@ var _pending_launch: Vector3 = Vector3.ZERO
 var _struck_zone: int = -1
 var _contact_connected := false
 var _watch_timer: float = 0.0
+var _intent: KickerIntent
+var _presentation: SetPiecePresentation
+var _keeper_intent: KeeperIntent
+var _keeper_marker: MeshInstance3D
 
-func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
+func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
 	_ball = ball
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
-	_keeper = keeper
-	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 	_pen_rng.randomize()
 	_build_reticle()
+	_build_keeper_marker()
+	_presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
+
+## Локальный человек сейчас играет бьющего (а не вратаря/наблюдателя)? Для match_manager —
+## скрывать ли маркер controlled_player на время розыгрыша (K: бьющий — ИИ, маркер над ним лишний).
+func kicker_is_local_human() -> bool:
+	return _presentation != null and _presentation.owns_hud()
+
+## Human-дефолт источника намерения пенальти-бьющего (ровно прежние Input-чтения контроллера).
+func _default_intent() -> KickerIntent:
+	return HumanKickerIntent.new({
+		"aim_lat": [&"move_left", &"move_right"],
+		"aim_vert": [&"move_forward", &"move_back"],
+		"foot": [&"foot_left", &"foot_right"],
+		"charges": [[&"kick", 0]],
+		"modifier": &"combo_modifier",
+	})
 
 ## Старт одиночного пенальти в атакуемые ворота (goal_line_z вратаря).
-func start_single(kicker: CharacterBody3D, goal_line_z: float) -> void:
+func start_single(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null, keeper_intent: KeeperIntent = null) -> void:
 	if _phase != Phase.IDLE or kicker == null:
 		return
 	_kicker = kicker
 	_goal_line_z = goal_line_z
+	_keeper = _manager._keeper_at(goal_line_z)
+	_keeper_brain = _keeper.brain() if _keeper != null and _keeper.has_method(&"brain") else null
 	_into = -1.0 if goal_line_z > 0.0 else 1.0
 	_foot = FootballConstants.PEN_DEFAULT_FOOT
 	release_after_strike = true
+	_intent = intent if intent != null else _default_intent()   # свежий intent на каждый пенальти (латч сброшен)
+	if presentation != null:
+		_presentation = presentation
+	_keeper_intent = keeper_intent if keeper_intent != null else AIKeeperIntent.new(_pen_rng)   # дефолт = слепой ИИ (поведение P)
 	_setup()
 
 func _setup() -> void:
@@ -104,9 +129,11 @@ func _place_kicker() -> void:
 		km.set_move_intent(Vector3.ZERO)
 		km.set_face_direction(_forward)
 
-## Очистить штрафную: все полевые (обе команды), кроме бьющего и вратаря, отходят ЗА мяч
+## Очистить штрафную: все полевые (обе команды), кроме бьющего и вратарей, отходят ЗА мяч
 ## (дальше от ворот) и за радиус 9.15 м от точки — по правилу их до удара не должно быть в
 ## штрафной/дуге. Поле-ИИ уже заморожен (set_field_ai_active(false)), так что стоят где поставили.
+## Вратари ОБЕИХ команд (role_gk) остаются в своих воротах — и защищающий (_keeper), и вратарь
+## бьющей команды у противоположных ворот (иначе он уезжал бы к точке пенальти).
 func _clear_box() -> void:
 	var bodies := _manager.get_tree().get_nodes_in_group("team_1")
 	bodies += _manager.get_tree().get_nodes_in_group("team_2")
@@ -116,6 +143,8 @@ func _clear_box() -> void:
 	for n in bodies:
 		if not is_instance_valid(n) or n == _kicker or n == _keeper or not (n is Node3D):
 			continue
+		if n.is_in_group("role_gk"):
+			continue   # вратари обеих команд остаются в своих воротах
 		var lateral := (float(i) - 0.5) * 5.0   # разнести вбок, чтобы не стояли стопкой
 		var pos: Vector3 = _spot + behind * FootballConstants.FK_WALL_DIST + right * lateral
 		pos.y = n.global_position.y
@@ -138,46 +167,57 @@ func update(delta: float) -> void:
 			if _watch_timer <= 0.0:
 				_release()
 	_update_reticle()
+	_update_keeper_marker()
 	_update_camera_pose()
 
 func _aim_update(delta: float) -> void:
+	# Позиционирование вратаря телом (K): человек стиком водит вратаря по линии; ИИ step_lateral()=0 → стоит.
+	if _keeper_brain != null and _keeper_brain.has_method(&"set_penalty_step"):
+		_keeper_brain.set_penalty_step(_keeper_intent.step_lateral())
 	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
-	if Input.is_action_just_pressed(&"foot_left") and _foot != "penalty_l":
+	var fs := _intent.foot_switch()
+	if fs == -1 and _foot != "penalty_l":
 		_foot = "penalty_l"
 		_place_kicker()
-	elif Input.is_action_just_pressed(&"foot_right") and _foot != "penalty_r":
+	elif fs == 1 and _foot != "penalty_r":
 		_foot = "penalty_r"
 		_place_kicker()
-	# Прицел стиком/стрелками: X = ширина, вверх стика = выше в воротах (инвертируем Y).
-	var aim_stick := Vector2(
-		Input.get_axis(&"move_left", &"move_right"),
-		-Input.get_axis(&"move_forward", &"move_back"))
-	if aim_stick.length() > 0.15:
-		_aim = PenaltyLogic.move_reticle(_aim, aim_stick, FootballConstants.PEN_RETICLE_SPEED, delta,
-			FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_HEIGHT, FootballConstants.PEN_AIM_OVERHANG)
+	# Прицел: ИИ — фиксированная цель сразу; человек — стик/стрелки (интеграция + возврат к центру).
+	if _intent.has_fixed_aim():
+		_aim = _intent.aim_target()
 	else:
-		# Нет ввода — метка плавно, но быстро возвращается в центр створа.
-		var center := Vector2(0.0, FootballConstants.PEN_RETICLE_START_Y)
-		_aim = _aim.lerp(center, clampf(FootballConstants.PEN_RETICLE_RETURN * delta, 0.0, 1.0))
+		var aim_stick := _intent.aim_axis()
+		if aim_stick.length() > 0.15:
+			_aim = PenaltyLogic.move_reticle(_aim, aim_stick, FootballConstants.PEN_RETICLE_SPEED, delta,
+				FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_HEIGHT, FootballConstants.PEN_AIM_OVERHANG)
+		else:
+			# Нет ввода — метка плавно, но быстро возвращается в центр створа.
+			var center := Vector2(0.0, FootballConstants.PEN_RETICLE_START_Y)
+			_aim = _aim.lerp(center, clampf(FootballConstants.PEN_RETICLE_RETURN * delta, 0.0, 1.0))
 	# Заряд силы: удержание kick; черпачок — combo_modifier + kick.
-	if Input.is_action_just_pressed(&"kick"):
+	if _intent.charge_start_variant() >= 0:
 		_charging = true
 		_charge = 0.0
-		_chip = Input.is_action_pressed(&"combo_modifier")
+		_chip = _intent.modifier_held()
 	if _charging:
 		_charge += delta
 		var ratio := clampf(_charge / FootballConstants.PEN_CHARGE_MAX_TIME, 0.0, 1.0)
-		_power_bar.visible = true
-		_power_bar.value = ratio
-		var fill := _power_bar.get_theme_stylebox("fill")
-		if fill:
-			fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-		if ratio >= 1.0 or Input.is_action_just_released(&"kick"):
+		if _presentation.owns_hud():
+			_power_bar.visible = true
+			_power_bar.value = ratio
+			var fill := _power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		if ratio >= 1.0 or _intent.charge_committed():
 			_fire(ratio)
 
 func _fire(ratio: float) -> void:
 	_charging = false
-	_power_bar.visible = false
+	# Старт разбега бьющего: фиксируем X вратаря на линии (дальше стик = направление прыжка, на контакте).
+	if _keeper_brain != null and _keeper_brain.has_method(&"freeze_penalty_position"):
+		_keeper_brain.freeze_penalty_position()
+	if _presentation.owns_hud():
+		_power_bar.visible = false
 	var from: Vector3 = _ball.global_position
 	# Итоговая точка = прицел + случай внутри круга разброса.
 	var spread := PenaltyLogic.spread_radius(ratio, FootballConstants.PEN_SPREAD_MIN_R, FootballConstants.PEN_SPREAD_MAX_R)
@@ -205,8 +245,6 @@ func _fire(ratio: float) -> void:
 	else:
 		var speed := PenaltyLogic.power_speed(ratio, FootballConstants.PEN_POWER_MIN_SPEED, FootballConstants.PEN_POWER_MAX_SPEED)
 		_pending_launch = ShotSystem.ballistic_to(from, target, speed, g)
-	# Зона вратаря выбирается вслепую заранее, коммитим на контакте.
-	_struck_zone = PenaltyLogic.random_dive_zone(_pen_rng)
 	# Запускаем клип удара (root motion) и ждём action_contact.
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
@@ -236,8 +274,11 @@ func _on_kicker_contact(_action: String) -> void:
 	# (анти-самоблок/кулдаун) — иначе бьющий мог бы блокировать/трогать собственный удар.
 	if _ball.has_method(&"note_kicker"):
 		_ball.note_kicker(_kicker)
+	_struck_zone = _keeper_intent.dive_zone()   # срез зоны в момент удара (человек-вратарь мог крутить до последнего)
 	if _keeper_brain != null and _keeper_brain.has_method(&"begin_penalty_dive"):
-		_keeper_brain.begin_penalty_dive(_struck_zone)
+		# Передаём вектор запуска: в этот кадр ball.linear_velocity ещё 0 (launch отложен), а
+		# вратарю он нужен, чтобы спрогнозировать реальную точку пересечения и надёжно достать угол.
+		_keeper_brain.begin_penalty_dive(_struck_zone, _pending_launch)
 	struck.emit()
 	if release_after_strike:
 		# Не переключаем камеру сразу (иначе рывок на самом ударе) — держим пенальти-вид PEN_WATCH_TIME,
@@ -267,6 +308,8 @@ func _release() -> void:
 func _update_camera_pose() -> void:
 	if _phase == Phase.IDLE:
 		return
+	if not _presentation.owns_camera():
+		return
 	# Фикс-камера за бьющим (за точкой, в сторону от ворот), смотрит в ворота.
 	var eye := _spot - _forward * FootballConstants.PEN_CAM_BACK + Vector3(0.0, FootballConstants.PEN_CAM_HEIGHT, 0.0)
 	var look := Vector3(0.0, FootballConstants.PEN_CAM_LOOK_Y, _goal_line_z)
@@ -294,7 +337,7 @@ func _build_reticle() -> void:
 func _update_reticle() -> void:
 	if _reticle == null:
 		return
-	var show_it := _phase == Phase.AIM and _reticle_visible
+	var show_it := _phase == Phase.AIM and _reticle_visible and _presentation.owns_hud()
 	_reticle.visible = show_it
 	if not show_it:
 		return
@@ -303,6 +346,34 @@ func _update_reticle() -> void:
 	var r := PenaltyLogic.spread_radius(ratio, FootballConstants.PEN_SPREAD_MIN_R, FootballConstants.PEN_SPREAD_MAX_R)
 	var s := maxf(0.3, r / 0.35)
 	_reticle.scale = Vector3(s, 1.0, s)
+
+## Cyan-маркер над вратарём (конус вершиной вниз) — показывается, когда локальный человек играет
+## роль вратаря (K-тест). Строится один раз, позиционируется каждый кадр в _update_keeper_marker.
+func _build_keeper_marker() -> void:
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.0
+	mesh.bottom_radius = 0.12
+	mesh.height = 0.22
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.1, 0.9, 1.0)   # cyan (как маркер управляемого игрока)
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.no_depth_test = true
+	mesh.material = mat
+	_keeper_marker = MeshInstance3D.new()
+	_keeper_marker.name = "KeeperMarker"
+	_keeper_marker.mesh = mesh
+	_keeper_marker.rotation.z = PI   # вершина вниз (указывает на вратаря)
+	_keeper_marker.visible = false
+	add_child(_keeper_marker)
+
+## Позиция/видимость cyan-маркера вратаря: над головой _keeper, пока роль локального человека = KEEPER.
+func _update_keeper_marker() -> void:
+	if _keeper_marker == null:
+		return
+	var show_it := _phase != Phase.IDLE and _keeper != null and _presentation.owns_keeper_marker()
+	_keeper_marker.visible = show_it
+	if show_it:
+		_keeper_marker.global_position = _keeper.global_position + Vector3(0.0, 2.3, 0.0)
 
 func _kicker_visual() -> PlayerVisual:
 	if _kicker == null:

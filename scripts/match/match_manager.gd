@@ -14,6 +14,7 @@ var _team_away: Team
 var controlled_player: CharacterBody3D
 var field_length: float = FootballConstants.HALF_FIELD_LENGTH
 var field_width: float = FootballConstants.HALF_FIELD_WIDTH
+var _referee: MatchReferee
 # team_1 атакует −Z в первом тайме; половина флипает знак (будущий half-time-свап).
 # ОДНО место, задающее сторону чужих ворот для прицела ударов — см. _target_goal_center().
 var _attack_dir_z: float = -1.0
@@ -21,6 +22,7 @@ var _controlled_marker: Polygon2D
 var _match_camera: Camera3D
 var _goal_nets: Dictionary = {}
 var _celebrating: bool = false
+var _goal_pending: bool = false                # мяч вошёл в створ, ждём подтверждения (см. _confirm_goal)
 var _penalty_active: bool = false
 var _penalty                                   # PenaltyController
 var _penalty_cam_pose: Transform3D = Transform3D.IDENTITY
@@ -37,6 +39,9 @@ var _goal_kick_cam_pose: Transform3D = Transform3D.IDENTITY
 var _throw_in                                  # ThrowInController
 var _throw_in_active: bool = false
 var _throw_in_cam_pose: Transform3D = Transform3D.IDENTITY
+var _kickoff                                   # KickoffController
+var _kickoff_active: bool = false
+var _kickoff_cam_pose: Transform3D
 var _bc_cam_eye_z: float = 0.0                 # сглаженная Z-позиция обычной broadcast-камеры
 var _third_person_camera: bool = false         # DEBUG: переключение 1/3 — broadcast / вид от 3-го лица
 var _tp_cam_eye: Vector3 = Vector3.ZERO        # сглаженная позиция third-person камеры
@@ -52,8 +57,6 @@ var _tackle_clean: bool = true
 var _hit_processed: bool = false
 var _tackle_recovery_timer: float = 0.0
 var _tackle_area: Area3D
-var _keeper: CharacterBody3D
-var _keeper_brain: Node
 var _tackle_foul_position: Vector3 = Vector3.ZERO
 var _tackle_fouled_player: Node3D
 
@@ -130,9 +133,11 @@ func _ready() -> void:
 	_team_away.ball = ball
 	add_child(_team_away)
 	_setup_away_player()
+	_setup_away_teammate()
 	_setup_home_player()
 	_setup_teammate()
-	_setup_keeper()
+	_setup_keeper(_team_away, -field_length, Color(0.15, 0.7, 0.15))   # team_2, зелёный (как было)
+	_setup_keeper(_team_home, field_length, Color(0.85, 0.55, 0.1))    # team_1, оранжевый (новый)
 	_setup_boundaries()
 	_setup_controlled_indicator()
 	_setup_tackle_area()
@@ -141,31 +146,45 @@ func _ready() -> void:
 	_penalty = preload("res://scripts/match/penalty_controller.gd").new()
 	_penalty.name = "PenaltyController"
 	add_child(_penalty)
-	_penalty.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_penalty.setup(self, ball, camera_pivot, power_bar)
 	_free_kick = preload("res://scripts/match/free_kick_controller.gd").new()
 	_free_kick.name = "FreeKickController"
 	add_child(_free_kick)
-	_free_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_free_kick.setup(self, ball, camera_pivot, power_bar)
 	_corner = preload("res://scripts/match/corner_controller.gd").new()
 	_corner.name = "CornerController"
 	add_child(_corner)
-	_corner.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_corner.setup(self, ball, camera_pivot, power_bar)
 	_goal_kick = preload("res://scripts/match/goal_kick_controller.gd").new()
 	_goal_kick.name = "GoalKickController"
 	add_child(_goal_kick)
-	_goal_kick.setup(self, ball, camera_pivot, power_bar, _keeper)
+	_goal_kick.setup(self, ball, camera_pivot, power_bar)
 	_throw_in = preload("res://scripts/match/throw_in_controller.gd").new()
 	_throw_in.name = "ThrowInController"
 	add_child(_throw_in)
 	_throw_in.setup(self, ball, camera_pivot, power_bar)
+	_kickoff = preload("res://scripts/match/kickoff_controller.gd").new()
+	_kickoff.name = "KickoffController"
+	add_child(_kickoff)
+	_kickoff.setup(self, ball, camera_pivot, power_bar)
 	_action_executor = ActionExecutor.new()
 	_action_executor.name = "ActionExecutor"
 	add_child(_action_executor)
 	_action_executor.setup(self, ball)
-	# Стартовая расстановка: человек с мячом в центре (соперник глубоко — см. _setup_away_player).
-	ball.global_position = _human_player.global_position + Vector3(0, 0.0, -0.6)
-	if ball.has_method(&"set_dribbler"):
-		ball.set_dribbler(_human_player, true)
+	_referee = MatchReferee.new()
+	_referee.name = "MatchReferee"
+	add_child(_referee)
+	# team_defending_neg: команда, защищающая ворота на -Z = та, чей attack_z_sign > 0
+	# (team_2 при текущей расстановке). Выводим из ростера, без singleton-вратаря.
+	var tdn := 2 if _team_away.attack_z_sign > 0.0 else 1
+	_referee.setup(self, ball, tdn)
+	_referee.restart_awarded.connect(_on_restart_awarded)
+	# Старт матча: жеребьёвка, кто разводит первым — реальный кикофф вместо старого «мяч человеку
+	# в ноги напрямую». KickoffLogic.coin_flip — чистая функция (тестируется с фиксированным seed
+	# отдельно, см. check_kickoff_logic.gd); здесь — обычный randomize() для реальной игры.
+	var kickoff_rng := RandomNumberGenerator.new()
+	kickoff_rng.randomize()
+	_dispatch_kickoff(KickoffLogic.coin_flip(kickoff_rng))
 
 
 ## DEBUG: линия-след за мячом. MeshInstance3D + ImmediateMesh, перестраивается каждый кадр
@@ -245,10 +264,16 @@ func _setup_inputs() -> void:
 		&"combo_curl":      {"keys": [KEY_E],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"pause":           {"keys": [KEY_ESCAPE],"buttons": [JOY_BUTTON_START], "axes": []},
 		&"penalty_debug":   {"keys": [KEY_P],     "buttons": [], "axes": []},
+		&"keeper_dive_debug": {"keys": [KEY_K], "buttons": [], "axes": [], "alt": true},   # Alt+K: пенальти в НАШИ ворота (играем вратаря)
+		&"keeper_hand":          {"keys": [KEY_H], "buttons": [JOY_BUTTON_A], "axes": []},
+		&"keeper_clear_center":  {"keys": [KEY_J], "buttons": [JOY_BUTTON_X], "axes": []},
+		&"keeper_clear_directed":{"keys": [KEY_B], "buttons": [JOY_BUTTON_B], "axes": []},
+		&"keeper_drop":          {"keys": [KEY_N], "buttons": [JOY_BUTTON_Y], "axes": []},
 		&"free_kick_debug": {"keys": [KEY_F],     "buttons": [], "axes": []},
 		&"corner_debug":    {"keys": [KEY_C],     "buttons": [], "axes": []},
 		&"goal_kick_debug": {"keys": [KEY_G],     "buttons": [], "axes": []},
 		&"throw_in_debug":  {"keys": [KEY_T],     "buttons": [], "axes": []},
+		&"kickoff_debug":   {"keys": [KEY_O],     "buttons": [], "axes": []},
 		&"corner_call":     {"keys": [KEY_T],     "buttons": [JOY_BUTTON_RIGHT_SHOULDER], "axes": []},
 		&"foot_left":       {"keys": [KEY_L],     "buttons": [], "axes": []},
 		&"foot_right":      {"keys": [KEY_R],     "buttons": [], "axes": []},
@@ -260,9 +285,11 @@ func _setup_inputs() -> void:
 			InputMap.erase_action(action)
 		InputMap.add_action(action)
 		InputMap.action_set_deadzone(action, 0.2)
+		var need_alt: bool = actions[action].get("alt", false)
 		for keycode in actions[action]["keys"]:
 			var ek := InputEventKey.new()
 			ek.keycode = keycode
+			ek.alt_pressed = need_alt   # true → срабатывает только с зажатым Alt (напр. Alt+K)
 			InputMap.action_add_event(action, ek)
 		for btn in actions[action]["buttons"]:
 			var eb := InputEventJoypadButton.new()
@@ -501,22 +528,59 @@ func _setup_goals() -> void:
 			# приклеенный к ней мяч) может качнуться за линию — это не взятие ворот.
 			if body == ball and ball.has_method(&"is_caught") and ball.is_caught():
 				return
-			if body == ball and not _celebrating:
-				_celebrating = true
-				# Вратаря НЕ замораживаем: у keeper_ai своя обработка празднования (доигрывает
-				# нырок и встаёт в idle ТОЛЬКО по завершении клипа). Заморозка (стоп _physics_process
-				# + лок мотора) обрывала бы это, и вратарь мгновенно вставал в idle-позу посреди нырка.
-				_set_ai_frozen(true, _keeper)   # прочие ИИ стоп в idle
-				if g.side == "Home":
-					away_score += 1
-				else:
-					home_score += 1
-				score_label.text = "%d : %d" % [home_score, away_score]
-				var net = _goal_nets.get(g.side)
-				if net:
-					net.start_sim()
-				_celebrate_then_reset(net)
+			# Не фиксируем гол мгновенно: вратарь достаёт мяч ровно на линии, а зона стоит фронтом
+			# на ней — отбитый на линии мяч иначе засчитывается голом (отбой применяется кадром позже).
+			# Подтверждаем через несколько физкадров (см. _confirm_goal). fire-and-forget.
+			if body == ball and not _celebrating and not _goal_pending:
+				_goal_pending = true
+				_confirm_goal(g.side)
 		)
+
+
+## Подтверждение гола (Law 10, см. GOAL_CONFIRM_* и голевую зону в _setup_goals). Голевая Area3D
+## лишь инициирует проверку; гол засчитывается ТОЛЬКО когда мяч ВЕСЬ пересёк линию (центр за линией
+## на BALL_RADIUS). Опрашиваем каждый физкадр: отмена — если пойман/отбит обратно в поле или истёк
+## предохранитель. side задаёт и забившую сторону (счёт), и пропустившую (исполнитель кикоффа).
+func _confirm_goal(side: String) -> void:
+	var gline := -field_length if side == "Home" else field_length
+	var into := signf(gline)                     # знак «за линию» (в ворота/сетку)
+	# Точка входа: body_entered сработал, когда передняя кромка коснулась линии → центр перед линией
+	# на радиус (past ≈ -BALL_RADIUS). «Отбит» = центр отошёл в поле ещё на GOAL_CONFIRM_RETREAT дальше.
+	var retreat_thresh := -FootballConstants.BALL_RADIUS - FootballConstants.GOAL_CONFIRM_RETREAT
+	var scored := false
+	for _i in range(FootballConstants.GOAL_CONFIRM_MAX_FRAMES):
+		await get_tree().physics_frame
+		if _celebrating or not is_instance_valid(ball):
+			break
+		if ball.has_method(&"is_caught") and ball.is_caught():
+			break                                # поймал руками — сейв, не гол
+		var past := (ball.global_position.z - gline) * into   # >0 = центр за линией
+		if past >= FootballConstants.BALL_RADIUS:
+			scored = true                        # весь мяч за линией — гол
+			break
+		if past <= retreat_thresh:
+			break                                # отбит/выбит обратно в поле — не гол
+	_goal_pending = false
+	if not scored or _celebrating or not is_instance_valid(ball):
+		return
+	# --- Подтверждённый гол ---
+	_celebrating = true
+	# team_1 (_team_home) атакует −Z (см. _attack_dir_z) → забивает в ворота Home → team_2 пропустил.
+	var conceding_team := 2 if side == "Home" else 1
+	if _referee != null:
+		_referee.report_goal(conceding_team)
+	# Вратаря НЕ замораживаем: у keeper_ai своя обработка празднования (доигрывает нырок и встаёт в
+	# idle ТОЛЬКО по завершении клипа). Заморозка оборвала бы это, вратарь встал бы в idle посреди нырка.
+	_set_ai_frozen(true)   # прочие ИИ стоп в idle (вратари role_gk исключены внутри)
+	if side == "Home":
+		home_score += 1
+	else:
+		away_score += 1
+	score_label.text = "%d : %d" % [home_score, away_score]
+	var net = _goal_nets.get(side)
+	if net:
+		net.start_sim()
+	_celebrate_then_reset(net, conceding_team)
 
 
 func _make_post(x: float, y: float, z: float) -> MeshInstance3D:
@@ -568,11 +632,11 @@ func _make_net_collider(local_pos: Vector3, size: Vector3) -> StaticBody3D:
 func _setup_boundaries() -> void:
 	var wall_height := 4.0
 	var wall_thickness := 0.5
-	var wall_extra := 4.0
+	var wall_extra := FootballConstants.BOUNDARY_MARGIN_Z
 	# Боковые стены НЕ на самой линии аута (±field_width), а с запасом-выкатом наружу: иначе
 	# вбрасывающий, стоящий за боковой линией, и мяч в его руках упираются в стену (заперты
 	# снаружи, мяч не может пробиться внутрь). Запас — закромка поля, как у настоящего газона.
-	var side_extra := 2.0
+	var side_extra := FootballConstants.BOUNDARY_MARGIN_X
 	var total_half_z := field_length + wall_extra
 	var total_half_x := field_width + side_extra
 	var walls := [
@@ -678,6 +742,18 @@ func set_throw_in_cam_pose(pose: Transform3D) -> void:
 	_throw_in_cam_pose = pose
 
 
+func is_kickoff_active() -> bool:
+	return _kickoff_active
+
+
+func set_kickoff_active(on: bool) -> void:
+	_kickoff_active = on
+
+
+func set_kickoff_cam_pose(pose: Transform3D) -> void:
+	_kickoff_cam_pose = pose
+
+
 ## Включить приём паса для receiver — то же самое, что обычный _fire_pass() делает для
 ## человека-получателя (наведение стика на предсказанную позицию мяча в _handle_player_input
 ## + принудительный трап на любой скорости в _handle_dribbling, минуя BALL_TRAP_MAX_SPEED).
@@ -701,6 +777,52 @@ func assign_controlled_player(p: CharacterBody3D) -> void:
 	_sync_ai_controllers()
 
 
+## Источник намерения + профиль презентации для вратаря в HANDS. ЕДИНСТВЕННОЕ место хардкода
+## «team_1 = локальный человек»: swappable под ИИ-соперника/мультиплеер без правок keeper_ai.
+## take_control=true → менеджер отдаёт управление вратарю (голубой маркер над ним, HUD-заряд).
+func _keeper_hands_dispatch(keeper: Node) -> Dictionary:
+	var is_local_human: bool = keeper != null and keeper.is_in_group("team_1")
+	if is_local_human:
+		var cfg := {
+			"move_lat": [&"move_left", &"move_right"],
+			"move_vert": [&"move_forward", &"move_back"],
+			"aim_lat": [&"move_left", &"move_right"],
+			"aim_vert": [&"move_forward", &"move_back"],
+			"hand": &"keeper_hand",
+			"clear_center": &"keeper_clear_center",
+			"clear_directed": &"keeper_clear_directed",
+			"drop": &"keeper_drop",
+		}
+		return {
+			"intent": HumanKeeperHandsIntent.new(cfg),
+			"presentation": SetPiecePresentation.new(SetPiecePresentation.Role.KICKER),
+			"take_control": true,
+		}
+	return {
+		"intent": AIKeeperHandsIntent.new(FootballConstants.AI_KEEPER_THINK_TIME),
+		"presentation": SetPiecePresentation.new(SetPiecePresentation.Role.NONE),
+		"take_control": false,
+	}
+
+
+## Передать управление ближайшему ПОЛЕВОМУ team_1 к точке (приземление выноса / позиция адресата),
+## как приём паса: assign + begin_pass_receive (принимающий бежит на мяч). Вратарей исключаем.
+func keeper_handoff_control(point: Vector3) -> void:
+	var best: CharacterBody3D = null
+	var best_d := INF
+	for n in get_tree().get_nodes_in_group("team_1"):
+		if not is_instance_valid(n) or n.is_in_group("role_gk"):
+			continue
+		var d: float = n.global_position.distance_squared_to(point)
+		if d < best_d:
+			best_d = d
+			best = n
+	if best != null:
+		assign_controlled_player(best)
+		begin_pass_receive(best)
+		_manual_swap_cooldown = 30
+
+
 ## Глушим/возвращаем полевой ИИ на время пенальти/штрафного (вратаря НЕ трогаем — он должен
 ## нырять/реагировать). Тонкая обёртка над _set_ai_frozen — раньше это была отдельная слабая
 ## реализация (только по паре именованных игроков, без лока мотора), из-за чего ИИ-соперник
@@ -708,8 +830,17 @@ func assign_controlled_player(p: CharacterBody3D) -> void:
 ## НЕ останавливался: их PlayerMotor — отдельный узел со своим _physics_process, отключение
 ## ТОЛЬКО скрипта ИИ не мешало мотору доигрывать последнее заданное направление движения —
 ## соперник продолжал бежать к мячу/игроку сквозь всю расстановку.
-func set_field_ai_active(on: bool) -> void:
-	_set_ai_frozen(not on, _keeper)
+## only_group (опц.) — морозить/размораживать ТОЛЬКО эту группу (для стандартов соперника:
+## бьющую команду морозим, защищающаяся играет). Пусто → всё поле (team_1+team_2), как раньше.
+func set_field_ai_active(on: bool, only_group: StringName = &"") -> void:
+	_set_ai_frozen(not on, only_group)
+
+
+## Идёт стандарт с ЖИВОЙ защитой человека (мяч ещё не введён): удар от ворот или кикофф соперника.
+## В этом окне обычная игра проходит сквозным путём _physics_process, но подкат/дриблинг/суд заглушены
+## (мяч у контроллера, не в игре). Остальные стандарты делают ранний return и сюда не попадают.
+func _live_defend_setpiece_active() -> bool:
+	return _goal_kick_active or _kickoff_active or _throw_in_active
 
 
 ## Останавливаем/возвращаем ИИ-игроков (team_1+team_2) в чистый idle. `keep_active` (если
@@ -728,12 +859,16 @@ func set_field_ai_active(on: bool) -> void:
 ## заморозке, но ставший controlled_player к моменту разморозки, остался бы залоченным
 ## навсегда (мотор игнорирует ввод, маркер выбран, но тело не бежит). Разморозка чужого/не-AI
 ## тела безвредна — его собственный скрипт self-гейтится по `controlled_player == self`.
-func _set_ai_frozen(on: bool, keep_active: Node = null) -> void:
-	var bodies := get_tree().get_nodes_in_group("team_1")
-	bodies += get_tree().get_nodes_in_group("team_2")
+func _set_ai_frozen(on: bool, only_group: StringName = &"") -> void:
+	var bodies: Array
+	if only_group != &"":
+		bodies = get_tree().get_nodes_in_group(only_group)
+	else:
+		bodies = get_tree().get_nodes_in_group("team_1")
+		bodies += get_tree().get_nodes_in_group("team_2")
 	for n in bodies:
-		if not is_instance_valid(n) or n == keep_active:
-			continue   # keep_active (вратарь) не трогаем НИКОГДА — сам управляет своим локом/мотором
+		if not is_instance_valid(n) or n.is_in_group("role_gk"):
+			continue   # вратари (role_gk) НИКОГДА не трогаем — сами управляют своим локом/мотором
 		if on and n == controlled_player:
 			continue
 		_ai_of(n).set_physics_process(not on)
@@ -750,20 +885,25 @@ func _set_ai_frozen(on: bool, keep_active: Node = null) -> void:
 					break
 
 
-## Вратарь соперника в атакуемых человеком воротах (Away, +field_length).
-func _setup_keeper() -> void:
-	var goal_line_z := -field_length   # ворота Home на -field_length
+## Вратарь team в воротах у goal_line_z (сторона-агностичен: keeper_ai всё выводит из goal_line_z).
+func _setup_keeper(team: Team, goal_line_z: float, kit_color: Color) -> CharacterBody3D:
 	var into_field := 1.0 if goal_line_z < 0.0 else -1.0
 	var cfg := PlayerConfig.new()
-	cfg.team_group = &"team_2"
+	cfg.team_group = team.team_group
 	cfg.role = PlayerConfig.Role.GK
-	cfg.kit_color = Color(0.15, 0.7, 0.15)   # вратарь — зелёный
-	cfg.spawn_pos = Vector3(0, 0.5, goal_line_z + into_field * 0.5)
-	cfg.display_name = "Keeper"
+	cfg.kit_color = kit_color
+	# Базовая позиция — центр ВРАТАРСКОЙ площади (не линия ворот); на линию его ставят только
+	# пенальти/штрафной сами (set_penalty_mode/set_freekick_anchor телепортируют куда им надо).
+	cfg.spawn_pos = Vector3(0, 0.5, goal_line_z + into_field * (FootballConstants.GOAL_AREA_DEPTH * 0.5))
+	cfg.display_name = "Keeper_" + str(team.team_group)
 	cfg.ai_script = preload("res://scripts/ai/keeper_ai.gd")
-	cfg.connect_action_signals = false        # keeper_ai сам коннектит visual.action_contact
+	# Сигналы visual идут И менеджеру (ActionExecutor: полевые пасы/удары вратаря в OUTFIELD —
+	# без этого armed-пас никогда не получает контакт и мяч не запускается), И keeper_ai
+	# (self-connect в _ensure_wired: свои клипы раздачи). Оба обработчика гейтятся: экзекьютор —
+	# по player == _action_player, keeper_ai — по своим клипам/состояниям; двойной запуск исключён.
+	cfg.connect_action_signals = true
 	cfg.locomotion_style = PlayerVisual.LOCO_STYLE_KEEPER
-	var k := PlayerFactory.spawn(cfg, _team_away)
+	var k := PlayerFactory.spawn(cfg, team)
 	var kb: Node = k.brain()                    # keeper теперь Brain-компонент
 	# --- keeper-специфичные узлы (не входят в общий player.tscn) — на ТЕЛО (transform) ---
 	var save_area := Area3D.new()
@@ -785,8 +925,18 @@ func _setup_keeper() -> void:
 	kb.save_area = save_area
 	kb.hold_point = hold_point
 	kb.manager = self
-	_keeper = k
-	_keeper_brain = kb
+	return k
+
+## Вратарь команды, ЗАЩИЩАЮЩЕЙ ворота у goal_line_z. Защищающая команда — та, чей
+## attack_z_sign == -signf(goal_line_z) (team_1 атакует -Z → защищает +Z; team_2 наоборот).
+## Без хардкода стороны/команды. null, если у нужной команды нет вратаря.
+func _keeper_at(goal_line_z: float) -> CharacterBody3D:
+	var want_sign := -signf(goal_line_z)
+	if is_equal_approx(_team_home.attack_z_sign, want_sign):
+		return _team_home.keeper()
+	if is_equal_approx(_team_away.attack_z_sign, want_sign):
+		return _team_away.keeper()
+	return null
 
 
 func _setup_away_player() -> void:
@@ -799,7 +949,7 @@ func _setup_away_player() -> void:
 	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
 	cfg.connect_action_signals = true
 	cfg.extra_fields = {
-		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
+		&"home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),   # team_2 атакует +Z (Away)
 	}
 	PlayerFactory.spawn(cfg, _team_away)
 	# Тестовая стенка из бездействующих соперников (только пока соперник отключён флагом) —
@@ -808,11 +958,34 @@ func _setup_away_player() -> void:
 		_spawn_wall_dummies()
 
 
+## Второй полевой team_2 (постоянный, не временное тело сет-писа) — партнёр для короткого паса
+## на кикоффе. Тот же ИИ, что и первый (simple_ai.gd), второй независимый экземпляр — без
+## взаимного учёта между двумя ИИ team_2 (в отличие от teammate_ai у team_1).
+func _setup_away_teammate() -> void:
+	var cfg := PlayerConfig.new()
+	cfg.team_group = &"team_2"
+	cfg.role = PlayerConfig.Role.MID
+	cfg.kit_color = Color(0.9, 0.1, 0.1)
+	cfg.spawn_pos = Vector3(-10, 0.5, -5)   # зеркало PlayerTeammate team_1 (10, 0.5, 5)
+	cfg.display_name = "PlayerAwayTeammate"
+	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
+	cfg.connect_action_signals = true
+	cfg.extra_fields = {
+		&"home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),   # team_2 атакует +Z (Away)
+	}
+	PlayerFactory.spawn(cfg, _team_away)
+
+
 ## Соперник-полевой по умолчанию (первый не-вратарь team_2). До 11×11 их немного.
 func _away_outfielder() -> CharacterBody3D:
 	for b in _team_away.outfield():
 		return b
 	return null
+
+
+## Все полевые team_2 (для кикоффа — нужен явный доступ ко второму, партнёру для паса).
+func _away_outfielders() -> Array:
+	return _team_away.outfield()
 
 
 ## Стенки из стоящих болванок team_2 (для теста ударов/блоков). Требует
@@ -839,7 +1012,7 @@ func _make_dummy_opponent(pos: Vector3) -> void:
 	cfg.ai_script = preload("res://scripts/ai/simple_ai.gd")
 	cfg.connect_action_signals = true
 	cfg.extra_fields = {
-		&"home_goal": ($GoalHome/GoalArea if has_node("GoalHome/GoalArea") else null),
+		&"home_goal": ($GoalAway/GoalArea if has_node("GoalAway/GoalArea") else null),   # team_2 атакует +Z (Away)
 	}
 	PlayerFactory.spawn(cfg, _team_away)
 
@@ -885,10 +1058,12 @@ func _process(delta: float) -> void:
 		camera_pivot.global_transform = _free_kick_cam_pose
 	elif _corner_active:
 		camera_pivot.global_transform = _corner_cam_pose
-	elif _goal_kick_active:
+	elif _goal_kick_active and _goal_kick.camera_is_owned():
 		camera_pivot.global_transform = _goal_kick_cam_pose
-	elif _throw_in_active:
+	elif _throw_in_active and _throw_in.camera_is_owned():
 		camera_pivot.global_transform = _throw_in_cam_pose
+	elif _kickoff_active and _kickoff.camera_is_owned():
+		camera_pivot.global_transform = _kickoff_cam_pose
 	elif _third_person_camera and controlled_player != null:
 		var forward := -controlled_player.global_transform.basis.z
 		forward.y = 0.0
@@ -909,10 +1084,11 @@ func _process(delta: float) -> void:
 	if _trail != null:
 		_update_ball_trail(ball_pos)
 
-	# Удар от ворот — бьёт вратарь, а controlled_player намеренно не трогаем (см. GoalKickController).
-	# Маркер контролируемого игрока на время розыгрыша просто скрываем — он не про вратаря и не
-	# про controlled_player (человек не переключался), показывать его тут нечего.
-	if _goal_kick_active or _throw_in_active:
+	# Удар от ворот/аут — бьёт вратарь/вбрасывающий, а controlled_player намеренно не трогаем.
+	# Пенальти с ИИ-бьющим (K, см. PenaltyController.kicker_is_local_human) — по той же причине:
+	# controlled_player сейчас управляется ИИ, маркер над ним вводит в заблуждение (человек играет
+	# вратаря, не бьющего). Маркер на время розыгрыша просто скрываем.
+	if (_goal_kick_active and _goal_kick.camera_is_owned()) or (_throw_in_active and _throw_in.camera_is_owned()) or (_penalty_active and _penalty != null and not _penalty.kicker_is_local_human()):
 		if _controlled_marker != null:
 			_controlled_marker.visible = false
 	elif _controlled_marker != null and controlled_player and _match_camera != null:
@@ -925,7 +1101,7 @@ func _process(delta: float) -> void:
 
 	# Заряд: копим, пока держим кнопку заряжаемого действия. Во время пенальти/штрафного баром
 	# владеет соответствующий контроллер — не трогаем (иначе он тут же гасится каждый кадр).
-	if not _penalty_active and not _free_kick_active and not _corner_active and not _goal_kick_active and not _throw_in_active:
+	if not _penalty_active and not _free_kick_active and not _corner_active and not _goal_kick_active and not _throw_in_active and not _kickoff_active:
 		if _is_charging() and _charge_player == controlled_player:
 			var is_shot: bool = _charge_action in [ChargeAction.SHOT, ChargeAction.SHOT_CURL, ChargeAction.SHOT_CHIP]
 			var max_time := KICK_CHARGE_MAX_TIME if is_shot else FootballConstants.PASS_CHARGE_MAX_TIME
@@ -947,56 +1123,113 @@ func _process(delta: float) -> void:
 		power_bar.visible = (_is_charging() and _charge_player == controlled_player) \
 			or (_is_queued() and _queue_player == controlled_player)
 
+	# Вратарский HANDS-заряд (A/B): power-bar рисует менеджер, ТОЛЬКО если человек владеет HUD
+	# (presentation KICKER). keeper_ai держит сам заряд; менеджер лишь визуализирует ratio.
+	if controlled_player != null and controlled_player.is_in_group("role_gk"):
+		var kb: Node = _ai_of(controlled_player)
+		if kb.has_method(&"is_hands_active") and kb.is_hands_active() and kb.has_method(&"hands_charge_ratio"):
+			var r: float = kb.hands_charge_ratio()
+			if r >= 0.0:
+				power_bar.visible = true
+				power_bar.value = r
+				var fill := power_bar.get_theme_stylebox("fill")
+				if fill:
+					fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, r * r)
+			elif not _is_charging():
+				power_bar.visible = false
+
 
 
 func _physics_process(delta: float) -> void:
+	# Непрерывный трекинг границ поля — ЗДЕСЬ, до всех ранних return ниже: должен видеть мяч
+	# каждый кадр независимо от того, идёт ли сейчас сет-пис (см. MatchReferee.track_ball_bounds).
+	if _referee != null:
+		_referee.track_ball_bounds()
 	# Пенальти-режим: всё ведёт контроллер, обычные системы заглушены.
 	if _penalty_active:
 		_penalty.update(delta)
 		return
 	# Пенальти по P — только из чистого состояния: во время празднования гола ждёт отложенный
 	# _reset_ball() (телепорт игроков/мяча), запуск пенальти в это окно ломает расстановку.
-	if Input.is_action_just_pressed(&"penalty_debug") and _keeper != null and not _celebrating:
-		_penalty.start_single(controlled_player, _keeper_brain.goal_line_z)
+	if Input.is_action_just_pressed(&"penalty_debug") and _keeper_at(-field_length) != null and not _celebrating:
+		_penalty.start_single(controlled_player, -field_length)
+		return
+	# Alt+K: пенальти В НАШИ ворота (+field_length, защищает наш team_1 вратарь) — бьёт СОПЕРНИК (team_2,
+	# ИИ через AIKickerIntent), человек играет за нашего вратаря (выбор зоны нырка стиком). Презентация —
+	# роль KEEPER (камера как у пенальти + cyan-маркер над вратарём, без ретикла/power_bar бьющего).
+	# controlled_player НЕ трогаем — после розыгрыша управление остаётся за нашим полевым игроком.
+	if Input.is_action_just_pressed(&"keeper_dive_debug") and _keeper_at(field_length) != null and not _celebrating:
+		var red_kicker := _away_outfielder()
+		if red_kicker != null:
+			var kicker_rng := RandomNumberGenerator.new()
+			kicker_rng.randomize()
+			# lat_sign = _into ворот (+Z → -1): камера смотрит на ворота с -Z, экран-право = мировой -X,
+			# так что стик надо инвертировать, иначе вратарь ныряет в зеркальную сторону.
+			_penalty.start_single(red_kicker, field_length,
+				AIKickerIntent.new(kicker_rng),
+				SetPiecePresentation.new(SetPiecePresentation.Role.KEEPER),
+				HumanKeeperIntent.new({"aim_lat": [&"move_left", &"move_right"], "aim_vert": [&"move_forward", &"move_back"], "lat_sign": -1.0}))
 		return
 	# Штрафной-режим: всё ведёт контроллер, обычные системы заглушены.
 	if _free_kick_active:
 		_free_kick.update(delta)
 		return
 	# Штрафной по F — только из чистого состояния (не во время празднования гола).
-	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper != null and not _celebrating:
-		_free_kick.start(controlled_player, _keeper_brain.goal_line_z)
+	if Input.is_action_just_pressed(&"free_kick_debug") and _keeper_at(-field_length) != null and not _celebrating:
+		_free_kick.start(controlled_player, -field_length)
 		return
 	# Угловой-режим: всё ведёт контроллер, обычные системы заглушены.
 	if _corner_active:
 		_corner.update(delta)
 		return
 	# Угловой по C — только из чистого состояния (не во время празднования гола).
-	if Input.is_action_just_pressed(&"corner_debug") and _keeper != null and not _celebrating:
-		_corner.start(controlled_player, _keeper_brain.goal_line_z)
+	if Input.is_action_just_pressed(&"corner_debug") and _keeper_at(-field_length) != null and not _celebrating:
+		_corner.start(controlled_player, -field_length)
 		return
-	# Удар от ворот — свой контроллер, обычные системы заглушены.
+	# Удар от ворот. Человек бьёт (Role.KICKER) → рулит вратарём, всё поле заморожено, ранний return.
+	# ИИ-соперник бьёт (Role.NONE) → человек ЗАЩИЩАЕТСЯ своей командой: НЕ делаем ранний return, падаем
+	# в обычную игру, но без подката и захода в штрафную (мяч ещё не в игре) — гарды ниже (_referee.tick/
+	# _handle_dribbling/_try_tackle/_poll_ai_tackles) и не-локирующий _clear_opponent_box это держат.
 	if _goal_kick_active:
 		_goal_kick.update(delta)
-		return
+		if _goal_kick.camera_is_owned():
+			return
 	# Удар от ворот по G — только из чистого состояния (не во время празднования гола). Бьющий —
-	# ВРАТАРЬ (_keeper), не controlled_player: человек драйвит вратаря на время розыгрыша.
-	if Input.is_action_just_pressed(&"goal_kick_debug") and _keeper != null and not _celebrating:
-		_goal_kick.start(_keeper, _keeper_brain.goal_line_z)
+	# ВРАТАРЬ (team_2 у -Z), не controlled_player: человек драйвит вратаря на время розыгрыша.
+	if Input.is_action_just_pressed(&"goal_kick_debug") and _keeper_at(-field_length) != null and not _celebrating:
+		_goal_kick.start(_keeper_at(-field_length), -field_length)
 		return
 	# Вброс из аута — свой контроллер, обычные системы заглушены.
+	# Человек вбрасывает (Role.KICKER) → всё заморожено, ранний return. ИИ-соперник (Role.NONE) →
+	# человек защищается своей командой: провал в обычную игру (гарды глушат подкат/дриблинг/суд).
 	if _throw_in_active:
 		_throw_in.update(delta)
-		return
+		if _throw_in.camera_is_owned():
+			return
 	# Вброс по T — только из чистого состояния (не во время празднования гола).
 	if Input.is_action_just_pressed(&"throw_in_debug") and not _celebrating:
 		_throw_in.start()
+		return
+	# Кикофф. Человек разводит (Role.KICKER) → всё заморожено, ранний return. ИИ-соперник разводит
+	# (Role.NONE) → человек защищается своей командой: НЕ делаем ранний return, падаем в обычную игру
+	# (без подката/дриблинга/суда — гарды выше), заход на чужую половину и в центр держат стены.
+	if _kickoff_active:
+		_kickoff.update(delta)
+		if _kickoff.camera_is_owned():
+			return
+	# Кикофф по O — вручную, всегда team_1 бьёт человеком (быстрое тестирование; реальный
+	# триггер — судья, см. _dispatch_kickoff в Task 5).
+	if Input.is_action_just_pressed(&"kickoff_debug") and not _celebrating:
+		_kickoff.start(1)
 		return
 	# Одно касание: если действие в очереди и игрок дотянулся — бьём вместо трапа/дриблинга.
 	if _try_fire_queue():
 		_handle_player_input(delta)
 		return
-	_handle_dribbling()
+	if _referee != null and not _celebrating and not _live_defend_setpiece_active():
+		_referee.tick()   # во время удара от ворот/кикоффа судья не судит (мяч ещё не в игре)
+	if not _live_defend_setpiece_active():
+		_handle_dribbling()   # у защищающегося мяча нет — дриблинг/подбор приколотого мяча не нужен
 	_handle_player_input(delta)
 
 	# Auto-switch to whoever on our team has the ball (skip if Q was just pressed)
@@ -1018,7 +1251,12 @@ func _physics_process(delta: float) -> void:
 	var opp_has_ball: bool = ball.has_method(&"set_dribbler") and ball.dribbler and ball.dribbler.is_in_group("team_2")
 	if Input.is_action_just_pressed(&"combo_modifier") and not _we_possess() \
 			and (opp_has_ball or _opponent_closer_to_ball(controlled_player)):
-		var team := get_tree().get_nodes_in_group("team_1")
+		# Вратарь исключён из пула кандидатов: в обороне (мяч не у нас) он всегда ИИ —
+		# управляемым он становится только сам, через ловлю (HANDS) или приём бэк-паса (OUTFIELD).
+		var team: Array = []
+		for tn in get_tree().get_nodes_in_group("team_1"):
+			if is_instance_valid(tn) and not tn.is_in_group("role_gk"):
+				team.append(tn)
 		if team.size() > 1:
 			var ball_pos := ball.global_position
 			var sorted: Array = team.duplicate()
@@ -1158,8 +1396,16 @@ func _handle_dribbling() -> void:
 	var pickers := get_tree().get_nodes_in_group("team_1")
 	pickers += get_tree().get_nodes_in_group("team_2")
 	for p in pickers:
-		if not is_instance_valid(p) or p == _keeper:
+		if not is_instance_valid(p):
 			continue
+		if p.is_in_group("role_gk"):
+			# Вратари не подбирают бесхозный мяч как полевые (у них свой захват в руки) — КРОМЕ
+			# мяча, помеченного намеренным пасом ИХ команды (бэк-пас): его руками брать нельзя,
+			# берут в ноги → keeper_ai сам уйдёт в OUTFIELD-дриблинг.
+			var pf: StringName = ball.pass_from_team() if ball.has_method(&"pass_from_team") else &""
+			var pgrp: StringName = &"team_1" if p.is_in_group("team_1") else &"team_2"
+			if pf != pgrp:
+				continue
 		var dist: float = p.global_position.distance_to(ball.global_position)
 		if dist < 1.0:
 			ball.set_dribbler(p)
@@ -1185,6 +1431,13 @@ func _handle_player_input(delta: float) -> void:
 		return
 	if not controlled_player:
 		return
+	# Вратарь с мячом в руках (HANDS) сам ведёт своё тело через KeeperHandsIntent — менеджер его
+	# НЕ двигает (иначе два владельца тела дерутся). В OUTFIELD (мяч в ногах) keeper_ai заглушён,
+	# и вратарь ведётся обычным полевым путём ниже — тогда этот гейт НЕ срабатывает.
+	if controlled_player.is_in_group("role_gk"):
+		var kb: Node = _ai_of(controlled_player)
+		if kb.has_method(&"is_hands_active") and kb.is_hands_active():
+			return
 	if _action_executor.action_player() == controlled_player and not _action_executor.is_kick_action_active():
 		return
 	var input_vec := Input.get_vector(&"move_left", &"move_right", &"move_forward", &"move_back")
@@ -1598,6 +1851,8 @@ func _can_tackle(tackler: Node3D) -> bool:
 
 
 func _try_tackle(player: CharacterBody3D) -> bool:
+	if _live_defend_setpiece_active():
+		return false   # мяч ещё не введён в игру (удар от ворот/кикофф) — подкат запрещён
 	if _tackle_state != TackleState.NORMAL:
 		return false
 	if not _can_tackle(player):
@@ -1972,6 +2227,10 @@ func _same_team(a: Node, b: Node) -> bool:
 
 
 func _on_ball_collision(body: Node) -> void:
+	# Касание мяча игроком (блок/рикошет/контакт с вратарём) — атрибуция для судьи (last_touch).
+	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
+			and ball.has_method(&"note_touch"):
+		ball.note_touch(body)
 	# Любой контакт мяча с игроком (стенка/защитник/вратарь) нарушает траекторию — сбрасываем
 	# кручение сразу и безусловно (не только в FLIGHT-ветке block_in_flight ниже), иначе Magnus
 	# продолжает крутить уже отскочивший мяч (виден как «кружение на месте»).
@@ -1980,15 +2239,15 @@ func _on_ball_collision(body: Node) -> void:
 		ball.clear_curl()
 	# Мяч коснулся вратаря → ловля/отбой (а не блок): иначе block_in_flight гасит мяч, и он
 	# закатывается в ворота. Физический контакт — надёжный триггер сейва.
-	if body == _keeper and _keeper_brain != null and _keeper_brain.has_method(&"on_ball_contact"):
-		print("[MATCH] ball hit KEEPER capsule")
-		_keeper_brain.on_ball_contact()
+	if body.is_in_group("role_gk") and body.has_method(&"brain"):
+		var kb: Node = body.brain()
+		if kb != null and kb.has_method(&"on_ball_contact"):
+			kb.on_ball_contact()
 		return
 	# Блок: летящий мяч коснулся игрока (защитник на пути / попал в своего). Гасим и роняем
 	# мяч в OPEN (без мгновенной передачи владения — дальше обычная борьба за подбор).
 	if body is CharacterBody3D and (body.is_in_group("team_1") or body.is_in_group("team_2")) \
 			and ball.has_method(&"is_flight") and ball.is_flight() and ball.has_method(&"block_in_flight"):
-		print("[MATCH] block_in_flight by ", body.name, " kicker=", ball.last_kicker)
 		ball.block_in_flight()
 
 
@@ -2002,8 +2261,8 @@ func _reset_ball() -> void:
 	ball.global_position = Vector3(0, 0.5, -0.6)
 
 	# Возврат игроков на стартовые позиции — по ростеру обеих команд (home_pos из фабрики).
-	# Вратарь НЕ сбрасывается (как и раньше) — он держит свою позицию через keeper_ai.
-	for body in _team_home.players() + _team_away.outfield():
+	# Вратари (role_gk) НЕ сбрасываются — держат свои позиции через keeper_ai. outfield() их исключает.
+	for body in _team_home.outfield() + _team_away.outfield():
 		if is_instance_valid(body):
 			body.global_position = body.get_meta(&"home_pos", body.global_position)
 
@@ -2011,16 +2270,146 @@ func _reset_ball() -> void:
 	_sync_ai_controllers()
 
 
-## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через
-## NET_CELEBRATION_TIME сброс мяча и остановка симуляции. Не await-им игроков —
-## по решению ничего не замораживаем. Не await-ит вызывающий (fire-and-forget).
-func _celebrate_then_reset(net) -> void:
+## Минимальный кикофф-специфичный диспетчер (НЕ полноценный генерик-диспетчер по сигналу
+## restart_awarded для всех шести стандартов — та работа остаётся будущим этапом роадмапа).
+## kicking_team=1 (человек) → Human-дефолт + Role.KICKER (камера/бар владеет контроллер).
+## kicking_team=2 → AIKickoffIntent + Role.NONE («наблюдатель» — камера не трогается).
+func _dispatch_kickoff(kicking_team: int) -> void:
+	if _kickoff == null:
+		return
+	var team: Team = _team_home if kicking_team == 1 else _team_away
+	var outfield: Array = team.outfield()
+	if outfield.size() < 2:
+		return   # некому пасовать — отменяем
+	var intent: KickerIntent = null
+	var presentation: SetPiecePresentation
+	if kicking_team == 1:
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
+	else:
+		# KickoffLogic.kicker_placement — ЕДИНАЯ функция, её же зовёт KickoffController._setup()
+		# (Task 3) — ИИ должен знать финальную геометрию ДО того, как контроллер её выставит
+		# (intent передаётся в start() раньше, чем _setup() успевает что-либо разместить), поэтому
+		# диспетчер обязан вычислить её сам, но БЕЗ дублирования формулы — общая чистая функция.
+		var placement := KickoffLogic.kicker_placement(team.attack_z_sign, FootballConstants.KICKOFF_KICKER_OFFSET, 0.5)
+		var kicker_pos: Vector3 = placement["pos"]
+		var base_heading: Vector3 = placement["base_heading"]
+		var partner_body: Node3D = outfield[1]
+		var partner_pos: Vector3 = partner_body.get_meta(&"home_pos", partner_body.global_position)
+		partner_pos = KickoffLogic.clamp_to_own_half(partner_pos, team.attack_z_sign, FootballConstants.KICKOFF_HALF_MARGIN)
+		intent = AIKickoffIntent.new(kicker_pos, base_heading, partner_pos)
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.NONE)
+	_kickoff.start(kicking_team, intent, presentation)
+
+
+## Слушатель сигнала судьи. Пока обрабатывает только GOAL_KICK (кикофф едет своим путём
+## _dispatch_kickoff; throw-in/corner остаются на интериме судьи до своих этапов).
+func _on_restart_awarded(restart_type: int, team: int, spot: Vector3) -> void:
+	if restart_type == RefereeLogic.Restart.GOAL_KICK:
+		_dispatch_goal_kick(team, spot)
+	elif restart_type == RefereeLogic.Restart.THROW_IN:
+		_dispatch_throw_in(team, spot)
+
+
+## Поднять реальный контроллер удара от ворот. team_1 (человек) → рулит вратарём, Role.KICKER.
+## team_2 (ИИ) → GoalKickPlan решает получателя/вариант/силу, AIGoalKickIntent проигрывает,
+## Role.NONE («наблюдатель», камера не трогается). Сторона ворот — по знаку spot.z.
+func _dispatch_goal_kick(team: int, spot: Vector3) -> void:
+	if _goal_kick == null:
+		return
+	var goal_line_z := -field_length if spot.z < 0.0 else field_length
+	var keeper := _keeper_at(goal_line_z)
+	if keeper == null:
+		return
+	var intent: KickerIntent = null
+	var presentation: SetPiecePresentation
+	if team == 1:
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
+	else:
+		var into := -signf(goal_line_z)
+		var attack_dir := Vector3(0.0, 0.0, into)
+		var spot_c := GoalKickLogic.spot_position(goal_line_z, into,
+			FootballConstants.GOAL_AREA_DEPTH, FootballConstants.BALL_RADIUS)
+		# Кандидаты (свои полевые team_2) и соперники (полевые team_1) — в ПОСТ-расчистных позициях
+		# (иначе скорер решает по устаревшей геометрии: соперник в штрафной будет вытолкнут к удару).
+		var candidates: Array = []
+		for b in _team_away.outfield():
+			candidates.append(GoalKickLogic.push_out_of_goal_area((b as Node3D).global_position,
+				goal_line_z, into, FootballConstants.GOAL_AREA_DEPTH,
+				FootballConstants.GOAL_AREA_WIDTH * 0.5, FootballConstants.GK_CLEAR_MARGIN))
+		var opponents: Array = []
+		for b in _team_home.outfield():
+			opponents.append(GoalKickLogic.push_out_of_penalty_area((b as Node3D).global_position,
+				goal_line_z, into, FootballConstants.PENALTY_AREA_DEPTH,
+				FootballConstants.PENALTY_AREA_WIDTH * 0.5, FootballConstants.GK_ENCROACH_MARGIN))
+		var plan := GoalKickPlan.choose(spot_c, attack_dir, FootballConstants.GK_AIM_ARC,
+			candidates, opponents,
+			FootballConstants.GK_GROUND_MIN_DIST, FootballConstants.GK_GROUND_MAX_DIST,
+			FootballConstants.GK_LOB_MIN_DIST, FootballConstants.GK_LOB_MAX_DIST,
+			FootballConstants.PASS_GROUND_MIN_TRAVEL_TIME, FootballConstants.PASS_GROUND_MAX_TRAVEL_TIME,
+			FootballConstants.PASS_GROUND_MIN_SPEED, FootballConstants.PASS_GROUND_MAX_SPEED,
+			FootballConstants.AI_GOALKICK_OPP_SPEED,
+			FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD,
+			FootballConstants.AI_GOALKICK_UPFIELD_WEIGHT)
+		intent = AIGoalKickIntent.new(attack_dir, plan["aim_dir"], plan["variant"], plan["power_ratio"])
+		presentation = SetPiecePresentation.new(SetPiecePresentation.Role.NONE)
+	_goal_kick.start(keeper, goal_line_z, intent, presentation)
+
+
+## Ближайший к точке ПОЛЕВОЙ (не GK) команды по плоской дистанции — тем же критерием, что
+## ThrowInController._nearest_teammate, чтобы вбрасывающий совпал (детерминизм исключения из кандидатов).
+func _nearest_outfielder(to: Vector3, team: Team) -> Node3D:
+	var best: Node3D = null
+	var best_d := INF
+	for b in team.outfield():
+		var d := Vector3(b.global_position.x - to.x, 0.0, b.global_position.z - to.z).length_squared()
+		if d < best_d:
+			best_d = d
+			best = b
+	return best
+
+
+## Поднять реальный контроллер вброса. team_1 (человек) → Human + Role.KICKER. team_2 (ИИ) →
+## ThrowInPlan решает получателя/силу, AIThrowInIntent проигрывает, Role.NONE. spot от судьи не нужен —
+## контроллер сам берёт точку из позиции мяча (та же aut_point).
+func _dispatch_throw_in(team: int, _spot: Vector3) -> void:
+	if _throw_in == null:
+		return
+	if team == 1:
+		_throw_in.start(1, null, SetPiecePresentation.new(SetPiecePresentation.Role.KICKER))
+		return
+	var spot_c := ThrowInLogic.aut_point(ball.global_position,
+		FootballConstants.HALF_FIELD_WIDTH, FootballConstants.BALL_RADIUS)
+	var into := ThrowInLogic.base_heading(spot_c.x)
+	var attack_dir := Vector3(0.0, 0.0, _team_away.attack_z_sign)
+	var thrower := _nearest_outfielder(spot_c, _team_away)   # тот же выбор, что контроллер в start()
+	var candidates: Array = []
+	for b in _team_away.outfield():
+		if b == thrower:
+			continue
+		candidates.append((b as Node3D).global_position)
+	var opponents: Array = []
+	for b in _team_home.outfield():
+		opponents.append((b as Node3D).global_position)
+	var plan := ThrowInPlan.choose(spot_c, into, attack_dir, FootballConstants.THROW_AIM_ARC,
+		candidates, opponents,
+		FootballConstants.THROW_MIN_DIST, FootballConstants.THROW_MAX_DIST,
+		FootballConstants.AI_THROWIN_BALL_SPEED, FootballConstants.AI_THROWIN_OPP_SPEED,
+		FootballConstants.PASS_CORRIDOR_HALF_WIDTH, FootballConstants.PASS_CORRIDOR_SPREAD,
+		FootballConstants.AI_THROWIN_UPFIELD_WEIGHT)
+	var intent := AIThrowInIntent.new(into, plan["aim_dir"], plan["power_ratio"])
+	_throw_in.start(2, intent, SetPiecePresentation.new(SetPiecePresentation.Role.NONE))
+
+
+## Пауза празднования: мяч гаснет в сетке (колыхание идёт), через NET_CELEBRATION_TIME —
+## настоящий кикофф (пропустившая команда) вместо старого простого сброса мяча в центр.
+## Не await-им игроков — по решению ничего не замораживаем. Не await-ит вызывающий (fire-and-forget).
+func _celebrate_then_reset(net, conceding_team: int) -> void:
 	await get_tree().create_timer(FootballConstants.NET_CELEBRATION_TIME).timeout
-	_reset_ball()
 	if net and is_instance_valid(net):
 		net.stop_sim()
 	_celebrating = false
-	_set_ai_frozen(false, _keeper)   # возвращаем ИИ в игру (вратаря не трогали — он сам собой управлял)
+	_set_ai_frozen(false)   # возвращаем ИИ в игру (вратари role_gk не трогались — сами собой управляют)
+	_dispatch_kickoff(conceding_team)
 
 
 func _poll_ai_tackles() -> void:
@@ -2028,7 +2417,9 @@ func _poll_ai_tackles() -> void:
 	# слайдом посреди празднования (падение + анимация вставания) — заметнее всего на голе со
 	# штрафного/пенальти, где мяч и забивший остаются в штрафной. Подкат стартует МЕНЕДЖЕР (не мозг
 	# ИИ), поэтому одной заморозки ИИ мало — нужен явный гейт здесь. Снимется на _reset_ball.
-	if _celebrating:
+	# Во время удара от ворот/кикоффа — тоже без подката (мяч не в игре; живая защита падает сюда
+	# сквозным проходом _physics_process, гейт держит).
+	if _celebrating or _live_defend_setpiece_active():
 		return
 	for node in get_tree().get_nodes_in_group("team_2"):
 		if not is_instance_valid(node):

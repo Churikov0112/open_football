@@ -26,11 +26,11 @@ func _victim_frozen() -> bool:
 ## Имитируем гол (то же, что замыкание GoalArea): празднование + заморозка поля.
 func _simulate_goal() -> void:
 	_mm.set(&"_celebrating", true)
-	_mm.call(&"_set_ai_frozen", true, _mm._keeper)
+	_mm.call(&"_set_ai_frozen", true)
 
 func _clear_goal() -> void:
 	_mm.set(&"_celebrating", false)
-	_mm.call(&"_set_ai_frozen", false, _mm._keeper)
+	_mm.call(&"_set_ai_frozen", false)
 
 func _fail(msg: String) -> void:
 	print("CHECK FAIL: ", msg)
@@ -62,7 +62,7 @@ func _process(delta: float) -> bool:
 				vbrain.set(&"wants_to_tackle", false)
 			_mm.set(&"_celebrating", false)
 			# --- ПЕНАЛЬТИ: старт + удар + гол ---
-			_pen.start_single(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
+			_pen.start_single(_mm.controlled_player, -_mm.field_length)
 			_pen._fire(0.7)                     # → фаза WATCH → позже _release()
 			_simulate_goal()
 			if not _victim_frozen():
@@ -79,7 +79,7 @@ func _process(delta: float) -> bool:
 				_fail("поле-ИИ РАЗМОРОЖЕН после release пенальти во время празднования (баг)"); return true
 			# сброс состояния перед фазой штрафного
 			_clear_goal()
-			_fk.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
+			_fk.start(_mm.controlled_player, -_mm.field_length)
 			_fk._fire_shot(0.7)                 # → WATCH → позже _release()
 			_simulate_goal()
 			if not _victim_frozen():

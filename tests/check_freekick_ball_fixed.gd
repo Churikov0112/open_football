@@ -21,7 +21,7 @@ func _process(delta: float) -> bool:
 		if _fk == null:
 			print("CHECK FAIL: нет узла FreeKickController")
 			return true
-		_fk.start(_mm.controlled_player, _mm._keeper_brain.goal_line_z)
+		_fk.start(_mm.controlled_player, -_mm.field_length)
 		if not _mm.is_free_kick_active():
 			print("CHECK FAIL: штрафной не активировался")
 			return true

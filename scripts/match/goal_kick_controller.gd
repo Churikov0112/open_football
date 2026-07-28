@@ -34,34 +34,60 @@ var _pending_ratio: float = 1.0
 var _pending_kind: String = ""
 var _locked: bool = false              # коммит нажат (камера зафиксирована)
 var _contact_connected := false
+var _intent: KickerIntent
+var _presentation: SetPiecePresentation
+var _block_wall: StaticBody3D = null    # невидимая стена штрафной при живой защите (ИИ-удар)
+var _blocked_bodies: Array = []         # защитники, которым временно добавлен бит стены в mask
 
-func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar, keeper: CharacterBody3D) -> void:
+func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
 	_ball = ball
 	_camera_pivot = camera_pivot
 	_power_bar = power_bar
-	_keeper = keeper
-	_keeper_brain = keeper.brain() if keeper != null and keeper.has_method(&"brain") else null
 
 func is_active() -> bool:
 	return _phase != Phase.IDLE
 
+## Владеет ли источник камерой розыгрыша — match_manager проверяет перед парковкой (Role.NONE,
+## ИИ-удар: камера НЕ трогается, остаётся обычная ТВ/3-е лицо, как в открытой игре).
+func camera_is_owned() -> bool:
+	return _presentation != null and _presentation.owns_camera()
+
 ## Старт удара от ворот: бьющий = вратарь, его ворота = goal_line_z.
-func start(kicker: CharacterBody3D, goal_line_z: float) -> void:
+func start(kicker: CharacterBody3D, goal_line_z: float, intent: KickerIntent = null, presentation: SetPiecePresentation = null) -> void:
 	if _phase != Phase.IDLE or kicker == null:
 		return
 	_kicker = kicker
+	_keeper = kicker   # удар от ворот бьёт САМ вратарь (не защищающийся)
+	_keeper_brain = kicker.brain() if kicker != null and kicker.has_method(&"brain") else null
 	_goal_line_z = goal_line_z
 	_into = -signf(goal_line_z)   # в поле от линии ворот
 	_foot = FootballConstants.GK_DEFAULT_FOOT
+	_intent = intent if intent != null else _default_intent()
+	_presentation = presentation if presentation != null else SetPiecePresentation.new(SetPiecePresentation.Role.KICKER)
 	# Соперники бьющей команды (по группе бьющего) — общее правило, без хардкода.
 	_opp_group = &"team_2" if kicker.is_in_group("team_1") else &"team_1"
 	_setup()
 
+## Human-дефолт источника намерения бьющего удар от ворот (прежние Input-чтения контроллера).
+func _default_intent() -> KickerIntent:
+	return HumanKickerIntent.new({
+		"aim_lat": [&"move_left", &"move_right"],
+		"foot": [&"foot_left", &"foot_right"],
+		"charges": [[&"pass_short", 0], [&"pass_lob", 1]],   # 0 = ground, 1 = lob
+	})
+
 func _setup() -> void:
 	_phase = Phase.SETUP
 	_manager.set_goal_kick_active(true)
-	_manager.set_field_ai_active(false)
+	# Человек бьёт (Role.KICKER) → морозим всё поле. ИИ-соперник бьёт (Role.NONE) → морозим только
+	# бьющую команду, защищающаяся (человек) играет: бегает/переключается, но без подката/захода в
+	# штрафную (гейт в match_manager + не-локирующий _clear_opponent_box).
+	if _presentation.owns_camera():
+		_manager.set_field_ai_active(false)
+	else:
+		var kicking_group: StringName = &"team_2" if _kicker.is_in_group("team_2") else &"team_1"
+		_manager.set_field_ai_active(false, kicking_group)
 	# Точка мяча — центр линии вратарской; направление разбега/прицела — вверх поля.
 	_spot = GoalKickLogic.spot_position(_goal_line_z, _into, FootballConstants.GOAL_AREA_DEPTH, FootballConstants.BALL_RADIUS)
 	_base_heading = Vector3(0.0, 0.0, _into).normalized()
@@ -86,10 +112,15 @@ func _setup() -> void:
 	if kvis != null:
 		kvis.cancel_action()
 		kvis.recover()
-	# Правило: соперники бьющей команды — вне штрафной у goal_line_z.
+	# Правило: соперники бьющей команды — вне штрафной у goal_line_z (одноразовая начальная
+	# расстановка; телепорт тут допустим — это стартовая позиция, не рантайм-глитч).
 	_clear_opponent_box()
 	# Правило: НИКОГО (даже своей команды), кроме вратаря, — во вратарской ±5м.
 	_clear_goal_area_buffer()
+	# ИИ-удар (живая защита): вместо пер-кадрового телепорта — физическая «стена» штрафной, об
+	# которую защитник упирается и слайдит (move_and_slide), без рывков назад.
+	if not _presentation.owns_camera():
+		_build_block_wall()
 	_charging = false
 	_charge = 0.0
 	_locked = false
@@ -123,10 +154,14 @@ func _clear_opponent_box() -> void:
 			FootballConstants.GK_ENCROACH_MARGIN)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
-		var m := PlayerMotor.find_on(n)
-		if m != null:
-			m.set_control_locked(true)
-			m.set_move_intent(Vector3.ZERO)
+		# Лочим мотор ТОЛЬКО когда бьёт человек (соперники — ИИ, морозим). При ИИ-ударе соперники —
+		# это команда человека: выталкиваем из штрафной, но НЕ лочим (он ими играет; заход в штрафную
+		# так остаётся заблокирован пер-кадровым push, но вне штрафной бегать можно).
+		if _presentation != null and _presentation.owns_camera():
+			var m := PlayerMotor.find_on(n)
+			if m != null:
+				m.set_control_locked(true)
+				m.set_move_intent(Vector3.ZERO)
 
 ## Никто (ОБЕ команды, включая свою же), кроме вратаря, не должен стоять во вратарской площади
 ## ±GK_CLEAR_MARGIN. Отдельно от _clear_opponent_box (та трогает только соперников и на полную
@@ -142,17 +177,60 @@ func _clear_goal_area_buffer() -> void:
 			FootballConstants.GK_CLEAR_MARGIN)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
-		var m := PlayerMotor.find_on(n)
-		if m != null:
-			m.set_control_locked(true)
-			m.set_move_intent(Vector3.ZERO)
+		# Лочим только при ударе человека (см. _clear_opponent_box). При ИИ-ударе бьющая команда уже
+		# заморожена team-scoped-заморозкой, а защищающуюся не лочим — она играет.
+		if _presentation != null and _presentation.owns_camera():
+			var m := PlayerMotor.find_on(n)
+			if m != null:
+				m.set_control_locked(true)
+				m.set_move_intent(Vector3.ZERO)
+
+## Невидимая стена штрафной для живой защиты (ИИ-удар): сплошной box-коллайдер размером со штрафную
+## на своём слое SETPIECE_BLOCK_LAYER. Защитники (соперники бьющей команды = команда человека)
+## получают этот бит в collision_mask и упираются в стену через move_and_slide (слайд вдоль, без
+## телепорта). Мяч/вратарь/бьющая команда бита не имеют — проходят свободно (вратарь и мяч внутри).
+func _build_block_wall() -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = FootballConstants.SETPIECE_BLOCK_LAYER
+	body.collision_mask = 0
+	var col := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(FootballConstants.PENALTY_AREA_WIDTH, 4.0, FootballConstants.PENALTY_AREA_DEPTH)
+	col.shape = shape
+	body.add_child(col)
+	body.global_position = Vector3(0.0, 2.0, _goal_line_z + _into * FootballConstants.PENALTY_AREA_DEPTH * 0.5)
+	_manager.add_child(body)
+	_block_wall = body
+	_blocked_bodies.clear()
+	for n in _manager.get_tree().get_nodes_in_group(_opp_group):
+		if not is_instance_valid(n) or n == _keeper or not (n is CollisionObject3D):
+			continue
+		(n as CollisionObject3D).collision_mask |= FootballConstants.SETPIECE_BLOCK_LAYER
+		_blocked_bodies.append(n)
+
+func _teardown_block_wall() -> void:
+	for n in _blocked_bodies:
+		if is_instance_valid(n) and n is CollisionObject3D:
+			(n as CollisionObject3D).collision_mask &= ~FootballConstants.SETPIECE_BLOCK_LAYER
+	_blocked_bodies.clear()
+	if _block_wall != null and is_instance_valid(_block_wall):
+		_block_wall.queue_free()
+	_block_wall = null
 
 func update(delta: float) -> void:
+	# Пер-кадровый телепорт-выталкивание держим ТОЛЬКО когда бьёт человек (соперники — заморожены,
+	# рывка не видно). При ИИ-ударе живую защиту держит физическая стена (_build_block_wall) — телепорт
+	# тут дал бы «отброс на полметра», см. [[ввод-от-ворот]].
+	var enforce := _presentation.owns_camera()
 	match _phase:
 		Phase.AIM:
 			_pin_ball()
+			if enforce:
+				_clear_opponent_box()   # Law 16 непрерывно до удара, а не одноразово на SETUP
 			_aim_update(delta)
 		Phase.STRIKE:
+			if enforce:
+				_clear_opponent_box()   # держим и на разбеге — окно закроется на action_contact (_release → IDLE)
 			_strike_update(delta)
 	_update_camera_pose()
 
@@ -164,36 +242,34 @@ func _pin_ball() -> void:
 
 func _aim_update(delta: float) -> void:
 	# Переключение ноги L/R (ВРЕМЕННО — в будущем нога определяется выбранным бьющим).
-	if Input.is_action_just_pressed(&"foot_left"):
+	var fs := _intent.foot_switch()
+	if fs == -1:
 		_set_foot("penalty_l")
-	elif Input.is_action_just_pressed(&"foot_right"):
+	elif fs == 1:
 		_set_foot("penalty_r")
-	var stick_x := Input.get_axis(&"move_left", &"move_right")
+	var stick_x := _intent.aim_axis().x
 	# Стик крутит направление вылета мяча — и до, и после коммита (доводка/финт).
 	if absf(stick_x) > 0.15:
 		_heading = FreeKickLogic.rotate_heading(_heading, _base_heading, stick_x,
 			FootballConstants.GK_AIM_SPEED, delta, FootballConstants.GK_AIM_ARC)
 	if not _locked:
 		_cam_heading = _heading   # камера едет за прицелом только до коммита
-		if Input.is_action_just_pressed(&"pass_short"):
+		var v := _intent.charge_start_variant()
+		if v == 0:
 			_start_charge("ground")
-		elif Input.is_action_just_pressed(&"pass_lob"):
+		elif v == 1:
 			_start_charge("lob")
 	if _charging:
 		_charge += delta
 		var ratio := clampf(_charge / FootballConstants.GK_CHARGE_MAX_TIME, 0.0, 1.0)
-		_power_bar.visible = true
-		_power_bar.value = ratio
-		var fill := _power_bar.get_theme_stylebox("fill")
-		if fill:
-			fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
-		if ratio >= 1.0 or _charge_released():
+		if _presentation.owns_hud():
+			_power_bar.visible = true
+			_power_bar.value = ratio
+			var fill := _power_bar.get_theme_stylebox("fill")
+			if fill:
+				fill.bg_color = Color.GREEN_YELLOW.lerp(Color.RED, ratio * ratio)
+		if ratio >= 1.0 or _intent.charge_committed():
 			_fire_charge(ratio)
-
-func _charge_released() -> bool:
-	if _charge_kind == "lob":
-		return not Input.is_action_pressed(&"pass_lob")
-	return not Input.is_action_pressed(&"pass_short")
 
 ## Коммит: фиксируем камеру (_locked), копим силу. _heading продолжает крутиться до контакта.
 func _start_charge(kind: String) -> void:
@@ -204,7 +280,8 @@ func _start_charge(kind: String) -> void:
 
 func _fire_charge(ratio: float) -> void:
 	_charging = false
-	_power_bar.visible = false
+	if _presentation.owns_hud():
+		_power_bar.visible = false
 	_pending_ratio = ratio
 	_begin_strike(_charge_kind)
 
@@ -224,7 +301,7 @@ func _begin_strike(kind: String) -> void:
 
 func _strike_update(delta: float) -> void:
 	# Доводка продолжается на разбеге вплоть до контакта.
-	var stick_x := Input.get_axis(&"move_left", &"move_right")
+	var stick_x := _intent.aim_axis().x
 	if absf(stick_x) > 0.15:
 		_heading = FreeKickLogic.rotate_heading(_heading, _base_heading, stick_x,
 			FootballConstants.GK_AIM_SPEED, delta, FootballConstants.GK_AIM_ARC)
@@ -268,6 +345,9 @@ func _on_kicker_contact(_action: String) -> void:
 	# Мяч лежал на точке (dribbler=null) → помечаем бьющего явно (анти-самоблок/кулдаун).
 	if _ball.has_method(&"note_kicker"):
 		_ball.note_kicker(_kicker)
+	# Метка намеренного паса своей команды (розыгрыш от ворот — доставка своим).
+	if _ball.has_method(&"note_pass_from"):
+		_ball.note_pass_from(&"team_1" if _kicker.is_in_group("team_1") else &"team_2")
 	struck.emit()
 	var km := PlayerMotor.find_on(_kicker)
 	if km != null:
@@ -276,6 +356,7 @@ func _on_kicker_contact(_action: String) -> void:
 	_release()
 
 func _release() -> void:
+	_teardown_block_wall()
 	if _keeper_brain != null and _keeper_brain.has_method(&"set_goalkick_mode"):
 		_keeper_brain.set_goalkick_mode(false)
 	var km := PlayerMotor.find_on(_kicker)
@@ -293,6 +374,8 @@ func _release() -> void:
 ## Фикс-камера от 3-го лица за вратарём (за точкой вдоль -cam_heading), смотрит вверх поля.
 func _update_camera_pose() -> void:
 	if _phase == Phase.IDLE:
+		return
+	if not _presentation.owns_camera():
 		return
 	var eye := _spot - _cam_heading * FootballConstants.GK_CAM_BACK + Vector3(0.0, FootballConstants.GK_CAM_HEIGHT, 0.0)
 	var look := _spot + _cam_heading * 4.0 + Vector3(0.0, FootballConstants.GK_CAM_LOOK_Y, 0.0)
