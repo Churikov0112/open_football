@@ -840,7 +840,7 @@ func set_field_ai_active(on: bool, only_group: StringName = &"") -> void:
 ## В этом окне обычная игра проходит сквозным путём _physics_process, но подкат/дриблинг/суд заглушены
 ## (мяч у контроллера, не в игре). Остальные стандарты делают ранний return и сюда не попадают.
 func _live_defend_setpiece_active() -> bool:
-	return _goal_kick_active or _kickoff_active
+	return _goal_kick_active or _kickoff_active or _throw_in_active
 
 
 ## Останавливаем/возвращаем ИИ-игроков (team_1+team_2) в чистый idle. `keep_active` (если
@@ -1060,7 +1060,7 @@ func _process(delta: float) -> void:
 		camera_pivot.global_transform = _corner_cam_pose
 	elif _goal_kick_active and _goal_kick.camera_is_owned():
 		camera_pivot.global_transform = _goal_kick_cam_pose
-	elif _throw_in_active:
+	elif _throw_in_active and _throw_in.camera_is_owned():
 		camera_pivot.global_transform = _throw_in_cam_pose
 	elif _kickoff_active and _kickoff.camera_is_owned():
 		camera_pivot.global_transform = _kickoff_cam_pose
@@ -1088,7 +1088,7 @@ func _process(delta: float) -> void:
 	# Пенальти с ИИ-бьющим (K, см. PenaltyController.kicker_is_local_human) — по той же причине:
 	# controlled_player сейчас управляется ИИ, маркер над ним вводит в заблуждение (человек играет
 	# вратаря, не бьющего). Маркер на время розыгрыша просто скрываем.
-	if (_goal_kick_active and _goal_kick.camera_is_owned()) or _throw_in_active or (_penalty_active and _penalty != null and not _penalty.kicker_is_local_human()):
+	if (_goal_kick_active and _goal_kick.camera_is_owned()) or (_throw_in_active and _throw_in.camera_is_owned()) or (_penalty_active and _penalty != null and not _penalty.kicker_is_local_human()):
 		if _controlled_marker != null:
 			_controlled_marker.visible = false
 	elif _controlled_marker != null and controlled_player and _match_camera != null:
@@ -1200,9 +1200,12 @@ func _physics_process(delta: float) -> void:
 		_goal_kick.start(_keeper_at(-field_length), -field_length)
 		return
 	# Вброс из аута — свой контроллер, обычные системы заглушены.
+	# Человек вбрасывает (Role.KICKER) → всё заморожено, ранний return. ИИ-соперник (Role.NONE) →
+	# человек защищается своей командой: провал в обычную игру (гарды глушат подкат/дриблинг/суд).
 	if _throw_in_active:
 		_throw_in.update(delta)
-		return
+		if _throw_in.camera_is_owned():
+			return
 	# Вброс по T — только из чистого состояния (не во время празднования гола).
 	if Input.is_action_just_pressed(&"throw_in_debug") and not _celebrating:
 		_throw_in.start()

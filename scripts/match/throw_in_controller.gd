@@ -27,6 +27,8 @@ var _locked: bool = false                   # A нажата (направлен
 var _contact_connected := false
 var _intent: KickerIntent
 var _presentation: SetPiecePresentation
+var _block_wall: StaticBody3D = null    # невидимая стена 2 м вокруг точки при живой защите
+var _blocked_bodies: Array = []         # защитники, которым временно добавлен бит стены в mask
 
 func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
@@ -95,7 +97,14 @@ func _setup() -> void:
 	# Управление — вбрасывающему ТОЛЬКО когда бьёт человек (Role.NONE не отдаёт team_2-тело человеку).
 	if _presentation.owns_hud():
 		_manager.assign_controlled_player(_thrower)
-	_manager.set_field_ai_active(false)
+	# Человек вбрасывает → морозим всё поле. ИИ-соперник → морозим только вбрасывающую команду,
+	# защищающаяся (человек) играет; правило 2 м держит физическая стена (см. _build_block_wall).
+	if _presentation.owns_camera():
+		_manager.set_field_ai_active(false)
+	else:
+		var kicking_group: StringName = &"team_1" if _thrower.is_in_group("team_1") else &"team_2"
+		_manager.set_field_ai_active(false, kicking_group)
+		_build_block_wall()
 	_charging = false
 	_charge = 0.0
 	_locked = false
@@ -124,10 +133,45 @@ func _clear_opponents_from_spot() -> void:
 			FootballConstants.THROW_ENCROACH_DIST)
 		if not adjusted.is_equal_approx(n.global_position):
 			n.global_position = adjusted
-		var m := PlayerMotor.find_on(n)
-		if m != null:
-			m.set_control_locked(true)
-			m.set_move_intent(Vector3.ZERO)
+		# Лочим соперника ТОЛЬКО при человеческом вбросе (соперники — ИИ). При ИИ-вбросе соперники —
+		# команда человека: разово оттолкнули от точки, но НЕ лочим (правило 2 м держит стена).
+		if _presentation != null and _presentation.owns_camera():
+			var m := PlayerMotor.find_on(n)
+			if m != null:
+				m.set_control_locked(true)
+				m.set_move_intent(Vector3.ZERO)
+
+## Невидимая стена правила 2 м для живой защиты (ИИ-вброс): цилиндр радиуса THROW_ENCROACH_DIST
+## вокруг точки на слое SETPIECE_BLOCK_LAYER, который слушают ТОЛЬКО защитники (временный бит в mask)
+## — упираются и слайдят через move_and_slide, без телепорта. Мяч/вбрасывающая команда бита не имеют.
+func _build_block_wall() -> void:
+	var body := StaticBody3D.new()
+	body.collision_layer = FootballConstants.SETPIECE_BLOCK_LAYER
+	body.collision_mask = 0
+	var col := CollisionShape3D.new()
+	var shape := CylinderShape3D.new()
+	shape.radius = FootballConstants.THROW_ENCROACH_DIST
+	shape.height = 4.0
+	col.shape = shape
+	body.add_child(col)
+	body.global_position = Vector3(_spot.x, 2.0, _spot.z)
+	_manager.add_child(body)
+	_block_wall = body
+	_blocked_bodies.clear()
+	for n in _manager.get_tree().get_nodes_in_group(_opp_group):
+		if not is_instance_valid(n) or not (n is CollisionObject3D):
+			continue
+		(n as CollisionObject3D).collision_mask |= FootballConstants.SETPIECE_BLOCK_LAYER
+		_blocked_bodies.append(n)
+
+func _teardown_block_wall() -> void:
+	for n in _blocked_bodies:
+		if is_instance_valid(n) and n is CollisionObject3D:
+			(n as CollisionObject3D).collision_mask &= ~FootballConstants.SETPIECE_BLOCK_LAYER
+	_blocked_bodies.clear()
+	if _block_wall != null and is_instance_valid(_block_wall):
+		_block_wall.queue_free()
+	_block_wall = null
 
 func update(delta: float) -> void:
 	match _phase:
@@ -221,6 +265,7 @@ func _on_thrower_contact(_action: String) -> void:
 	_release()
 
 func _release() -> void:
+	_teardown_block_wall()
 	var tm := PlayerMotor.find_on(_thrower)
 	if tm != null:
 		tm.set_face_direction(Vector3.ZERO)
