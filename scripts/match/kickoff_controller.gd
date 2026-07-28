@@ -30,6 +30,8 @@ var _locked: bool = false
 var _contact_connected := false
 var _intent: KickerIntent
 var _presentation: SetPiecePresentation
+var _block_walls: Array = []            # невидимые стены (чужая половина + центр. круг) при живой защите
+var _blocked_bodies: Array = []         # защитники, которым временно добавлен бит стены в mask
 
 func setup(manager: Node, ball: RigidBody3D, camera_pivot: Node3D, power_bar: ProgressBar) -> void:
 	_manager = manager
@@ -70,7 +72,14 @@ func _setup() -> void:
 		return   # некому пасовать — отменяем (симметрично throw_in's «некому вбрасывать»)
 	_phase = Phase.SETUP
 	_manager.set_kickoff_active(true)
-	_manager.set_field_ai_active(false)
+	# Человек разводит (Role.KICKER) → морозим всё поле. ИИ-соперник разводит (Role.NONE) → морозим
+	# только бьющую команду, защищающаяся (человек) играет на своей половине (стены держат чужую
+	# половину и центр. круг).
+	if _presentation.owns_camera():
+		_manager.set_field_ai_active(false)
+	else:
+		var kicking_group: StringName = &"team_1" if _kicking_team == 1 else &"team_2"
+		_manager.set_field_ai_active(false, kicking_group)
 	_attack_sign = kicking.attack_z_sign
 	var placement := KickoffLogic.kicker_placement(_attack_sign, FootballConstants.KICKOFF_KICKER_OFFSET, 0.5)
 	_base_heading = placement["base_heading"]
@@ -86,13 +95,19 @@ func _setup() -> void:
 	_ball.global_position = _spot
 	_kicker = kicking_outfield[0]
 	_partner = kicking_outfield[1]
+	# Бьющая команда — всегда заморожена (lock). Защищающаяся — лочится ТОЛЬКО когда бьёт человек;
+	# при ИИ-разводе она живая (её держат стены, а не лок мотора).
+	var lock_def := _presentation.owns_camera()
 	for body in kicking_outfield:
 		if body == _kicker:
 			continue
-		_place_supporting(body, kicking.attack_z_sign, false)
+		_place_supporting(body, kicking.attack_z_sign, false, true)
 	for body in defending.outfield():
-		_place_supporting(body, defending.attack_z_sign, true)
+		_place_supporting(body, defending.attack_z_sign, true, lock_def)
 	_place_kicker()
+	# ИИ-развод: физические стены вместо лока — чужая половина (за центральной линией) + центр. круг.
+	if not _presentation.owns_camera():
+		_build_block_walls(defending)
 	# Управление кикером забираем ТОЛЬКО когда бьёт локальный человек (Role.KICKER). При ИИ-кикоффе
 	# (Role.NONE) человек продолжает управлять своим полевым — иначе управление уходит на чужое тело.
 	if _presentation.owns_hud():
@@ -106,17 +121,19 @@ func _setup() -> void:
 ## Полевой (кроме кикера): на home_pos, клэмп на свою половину; для не бьющей команды — ещё и
 ## вне центрального круга. Мотор залочен (весь розыгрыш заморожен одним разом — как у остальных
 ## пяти стандартов; продолжающийся per-frame enforcement не нужен).
-func _place_supporting(body: CharacterBody3D, attack_sign: float, enforce_circle: bool) -> void:
+func _place_supporting(body: CharacterBody3D, attack_sign: float, enforce_circle: bool, lock: bool) -> void:
 	var pos: Vector3 = body.get_meta(&"home_pos", body.global_position)
 	pos = KickoffLogic.clamp_to_own_half(pos, attack_sign, FootballConstants.KICKOFF_HALF_MARGIN)
 	if enforce_circle:
 		pos = FreeKickLogic.push_out_of_radius(pos, Vector3.ZERO, FootballConstants.CENTER_CIRCLE_RADIUS)
 	pos.y = body.global_position.y
 	body.global_position = pos
-	var m := PlayerMotor.find_on(body)
-	if m != null:
-		m.set_control_locked(true)
-		m.set_move_intent(Vector3.ZERO)
+	# Лочим мотор только если lock (бьющая команда / человеческий развод). При живой защите — не лочим.
+	if lock:
+		var m := PlayerMotor.find_on(body)
+		if m != null:
+			m.set_control_locked(true)
+			m.set_move_intent(Vector3.ZERO)
 
 ## Кикер — вплотную к мячу, смещён на ЧУЖУЮ половину (attack_sign-направление), лицом на свою
 ## половину (base_heading) — правило клэмпа/круга на него НЕ распространяется. Позиция/heading —
@@ -130,6 +147,57 @@ func _place_kicker() -> void:
 		km.set_control_locked(true)
 		km.set_move_intent(Vector3.ZERO)
 		km.set_face_direction(_base_heading)
+
+## Невидимые стены для живой защиты (ИИ-развод): (1) сплошной box на ВСЮ чужую половину (куда
+## атакует защищающаяся команда) — за центральной линией; (2) цилиндр центрального круга. Обе на
+## слое SETPIECE_BLOCK_LAYER, который слушают ТОЛЬКО защитники (временный бит в mask) — упираются и
+## слайдят через move_and_slide. Мяч/бьющая команда бита не имеют, проходят свободно.
+func _build_block_walls(defending: Team) -> void:
+	var sign := defending.attack_z_sign
+	var hl: float = _manager.field_length
+	var hw: float = _manager.field_width
+	# (1) Чужая половина: box от центральной линии до лицевой соперника, во всю ширину.
+	var half_body := StaticBody3D.new()
+	half_body.collision_layer = FootballConstants.SETPIECE_BLOCK_LAYER
+	half_body.collision_mask = 0
+	var half_col := CollisionShape3D.new()
+	var half_shape := BoxShape3D.new()
+	half_shape.size = Vector3(hw * 2.0, 4.0, hl)
+	half_col.shape = half_shape
+	half_body.add_child(half_col)
+	half_body.global_position = Vector3(0.0, 2.0, sign * hl * 0.5)
+	_manager.add_child(half_body)
+	_block_walls.append(half_body)
+	# (2) Центральный круг: цилиндр в начале координат.
+	var circle_body := StaticBody3D.new()
+	circle_body.collision_layer = FootballConstants.SETPIECE_BLOCK_LAYER
+	circle_body.collision_mask = 0
+	var circle_col := CollisionShape3D.new()
+	var circle_shape := CylinderShape3D.new()
+	circle_shape.radius = FootballConstants.CENTER_CIRCLE_RADIUS
+	circle_shape.height = 4.0
+	circle_col.shape = circle_shape
+	circle_body.add_child(circle_col)
+	circle_body.global_position = Vector3(0.0, 2.0, 0.0)
+	_manager.add_child(circle_body)
+	_block_walls.append(circle_body)
+	# Защищающаяся команда слушает стены (временный бит в mask).
+	_blocked_bodies.clear()
+	for n in defending.outfield():
+		if not is_instance_valid(n) or not (n is CollisionObject3D):
+			continue
+		(n as CollisionObject3D).collision_mask |= FootballConstants.SETPIECE_BLOCK_LAYER
+		_blocked_bodies.append(n)
+
+func _teardown_block_walls() -> void:
+	for n in _blocked_bodies:
+		if is_instance_valid(n) and n is CollisionObject3D:
+			(n as CollisionObject3D).collision_mask &= ~FootballConstants.SETPIECE_BLOCK_LAYER
+	_blocked_bodies.clear()
+	for w in _block_walls:
+		if is_instance_valid(w):
+			w.queue_free()
+	_block_walls.clear()
 
 func update(delta: float) -> void:
 	match _phase:
@@ -225,6 +293,7 @@ func _on_kicker_contact(_action: String) -> void:
 		_release()
 
 func _release() -> void:
+	_teardown_block_walls()
 	if is_instance_valid(_kicker):
 		var km := PlayerMotor.find_on(_kicker)
 		if km != null:

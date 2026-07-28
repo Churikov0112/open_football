@@ -836,6 +836,13 @@ func set_field_ai_active(on: bool, only_group: StringName = &"") -> void:
 	_set_ai_frozen(not on, only_group)
 
 
+## Идёт стандарт с ЖИВОЙ защитой человека (мяч ещё не введён): удар от ворот или кикофф соперника.
+## В этом окне обычная игра проходит сквозным путём _physics_process, но подкат/дриблинг/суд заглушены
+## (мяч у контроллера, не в игре). Остальные стандарты делают ранний return и сюда не попадают.
+func _live_defend_setpiece_active() -> bool:
+	return _goal_kick_active or _kickoff_active
+
+
 ## Останавливаем/возвращаем ИИ-игроков (team_1+team_2) в чистый idle. `keep_active` (если
 ## задан — вратарь для пенальти/штрафного) НЕ трогаем НИКОГДА, ни на заморозке, ни на
 ## разморозке: он сам управляет своим локом/мотором во время нырка (manual move_and_collide,
@@ -1200,10 +1207,13 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed(&"throw_in_debug") and not _celebrating:
 		_throw_in.start()
 		return
-	# Кикофф-режим: всё ведёт контроллер, обычные системы заглушены.
+	# Кикофф. Человек разводит (Role.KICKER) → всё заморожено, ранний return. ИИ-соперник разводит
+	# (Role.NONE) → человек защищается своей командой: НЕ делаем ранний return, падаем в обычную игру
+	# (без подката/дриблинга/суда — гарды выше), заход на чужую половину и в центр держат стены.
 	if _kickoff_active:
 		_kickoff.update(delta)
-		return
+		if _kickoff.camera_is_owned():
+			return
 	# Кикофф по O — вручную, всегда team_1 бьёт человеком (быстрое тестирование; реальный
 	# триггер — судья, см. _dispatch_kickoff в Task 5).
 	if Input.is_action_just_pressed(&"kickoff_debug") and not _celebrating:
@@ -1213,9 +1223,9 @@ func _physics_process(delta: float) -> void:
 	if _try_fire_queue():
 		_handle_player_input(delta)
 		return
-	if _referee != null and not _celebrating and not _goal_kick_active:
-		_referee.tick()   # во время удара от ворот судья не судит (мяч ещё не в игре, приколот к точке)
-	if not _goal_kick_active:
+	if _referee != null and not _celebrating and not _live_defend_setpiece_active():
+		_referee.tick()   # во время удара от ворот/кикоффа судья не судит (мяч ещё не в игре)
+	if not _live_defend_setpiece_active():
 		_handle_dribbling()   # у защищающегося мяча нет — дриблинг/подбор приколотого мяча не нужен
 	_handle_player_input(delta)
 
@@ -1838,8 +1848,8 @@ func _can_tackle(tackler: Node3D) -> bool:
 
 
 func _try_tackle(player: CharacterBody3D) -> bool:
-	if _goal_kick_active:
-		return false   # мяч ещё не введён в игру — подкат запрещён (Law: соперник не мешает розыгрышу)
+	if _live_defend_setpiece_active():
+		return false   # мяч ещё не введён в игру (удар от ворот/кикофф) — подкат запрещён
 	if _tackle_state != TackleState.NORMAL:
 		return false
 	if not _can_tackle(player):
@@ -2357,9 +2367,9 @@ func _poll_ai_tackles() -> void:
 	# слайдом посреди празднования (падение + анимация вставания) — заметнее всего на голе со
 	# штрафного/пенальти, где мяч и забивший остаются в штрафной. Подкат стартует МЕНЕДЖЕР (не мозг
 	# ИИ), поэтому одной заморозки ИИ мало — нужен явный гейт здесь. Снимется на _reset_ball.
-	# Во время удара от ворот — тоже без подката (мяч не в игре; бьющая команда заморожена, но
-	# гейт держит и на случай живой защиты, падающей сюда сквозным проходом _physics_process).
-	if _celebrating or _goal_kick_active:
+	# Во время удара от ворот/кикоффа — тоже без подката (мяч не в игре; живая защита падает сюда
+	# сквозным проходом _physics_process, гейт держит).
+	if _celebrating or _live_defend_setpiece_active():
 		return
 	for node in get_tree().get_nodes_in_group("team_2"):
 		if not is_instance_valid(node):
