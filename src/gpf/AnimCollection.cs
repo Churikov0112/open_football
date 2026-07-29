@@ -449,5 +449,236 @@ namespace Gpf
             FnSpecial => animType == "special",
             _ => false,
         };
+
+        // Публичная мост-обёртка для GDScript: нетипизированный Godot Array (мост не строг к
+        // типизированным массивам), наполняется int-индексами выбранных клипов.
+        public void CrudeSelection(Godot.Collections.Array dataSet, CrudeSelectionQuery query)
+        {
+            var list = new List<int>();
+            CrudeSelectionInternal(list, query);
+            foreach (int i in list) dataSet.Add(i);
+        }
+
+        // Порт AnimCollection::CrudeSelection (animcollection.cpp:494-863): грубый булев фильтр
+        // библиотеки по запросу, один линейный проход, каждая секция под if (selectAnim). Внутренняя
+        // перегрузка с List<int> — для C#-вызовов задач 8/10.
+        internal void CrudeSelectionInternal(List<int> dataSet, CrudeSelectionQuery query)
+        {
+            for (int i = 0; i < _animations.Count; i++)
+            {
+                Animation anim = _animations[i];
+                string animType = anim.GetAnimType();
+                bool selectAnim = true;
+
+                // select by TYPE (:510-514)
+                if (selectAnim && query.ByFunctionType &&
+                    !CheckFunctionType(animType, query.FunctionTypeId)) selectAnim = false;
+
+                // select by INCOMING VELOCITY (:529-575)
+                if (selectAnim && query.ByIncomingVelocity)
+                {
+                    int animIn = Velo.FloatToEnumVelocity(anim.GetIncomingVelocity());
+                    if (!query.IncomingVelocityStrict)
+                    {
+                        // нестрогая матрица запретов (:537-548)
+                        if (query.IncomingVelocityNoDribbleToIdle &&
+                            animIn == Velo.IdVelIdle && query.IncomingVelocityId == Velo.IdVelDribble) selectAnim = false;
+                        if (animIn == Velo.IdVelIdle && query.IncomingVelocityId == Velo.IdVelWalk) selectAnim = false;
+                        if (animIn == Velo.IdVelIdle && query.IncomingVelocityId == Velo.IdVelSprint) selectAnim = false;
+                        if (animIn == Velo.IdVelDribble && query.IncomingVelocityId == Velo.IdVelIdle) selectAnim = false;
+                        if (animIn == Velo.IdVelWalk && query.IncomingVelocityId == Velo.IdVelIdle) selectAnim = false;
+                        if (animIn == Velo.IdVelSprint && query.IncomingVelocityId == Velo.IdVelIdle) selectAnim = false;
+                        if (query.IncomingVelocityNoDribbleToSprint &&
+                            animIn == Velo.IdVelSprint && query.IncomingVelocityId == Velo.IdVelDribble) selectAnim = false;
+
+                        if (query.IncomingVelocityForceLinearity) // :550-563
+                        {
+                            float animInF = Velo.RangeVelocity(anim.GetIncomingVelocity());
+                            float animOutF = Velo.RangeVelocity(anim.GetOutgoingVelocity());
+                            float queryF = Velo.EnumToFloatVelocity(query.IncomingVelocityId);
+                            // dribble считается walk (:557-559)
+                            if (Velo.FloatToEnumVelocity(animInF) == Velo.IdVelDribble) animInF = Velo.Walk;
+                            if (Velo.FloatToEnumVelocity(animOutF) == Velo.IdVelDribble) animOutF = Velo.Walk;
+                            if (Velo.FloatToEnumVelocity(queryF) == Velo.IdVelDribble) queryF = Velo.Walk;
+                            if (animInF > Mathf.Max(queryF, animOutF)) selectAnim = false;
+                            if (animInF < Mathf.Min(queryF, animOutF)) selectAnim = false;
+                        }
+                    }
+                    else if (animIn != query.IncomingVelocityId) selectAnim = false; // strict (:567)
+                }
+
+                // select by OUTGOING VELOCITY (:585-589)
+                if (selectAnim && query.ByOutgoingVelocity &&
+                    Velo.FloatToEnumVelocity(anim.GetOutgoingVelocity()) != query.OutgoingVelocityId) selectAnim = false;
+
+                // CULL WRONG ROTATIONAL SIDE (:594-623)
+                if (selectAnim && query.BySide)
+                {
+                    Vector3 animIncomingDirection = anim.GetIncomingBodyDirection(); // :597
+                    Vector3 animOutgoingDirection = BluntMath.GetRotated2D(
+                        anim.GetOutgoingDirection(), anim.GetOutgoingBodyAngle()); // :600
+                    float animTurnAngle = BluntMath.GetAngle2D(animOutgoingDirection, animIncomingDirection); // :601
+                    Vector3 fencedDirection = BluntMath.GetRotated2D(query.LookAtVecRel, Mathf.Pi); // :604
+
+                    if (Mathf.Abs(animTurnAngle) > 0.06f * Mathf.Pi) // :606 threshold
+                    {
+                        int animSide = animTurnAngle > 0 ? 0 : 1; // e_Side: left=0/right=1 (:607)
+                        float animInToFence = BluntMath.GetAngle2D(fencedDirection, animIncomingDirection); // :609
+                        float queryInToFence = BluntMath.GetAngle2D(fencedDirection, query.IncomingBodyDirection); // :610
+                        float fenceToOut = BluntMath.GetAngle2D(animOutgoingDirection, fencedDirection); // :611
+                        int animInToFenceSide = animInToFence > 0 ? 0 : 1; // :613
+                        int queryInToFenceSide = queryInToFence > 0 ? 0 : 1; // :614
+                        int fenceToOutSide = fenceToOut > 0 ? 0 : 1; // :615
+
+                        if (animInToFenceSide == animSide && fenceToOutSide == animSide &&
+                            Mathf.Abs(animInToFence + fenceToOut) < Mathf.Pi) selectAnim = false; // :618
+                        // :619 bug-for-bug: оригинал складывает enum-сторону (int e_Side) с радианами
+                        // (queryIncomingToFenceSide + fenceToOutgoingAngle) вместо, видимо, угла
+                        // queryIncomingToFenceAngle. Портируем дословно, НЕ «чиним».
+                        if (queryInToFenceSide == animSide && fenceToOutSide == animSide &&
+                            Mathf.Abs(queryInToFenceSide + fenceToOut) < Mathf.Pi) selectAnim = false;
+                    }
+                }
+
+                // select by RETAIN BALL (:640-647)
+                if (selectAnim && query.ByPickupBall)
+                {
+                    string retain = anim.GetVariable("outgoing_retain_state");
+                    if ((retain == "" && query.PickupBall) || (retain != "" && !query.PickupBall)) selectAnim = false;
+                }
+
+                // select LAST DITCH ANIMS (:652-658)
+                if (selectAnim && !query.AllowLastDitchAnims && anim.GetVariable("lastditch") == "true") selectAnim = false;
+
+                // select by INCOMING BODY ANGLE (:663-752)
+                if (selectAnim && query.ByIncomingBodyDirection &&
+                    !(query.ByIncomingVelocity && query.IncomingVelocityId == Velo.IdVelIdle)) // :665
+                {
+                    const float marginRadians = 0.06f * Mathf.Pi; // :667
+                    if (Velo.FloatToEnumVelocity(anim.GetIncomingVelocity()) != Velo.IdVelIdle) // :669
+                    {
+                        Vector3 incomingBodyDir = anim.GetIncomingBodyDirection(); // :671
+                        // :691 — вход клипа не «шире» текущего
+                        if (Mathf.Abs(BluntMath.FixAngle(BluntMath.GetAngle2D(anim.GetIncomingBodyDirection()))) >
+                            Mathf.Abs(BluntMath.FixAngle(BluntMath.GetAngle2D(query.IncomingBodyDirection))) + marginRadians)
+                            selectAnim = false;
+
+                        if (selectAnim)
+                        {
+                            // абсолютное outgoing body dir = body dir + outgoing dir (:697)
+                            Vector3 outgoingBodyDir = BluntMath.GetRotated2D(new Vector3(0, -1, 0),
+                                anim.GetOutgoingBodyAngle() + anim.GetOutgoingAngle());
+                            if (query.IncomingBodyDirectionStrict) // :709-710
+                            {
+                                if (Mathf.Abs(BluntMath.GetAngle2D(incomingBodyDir, query.IncomingBodyDirection)) > marginRadians)
+                                    selectAnim = false;
+                            }
+                            else if (Mathf.Abs(BluntMath.GetAngle2D(incomingBodyDir, query.IncomingBodyDirection)) >
+                                     0.5f * Mathf.Pi + marginRadians) selectAnim = false; // :712
+
+                            if (selectAnim && query.IncomingBodyDirectionForceLinearity) // :718-732
+                            {
+                                float shortestAngle1 = BluntMath.GetAngle2D(incomingBodyDir, outgoingBodyDir); // :724
+                                float shortestAngle2 = BluntMath.GetAngle2D(incomingBodyDir, query.IncomingBodyDirection); // :725
+                                if ((shortestAngle1 > marginRadians && shortestAngle2 > marginRadians) ||
+                                    (shortestAngle1 < -marginRadians && shortestAngle2 < -marginRadians)) selectAnim = false; // :726-729
+                                if (Mathf.Abs(shortestAngle1) + Mathf.Abs(shortestAngle2) > Mathf.Pi + marginRadians)
+                                    selectAnim = false; // :730
+                            }
+                        }
+                    }
+                    else // клип с idle-входом (:737-747)
+                    {
+                        if (query.IncomingBodyDirectionStrict)
+                        {
+                            if (Mathf.Abs(BluntMath.GetAngle2D(new Vector3(0, -1, 0), query.IncomingBodyDirection)) >
+                                marginRadians) selectAnim = false; // :742
+                        }
+                        else if (Mathf.Abs(BluntMath.GetAngle2D(new Vector3(0, -1, 0), query.IncomingBodyDirection)) >
+                                 0.25f * Mathf.Pi + marginRadians) selectAnim = false; // :744
+                    }
+                }
+
+                // select by INCOMING BALL DIRECTION (:757-786)
+                if (selectAnim && query.ByIncomingBallDirection)
+                {
+                    Vector3 animBallDirection = BluntMath.GetVectorFromString(anim.GetVariable("incomingballdirection"));
+                    if (animBallDirection.Length() < 0.1f) // :760
+                    {
+                        // :761 в C++ фатал e_FatalError; в порте — предупреждение + отсев, без падения.
+                        GD.PushError($"Gpf.AnimCollection: {anim.GetName()} missing incoming ball direction");
+                        selectAnim = false;
+                    }
+                    else if (query.IncomingBallDirection.Length() != 0.0f) // :763
+                    {
+                        animBallDirection.Z *= 0.4f; // :766 decimate height diff
+                        animBallDirection = animBallDirection.Normalized();
+                        Vector3 adapted = query.IncomingBallDirection;
+                        adapted.Z *= 0.4f; // :769
+                        adapted = adapted.Normalized();
+                        float ballDirectionAngle = Mathf.Abs(BluntMath.GetAngle2D(adapted, animBallDirection)); // :773
+                        float maxDeviation = Mathf.Abs(
+                            BluntMath.AtoF(anim.GetVariable("incomingballdirection_maxdeviation")) * Mathf.Pi); // :778
+                        if (maxDeviation == 0.0f)
+                        {
+                            maxDeviation = MaxIncomingBallDirectionDeviation; // :780
+                            if (animType == "deflect") maxDeviation = 0.4f * Mathf.Pi; // :781
+                        }
+                        if (ballDirectionAngle > maxDeviation) selectAnim = false; // :783
+                    }
+                }
+
+                // select by OUTGOING BALL DIRECTION (:791-807)
+                if (selectAnim && query.ByOutgoingBallDirection)
+                {
+                    Vector3 animBallDirection = BluntMath.GetVectorFromString(anim.GetVariable("balldirection"));
+                    animBallDirection = BluntMath.GetNormalized(animBallDirection, Vector3.Zero); // :794
+                    float ballDirectionAngle = Mathf.Abs(BluntMath.GetAngle2D(
+                        BluntMath.GetNormalized(BluntMath.Get2D(query.OutgoingBallDirection), animBallDirection),
+                        animBallDirection)); // :797
+                    float maxDeviation = Mathf.Abs(
+                        BluntMath.AtoF(anim.GetVariable("outgoingballdirection_maxdeviation")) * Mathf.Pi); // :801
+                    if (maxDeviation == 0.0f) maxDeviation = MaxOutgoingBallDirectionDeviation; // :803
+                    if (ballDirectionAngle > maxDeviation) selectAnim = false; // :805
+                }
+
+                // select by PROPERTIES (:812-819)
+                if (selectAnim)
+                {
+                    if (query.GetProperty("incoming_special_state") != anim.GetVariable("incoming_special_state"))
+                        selectAnim = false; // :813
+                    // hax: разрешить смену рук (кроме deflect) (:815-816)
+                    bool queryRetain = query.GetProperty("incoming_retain_state") != "";
+                    bool animRetain = anim.GetVariable("incoming_retain_state") != "";
+                    if ((query.FunctionTypeId == FnDeflect || queryRetain != animRetain) &&
+                        query.GetProperty("incoming_retain_state") != anim.GetVariable("incoming_retain_state"))
+                        selectAnim = false;
+                    if (BluntMath.AtoF(query.GetProperty("specialvar1")) != BluntMath.AtoF(anim.GetVariable("specialvar1")))
+                        selectAnim = false; // :817
+                    if (BluntMath.AtoF(query.GetProperty("specialvar2")) != BluntMath.AtoF(anim.GetVariable("specialvar2")))
+                        selectAnim = false; // :818
+                }
+
+                // select by TRIP TYPE (:824-828)
+                if (selectAnim && query.ByTripType &&
+                    Mathf.RoundToInt(BluntMath.AtoF(anim.GetVariable("triptype"))) != query.TripType) selectAnim = false;
+
+                // select by FORCED FOOT (:834-857)
+                if (selectAnim && query.HeedForcedFoot)
+                {
+                    string forcedFoot = anim.GetVariable("forcedfoot");
+                    int which = forcedFoot == "strong" ? 1 : forcedFoot == "weak" ? 2 : 0; // :838-840
+                    if (which != 0)
+                    {
+                        int animFoot = anim.GetVariable("touchfoot") == "left" ? 0 : 1; // e_Foot: left=0/right=1 (:843-845)
+                        if (anim.GetCurrentFootId() == 0) animFoot = animFoot == 0 ? 1 : 0; // зеркальные (:848-850)
+                        if (which == 1 && query.StrongFootId != animFoot) selectAnim = false; // :852
+                        if (which == 2 && query.StrongFootId == animFoot) selectAnim = false; // :853
+                    }
+                }
+
+                if (selectAnim) dataSet.Add(i); // :860
+            }
+        }
     }
 }
