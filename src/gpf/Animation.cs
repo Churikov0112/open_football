@@ -39,7 +39,9 @@ namespace Gpf
 
         // e_Foot (animation.hpp:41-44): 0 left / 1 right. Дефолт right (animation.cpp:29):
         // «все клипы начинают движение с правой ноги, если не отзеркалены».
-        private int _currentFoot = 1;
+        public const int FootLeft = 0;
+        public const int FootRight = 1;
+        private int _currentFoot = FootRight;
 
         public string GetName() => _name;
         public int GetFrameCount() => _frameCount;
@@ -212,6 +214,11 @@ namespace Gpf
             _touches.Clear();
             _variables.Clear();
             _frameCount = 0;
+            // Оригинальный Animation::Load (animation.cpp:1109) сброса кэша не делает — он полагается
+            // на LoadData→SetKeyFrame и на то, что Load зовут только по свежему объекту (кэш грязный
+            // с конструктора, animation.cpp:31). У нас LoadFromFile можно позвать повторно, а у
+            // пустого/битого файла SetKeyFrame не вызовется вовсе — сбрасываем явно.
+            DirtyCache();
 
             using var f = FileAccess.Open(resPath, FileAccess.ModeFlags.Read);
             if (f == null)
@@ -352,9 +359,309 @@ namespace Gpf
         // Порт SetVariable (animation.cpp:1340-1356): у нас один словарь вместо XMLTree+variableCache.
         public void SetVariable(string name, string value) => _variables[name] = value;
 
-        // Порт Animation::DirtyCache (animation.cpp:92-105) — там взводятся 12 cache_*_dirty флагов.
-        // TODO(задача 3): кэш дескрипторов (скорости/углы) появляется в следующей задаче; пока noop.
-        public void DirtyCache() { }
+        // ───────────────────────── кэш дескрипторов клипа ─────────────────────────
+        // animation.hpp:146-169 — 12 mutable-полей + 12 dirty-флагов, ленивый пересчёт.
+        private bool _cTranslationDirty = true;             private Vector3 _cTranslation;
+        private bool _cIncomingMovementDirty = true;        private Vector3 _cIncomingMovement;
+        private bool _cIncomingVelocityDirty = true;        private float _cIncomingVelocity;
+        private bool _cOutgoingDirectionDirty = true;       private Vector3 _cOutgoingDirection;
+        private bool _cOutgoingMovementDirty = true;        private Vector3 _cOutgoingMovement;
+        private bool _cRangedOutgoingMovementDirty = true;  private Vector3 _cRangedOutgoingMovement;
+        private bool _cOutgoingVelocityDirty = true;        private float _cOutgoingVelocity;
+        private bool _cAngleDirty = true;                   private float _cAngle;
+        private bool _cIncomingBodyAngleDirty = true;       private float _cIncomingBodyAngle;
+        private bool _cOutgoingBodyAngleDirty = true;       private float _cOutgoingBodyAngle;
+        private bool _cIncomingBodyDirectionDirty = true;   private Vector3 _cIncomingBodyDirection;
+        private bool _cOutgoingBodyDirectionDirty = true;   private Vector3 _cOutgoingBodyDirection;
+
+        // Порт Animation::DirtyCache (animation.cpp:92-105) — взводит все 12 cache_*_dirty флагов.
+        public void DirtyCache()
+        {
+            _cTranslationDirty = true;
+            _cIncomingMovementDirty = true;
+            _cIncomingVelocityDirty = true;
+            _cOutgoingDirectionDirty = true;
+            _cOutgoingMovementDirty = true;
+            _cRangedOutgoingMovementDirty = true;
+            _cOutgoingVelocityDirty = true;
+            _cAngleDirty = true;
+            _cIncomingBodyAngleDirty = true;
+            _cOutgoingBodyAngleDirty = true;
+            _cIncomingBodyDirectionDirty = true;
+            _cOutgoingBodyDirectionDirty = true;
+        }
+
+        // Порядок треков фиксирован (TrackOrder): 0 — "player" (корень), 1 — "body".
+        // Оригинал адресует их так же — nodeAnimations.at(0) / at(1).
+        private const int RootTrack = 0;
+        private const int BodyTrack = 1;
+
+        private int RootKeyCount => _tracks.Count > RootTrack ? _tracks[RootTrack].Keys.Count : 0;
+        private int BodyKeyCount => _tracks.Count > BodyTrack ? _tracks[BodyTrack].Keys.Count : 0;
+
+        // Аналог итераторной арифметики оригинала над std::map root-трека:
+        //   position 0/1 при fromEnd=false → begin() / ++begin()      (первый / второй ключ)
+        //   position 0/1 при fromEnd=true  → --end() / --(--end())    (последний / предпоследний)
+        // Возвращает (номер кадра, ключ). Вызывающая сторона обязана сама проверить RootKeyCount:
+        // у оригинала выход за границы — UB, у нас безопасный default.
+        private (int frame, KeyFrame key) RootKeyAt(int position, bool fromEnd)
+        {
+            var keys = _tracks[RootTrack].Keys;
+            int i = 0, target = fromEnd ? keys.Count - 1 - position : position;
+            foreach (var kv in keys)
+            {
+                if (i == target) return (kv.Key, kv.Value);
+                i++;
+            }
+            return (0, default);
+        }
+
+        // (nodeAnimations.at(1)->animation.begin())->second — первый ключ body-трека.
+        // Отсутствие самого трека — исключение индексатора, как `.at(1)` бросает out_of_range
+        // в оригинале: в GetOutgoingAngle (:925-933) body читается БЕЗ проверки размера.
+        private KeyFrame FirstBodyKey()
+        {
+            foreach (var kv in _tracks[BodyTrack].Keys) return kv.Value;
+            return default;
+        }
+
+        // (--(nodeAnimations.at(1)->animation.end()))->second — последний ключ body-трека.
+        private KeyFrame LastBodyKey()
+        {
+            KeyFrame last = default;
+            foreach (var kv in _tracks[BodyTrack].Keys) last = kv.Value;
+            return last;
+        }
+
+        // Дельта пары ключей root-трека, нормированная на разность кадров, ×100, Z занулён.
+        // Оригинал пишет знаменатель как `(f1 - f0 * 1.0)`: по приоритету операций это
+        // `f1 - (f0 * 1.0)`, то есть ровно `f1 - f0`, поднятое во float. Не баг, а трюк
+        // промоушена типа — сохраняем запись дословно (animation.cpp:803-806/:841-844).
+        private Vector3 RootDelta(int posA, int posB, bool fromEnd)
+        {
+            var (fa, ka) = RootKeyAt(posA, fromEnd);
+            var (fb, kb) = RootKeyAt(posB, fromEnd);
+            Vector3 result = (ka.Position - kb.Position) / (fa - fb * 1.0f) * 100f;
+            result.Z = 0;
+            return result;
+        }
+
+        // Квантование скорости по корзинам (animation.cpp:825-828 и :902-905 — идентичные блоки).
+        // Литералы оригинала: пороги совпадают с Velo.IdleDribbleSwitch/DribbleWalkSwitch/
+        // WalkSprintSwitch, но верхняя корзина — 7.0, а НЕ Velo.Sprint (8.0). Так в оригинале.
+        private static float BucketVelocity(float v)
+        {
+            if (v < 1.8f) return 0f;
+            else if (v >= 1.8f && v < 4.2f) return 3.5f;
+            else if (v >= 4.2f && v < 6.0f) return 5.0f;
+            else if (v >= 6.0f) return 7.0f;
+            return v;
+        }
+
+        // animation.cpp:789-797. Оригинал не проверяет размер: при пустом треке `--end()` — UB.
+        public Vector3 GetTranslation()
+        {
+            if (_cTranslationDirty)
+            {
+                if (RootKeyCount > 0)
+                {
+                    var (_, last) = RootKeyAt(0, true);
+                    var (_, first) = RootKeyAt(0, false);
+                    _cTranslation = last.Position - first.Position;
+                    _cTranslation.Z = 0;
+                }
+                else _cTranslation = Vector3.Zero;
+                _cTranslationDirty = false;
+            }
+            return _cTranslation;
+        }
+
+        // animation.cpp:799-814 (дельта двух ПЕРВЫХ ключей root-трека)
+        public Vector3 GetIncomingMovement()
+        {
+            if (_cIncomingMovementDirty)
+            {
+                _cIncomingMovement = RootKeyCount > 1 ? RootDelta(1, 0, false) : Vector3.Zero;
+                _cIncomingMovementDirty = false;
+            }
+            return _cIncomingMovement;
+        }
+
+        // animation.cpp:816-835
+        public float GetIncomingVelocity()
+        {
+            if (_cIncomingVelocityDirty)
+            {
+                if (RootKeyCount > 1) _cIncomingVelocity = BucketVelocity(RootDelta(1, 0, false).Length());
+                else _cIncomingVelocity = 0;
+                _cIncomingVelocityDirty = false;
+            }
+            return _cIncomingVelocity;
+        }
+
+        // animation.cpp:837-853 (дельта двух ПОСЛЕДНИХ ключей root-трека)
+        public Vector3 GetOutgoingMovement()
+        {
+            if (_cOutgoingMovementDirty)
+            {
+                _cOutgoingMovement = RootKeyCount > 1 ? RootDelta(0, 1, true) : Vector3.Zero;
+                _cOutgoingMovementDirty = false;
+            }
+            return _cOutgoingMovement;
+        }
+
+        // animation.cpp:855-867
+        public Vector3 GetRangedOutgoingMovement()
+        {
+            if (_cRangedOutgoingMovementDirty || _cOutgoingVelocityDirty || _cAngleDirty)
+            {
+                if (RootKeyCount > 1)
+                    _cRangedOutgoingMovement = BluntMath.GetRotated2D(
+                        new Vector3(0, -GetOutgoingVelocity(), 0), GetOutgoingAngle());
+                else
+                    _cRangedOutgoingMovement = Vector3.Zero;
+                _cRangedOutgoingMovementDirty = false;
+            }
+            return _cRangedOutgoingMovement;
+        }
+
+        // animation.cpp:869-875
+        public Vector3 GetOutgoingDirection()
+        {
+            if (_cOutgoingDirectionDirty || _cAngleDirty)
+            {
+                _cOutgoingDirection = BluntMath.GetRotated2D(new Vector3(0, -1, 0), GetOutgoingAngle());
+                _cOutgoingDirectionDirty = false;
+            }
+            return _cOutgoingDirection;
+        }
+
+        // animation.cpp:877-883
+        public Vector3 GetIncomingBodyDirection()
+        {
+            if (_cIncomingBodyDirectionDirty || _cIncomingBodyAngleDirty)
+            {
+                _cIncomingBodyDirection = BluntMath.GetRotated2D(new Vector3(0, -1, 0), GetIncomingBodyAngle());
+                _cIncomingBodyDirectionDirty = false;
+            }
+            return _cIncomingBodyDirection;
+        }
+
+        // animation.cpp:885-891
+        public Vector3 GetOutgoingBodyDirection()
+        {
+            if (_cOutgoingBodyDirectionDirty || _cOutgoingBodyAngleDirty)
+            {
+                _cOutgoingBodyDirection = BluntMath.GetRotated2D(new Vector3(0, -1, 0), GetOutgoingBodyAngle());
+                _cOutgoingBodyDirectionDirty = false;
+            }
+            return _cOutgoingBodyDirection;
+        }
+
+        // animation.cpp:893-912
+        public float GetOutgoingVelocity()
+        {
+            if (_cOutgoingVelocityDirty)
+            {
+                if (RootKeyCount > 1) _cOutgoingVelocity = BucketVelocity(RootDelta(0, 1, true).Length());
+                else _cOutgoingVelocity = 0;
+                _cOutgoingVelocityDirty = false;
+            }
+            return _cOutgoingVelocity;
+        }
+
+        // animation.cpp:914-962
+        public float GetOutgoingAngle()
+        {
+            if (_cAngleDirty || _cOutgoingVelocityDirty)
+            {
+                if (GetOutgoingVelocity() >= 1.8f)
+                {
+                    // полный поворот игрока = направление последнего перемещения.
+                    // Внимание: здесь берётся СЫРАЯ разность позиций (Z не зануляется, в отличие
+                    // от GetOutgoingMovement) и НЕ делится на кадры — GetAngle2D смотрит лишь X/Y.
+                    var (_, last) = RootKeyAt(0, true);
+                    var (_, prev) = RootKeyAt(1, true);
+                    Vector3 lastMoveVector = last.Position - prev.Position;
+                    _cAngle = BluntMath.FixAngle(BluntMath.GetAngle2D(lastMoveVector));
+
+                    // Около ±180° неясно, 180 нам нужно или -180 — сторону подсказывает
+                    // z-эйлер последнего ключа body (animation.cpp:925-933).
+                    if (_cAngle < -0.95f * Mathf.Pi || _cAngle > 0.95f * Mathf.Pi)
+                    {
+                        QuatUtil.GetAngles(LastBodyKey().Orientation, out _, out _, out float z);
+                        if (BluntMath.SignSide(_cAngle) != BluntMath.SignSide(z))
+                            _cAngle = Mathf.Pi * 0.99f * BluntMath.SignSide(z);
+                        else
+                            // кламп и при уже верной стороне: нужен зазор до pi, иначе у векторов,
+                            // построенных на этом угле, нет внятной стороны (animation.cpp:931)
+                            _cAngle = Mathf.Clamp(_cAngle, -0.99f * Mathf.Pi, 0.99f * Mathf.Pi);
+                    }
+                }
+                else
+                {
+                    // стоим — угол берём из поворота тела (animation.cpp:937-955)
+                    if (BodyKeyCount > 0)
+                    {
+                        QuatUtil.GetAngles(LastBodyKey().Orientation, out _, out _, out float z);
+                        _cAngle = BluntMath.ModulateIntoRange(-Mathf.Pi, Mathf.Pi, z);
+                    }
+                    else _cAngle = 0;
+                }
+                _cAngleDirty = false;
+            }
+            return _cAngle;
+        }
+
+        // animation.cpp:964-991 — z-эйлер ПЕРВОГО ключа body-трека
+        public float GetIncomingBodyAngle()
+        {
+            if (_cIncomingBodyAngleDirty)
+            {
+                if (BodyKeyCount > 0)
+                {
+                    QuatUtil.GetAngles(FirstBodyKey().Orientation, out _, out _, out float z);
+                    _cIncomingBodyAngle = BluntMath.ModulateIntoRange(-Mathf.Pi, Mathf.Pi, z);
+                }
+                else _cIncomingBodyAngle = 0;
+                _cIncomingBodyAngleDirty = false;
+            }
+            return _cIncomingBodyAngle;
+        }
+
+        // animation.cpp:993-1027 — z-эйлер ПОСЛЕДНЕГО ключа body минус GetOutgoingAngle();
+        // при outgoing velocity < 1.8 жёстко 0 (animation.cpp:1020-1022).
+        public float GetOutgoingBodyAngle()
+        {
+            if (_cOutgoingBodyAngleDirty || _cAngleDirty || _cOutgoingVelocityDirty)
+            {
+                if (GetOutgoingVelocity() >= 1.8f)
+                {
+                    if (BodyKeyCount > 0)
+                    {
+                        QuatUtil.GetAngles(LastBodyKey().Orientation, out _, out _, out float z);
+                        _cOutgoingBodyAngle = z - GetOutgoingAngle();
+                        _cOutgoingBodyAngle = BluntMath.ModulateIntoRange(-Mathf.Pi, Mathf.Pi, _cOutgoingBodyAngle);
+                    }
+                    else _cOutgoingBodyAngle = 0;
+                }
+                else _cOutgoingBodyAngle = 0;
+                _cOutgoingBodyAngleDirty = false;
+            }
+            return _cOutgoingBodyAngle;
+        }
+
+        // Порт Animation::GetOutgoingFoot (animation.cpp:1029-1052). Без кэша — как в оригинале.
+        // Нечётное число шагов меняет ногу, чётное оставляет текущую; тег steps пуст → 1 шаг.
+        public int GetOutgoingFootId()
+        {
+            string foot = GetVariable("steps");
+            int curFoot = GetCurrentFootId();
+            int steps = 1;
+            if (foot != "") steps = BluntMath.AtoI(foot);
+            if (BluntMath.IsOdd(steps)) return curFoot == FootLeft ? FootRight : FootLeft;
+            else return curFoot == FootRight ? FootRight : FootLeft;
+        }
 
         // Порт конструктора копии Animation (animation.cpp:34-85). Extensions у нас интегрированы
         // в сам класс, поэтому `_touches` копируются глубоко — строже shallow-копии оригинала
