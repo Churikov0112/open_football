@@ -68,6 +68,35 @@ namespace Gpf
         internal Quadrant GetQuadrant(int id) => _quadrants[id];
         public int GetIdleMovementAnimID() => _idleMovementAnimId;
 
+        // Кэш позиций корня per-клип — порт Match::Match (match.cpp:86-105): позиция player-трека
+        // на каждом кадре, Z занулён. Оригинал держит его в Match (map Animation* → vector<Vector3>);
+        // у нас живёт при коллекции — единственном владельце клипов, и индексируется параллельно
+        // _animations.
+        private readonly List<List<Vector3>> _positionCaches = new();
+
+        internal List<Vector3> GetPositionCacheInternal(int animIndex) => _positionCaches[animIndex];
+        public int GetPositionCacheCount() => _positionCaches.Count;
+
+        internal static List<Vector3> BuildPositionCacheInternal(Animation anim)
+        {
+            var positions = new List<Vector3>();
+            for (int frame = 0; frame < anim.GetFrameCount(); frame++) // match.cpp:97
+            {
+                Vector3 position = anim.SampleRootPosition(frame, 0f);  // == GetKeyFrame position
+                position.Z = 0.0f;                                      // match.cpp:99
+                positions.Add(position);
+            }
+            return positions;
+        }
+
+        // Мост-обёртка для GDScript: List<Vector3> через мост не ходит, отдаём Godot Array.
+        public static Godot.Collections.Array BuildPositionCache(Animation anim)
+        {
+            var result = new Godot.Collections.Array();
+            foreach (Vector3 p in BuildPositionCacheInternal(anim)) result.Add(p);
+            return result;
+        }
+
         // Порт AnimCollection::Load (animcollection.cpp:354-487).
         public void Load(string animationsRoot, Skeleton3D utilitySkeleton)
         {
@@ -107,6 +136,12 @@ namespace Gpf
                     break;
                 }
             }
+
+            // Кэш позиций корня строится ПОСЛЕДНИМ — коллекция уже окончательна (автогены, зеркала,
+            // файловые клипы все в _animations), поэтому кэш параллелен ей по индексам. В оригинале
+            // это отдельный проход в конструкторе Match уже после anims->Load (match.cpp:86-105).
+            _positionCaches.Clear();
+            foreach (Animation clip in _animations) _positionCaches.Add(BuildPositionCacheInternal(clip));
         }
 
         private int _autoAnimVelocityMismatchCount;

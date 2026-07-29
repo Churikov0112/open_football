@@ -11,6 +11,9 @@ namespace Gpf
         public const float Dribble = 3.5f;            // gamedefines.hpp:19
         public const float Walk = 5.0f;               // gamedefines.hpp:20
         public const float Sprint = 8.0f;             // gamedefines.hpp:21
+        // gamedefines.hpp:23 (animSprintVelocity) — исходное пространство спринта для StretchSprintTo.
+        // НЕ путать с литералом 7.0 в Animation.BucketVelocity: там квантование дескрипторов клипа.
+        public const float AnimSprint = 7.0f;
         public const float IdleDribbleSwitch = 1.8f;  // gamedefines.hpp:25
         public const float DribbleWalkSwitch = 4.2f;  // gamedefines.hpp:26
         public const float WalkSprintSwitch = 6.0f;   // gamedefines.hpp:27
@@ -19,6 +22,10 @@ namespace Gpf
         public const int IdVelDribble = 1;
         public const int IdVelWalk = 2;
         public const int IdVelSprint = 3;
+
+        // Мост-обёртка для GDScript-тестов: через мост читаются только статические МЕТОДЫ,
+        // const-поля CSharpScript недоступны (остальные константы тесты сверяют литералами).
+        public static float GetAnimSprint() => AnimSprint;
 
         // animcollection.hpp:57-63
         public static float RangeVelocity(float velocity)

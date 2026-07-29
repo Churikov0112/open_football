@@ -45,6 +45,7 @@ namespace Gpf
 
         public string GetName() => _name;
         public int GetFrameCount() => _frameCount;
+        public int GetEffectiveFrameCount() => GetFrameCount() - 1; // animation.hpp:83
         public int GetTrackCount() => _tracks.Count;
         public string GetTrackName(int i) => _tracks[i].NodeName;
 
@@ -190,6 +191,21 @@ namespace Gpf
             GetInterpolatedValues(track.Keys, frame + 1, out var qPost, out _);
             qPre = QuatUtil.SameNeighborhood(qPre, qPost);
             return QuatUtil.Lerp(qPre, bias, qPost).Normalized();
+        }
+
+        // Ориентационная половина Animation::GetKeyFrame (animation.hpp:85 → animation.cpp:111-120):
+        // интерполированное значение НА кадре, без субкадрового смещения. Bool-результат оригинала
+        // («есть ли ровно такой ключ») не нужен ни одному вызову фазы 3 — не переносим.
+        public Quaternion GetInterpolatedRotation(string nodeName, int frame)
+        {
+            var track = FindTrack(nodeName);
+            if (track == null)
+            {
+                GD.PushError($"Gpf.Animation: нет трека {nodeName}");
+                return Quaternion.Identity;
+            }
+            GetInterpolatedValues(track.Keys, frame, out var q, out _);
+            return q;
         }
 
         // Флаги getOrientation/getPosition оригинала (animation.hpp:88) опущены: у player-трека

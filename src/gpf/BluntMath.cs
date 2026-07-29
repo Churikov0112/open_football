@@ -93,6 +93,37 @@ namespace Gpf
             return v * f;
         }
 
+        // vector3.cpp:199-204 Vector3::NormalizeMax — обрезать длину сверху, направление не трогать.
+        // Оригинал внутри зовёт БЕЗфолбэчный Normalize() (vector3.cpp:182-187): деление на длину
+        // без всяких проверок. У нас — GetNormalized(v, Zero); расхождение возможно только для
+        // вектора, у которого КАЖДАЯ ось < 1e-6, но длина всё же больше `length` (то есть при
+        // length < ~1.7e-6): оригинал даст единичный вектор, мы — нулевой. В фазе 3 `length` —
+        // всегда осмысленная скорость/дистанция, так что ветка недостижима.
+        public static Vector3 NormalizeMax(Vector3 v, float length)
+        {
+            if (v.Length() > length) return GetNormalized(v, Vector3.Zero) * length;
+            return v;
+        }
+
+        // vector3.cpp:218-223. Оригинал на 0-векторе пишет warning и делит на 0 (NaN);
+        // у нас 0-вектор возвращается как есть — вызывающие места фазы 3 гарантируют не-0.
+        // Порог тут по ДЛИНЕ (а не по каждой оси, как в проверке-логе оригинала :219): у оригинала
+        // эта проверка вообще ни на что не влияет, кроме сообщения в лог, — сама математика
+        // NormalizeTo безусловна, так что «правильной» семантики раннего выхода в C++ нет.
+        public static Vector3 GetNormalizedTo(Vector3 v, float length)
+        {
+            if (v.Length() < 1e-6f) return v;
+            return GetNormalized(v, Vector3.Zero) * length;
+        }
+
+        // vector3.cpp:225-228. Тут оригинал зовёт GetNormalized(0) — то есть перегрузку С фолбэком
+        // (int 0 → Vector3(0) неявным конструктором), поэтому порт 1:1, без оговорок NormalizeMax.
+        public static Vector3 GetNormalizedMax(Vector3 v, float length)
+        {
+            if (v.Length() > length) return GetNormalized(v, Vector3.Zero) * length;
+            return v;
+        }
+
         // vector3.hpp:336-339
         public static Vector3 Get2D(Vector3 v) => new Vector3(v.X, v.Y, 0f);
     }
