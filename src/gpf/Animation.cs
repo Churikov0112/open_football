@@ -32,6 +32,8 @@ namespace Gpf
         };
 
         private readonly List<NodeAnimation> _tracks = new();
+        private readonly SortedDictionary<int, Vector3> _touches = new();
+        private readonly Dictionary<string, string> _variables = new();
         private int _frameCount;
         private string _name = "";
 
@@ -39,6 +41,28 @@ namespace Gpf
         public int GetFrameCount() => _frameCount;
         public int GetTrackCount() => _tracks.Count;
         public string GetTrackName(int i) => _tracks[i].NodeName;
+
+        // Касания мяча из строки extension,football — кадр контакта + позиция мяча в осях клипа.
+        public int GetTouchCount() => _touches.Count;
+
+        public int GetTouchFrame(int index)
+        {
+            int i = 0;
+            foreach (var kv in _touches) { if (i == index) return kv.Key; i++; }
+            return -1;
+        }
+
+        public Vector3 GetTouchPosition(int index)
+        {
+            int i = 0;
+            foreach (var kv in _touches) { if (i == index) return kv.Value; i++; }
+            return Vector3.Zero;
+        }
+
+        public string GetAnimType() => GetVariable("type");
+
+        public string GetVariable(string tag)
+            => _variables.TryGetValue(tag, out var v) ? v : "";
 
         public Godot.Collections.Array GetKeyFrames(string nodeName)
         {
@@ -180,6 +204,8 @@ namespace Gpf
         public bool LoadFromFile(string resPath)
         {
             _tracks.Clear();
+            _touches.Clear();
+            _variables.Clear();
             _frameCount = 0;
 
             using var f = FileAccess.Open(resPath, FileAccess.ModeFlags.Read);
@@ -211,14 +237,26 @@ namespace Gpf
             try
             {
                 LoadData(csv);
+
+                for (; cursor < lines.Count; cursor++)
+                {
+                    string stripped = lines[cursor].StripEdges();
+                    if (!stripped.StartsWith("extension")) break;
+                    var tokens = stripped.Split(',');
+                    if (tokens.Length > 1 && tokens[1] == "football") LoadFootballExtension(tokens);
+                }
+
+                var xml = new System.Text.StringBuilder();
+                for (; cursor < lines.Count; cursor++) xml.AppendLine(lines[cursor]);
+                LoadXmlTail(xml.ToString());
             }
-            catch (Exception e) when (e is FormatException or IndexOutOfRangeException or OverflowException)
+            catch (Exception e) when (e is FormatException or IndexOutOfRangeException
+                                        or OverflowException or System.Xml.XmlException)
             {
                 GD.PushError($"Gpf.Animation: битый файл {resPath}: {e.Message}");
                 return false;
             }
 
-            // extension-строки и XML-хвост подключаются в задаче 4.
             return _tracks.Count > 0;
         }
 
@@ -252,6 +290,30 @@ namespace Gpf
                     SetKeyFrame(tokens[0], frame, orientation, position);
                 }
             }
+        }
+
+        // Порт FootballAnimationExtension::Load (footballanimationextension.cpp:109-125).
+        private void LoadFootballExtension(string[] tokens)
+        {
+            int key = 2;
+            while (key + 3 < tokens.Length)
+            {
+                int frame = int.Parse(tokens[key], CultureInfo.InvariantCulture);
+                _touches[frame] = new Vector3(
+                    ParseF(tokens[key + 1]), ParseF(tokens[key + 2]), ParseF(tokens[key + 3]));
+                key += 4;
+            }
+        }
+
+        // XML-хвост: плоские теги верхнего уровня → словарь тег → тримленный текст.
+        private void LoadXmlTail(string xml)
+        {
+            if (xml.Trim().Length == 0) return;
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml("<root>" + xml + "</root>");
+            foreach (System.Xml.XmlNode child in doc.DocumentElement!.ChildNodes)
+                if (child.NodeType == System.Xml.XmlNodeType.Element)
+                    _variables[child.Name] = child.InnerText.Trim();
         }
 
         private void SetKeyFrame(string nodeName, int frame, Quaternion orientation, Vector3 position)
