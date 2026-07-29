@@ -1,0 +1,19 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenFootball", "OpenFootball.csproj", "{DFE94356-CE4C-42B7-AA0E-845A8B9ACA49}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		ExportDebug|Any CPU = ExportDebug|Any CPU
+		ExportRelease|Any CPU = ExportRelease|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DFE94356-CE4C-42B7-AA0E-845A8B9ACA49}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DFE94356-CE4C-42B7-AA0E-845A8B9ACA49}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DFE94356-CE4C-42B7-AA0E-845A8B9ACA49}.ExportDebug|Any CPU.ActiveCfg = ExportDebug|Any CPU
+		{DFE94356-CE4C-42B7-AA0E-845A8B9ACA49}.ExportDebug|Any CPU.Build.0 = ExportDebug|Any CPU
+		{DFE94356-CE4C-42B7-AA0E-845A8B9ACA49}.ExportRelease|Any CPU.ActiveCfg = ExportRelease|Any CPU
+		{DFE94356-CE4C-42B7-AA0E-845A8B9ACA49}.ExportRelease|Any CPU.Build.0 = ExportRelease|Any CPU
+	EndGlobalSection
+EndGlobal

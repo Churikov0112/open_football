@@ -239,3 +239,15 @@ AnimCollection → варпинг → smuggle + физика мяча → сло
 поверх поз ядра), принятие C++ базы целиком (мёртвый движок, CPU-скиннинг), GDExtension (медленные
 итерации тюнинга), big-bang переписывание 17.5к строк GDScript на C#. Замещаются со временем:
 `PlayerMotor`-локомоция, lead-follow дриблинг, исполнение паса/удара, тело вратаря.
+
+## [2026-07-29] chore | старт порта: Godot 4.7.1 .NET + C#-solution
+
+Первый физический шаг порта ядра GameplayFootball. Редактор заменён на **.NET-редакцию 4.7.1**
+(`C:\Users\User\Desktop\Godot_v4.7.1-stable_mono_win64\`), пути headless-команд в CLAUDE.md/AGENTS.md
+обновлены; обе команды валидации прогнаны на новом exe **до и после** добавления C# — baseline ошибок
+идентичен по категориям (счётчик `!is_inside_tree()` слегка гуляет между запусками, это норма).
+Установлен .NET SDK 8.0.423. Создан C#-solution: `OpenFootball.csproj` (`Godot.NET.Sdk/4.7.1`,
+`net8.0`, nullable) + `OpenFootball.sln`, в `project.godot` добавлены фича `C#` и
+`[dotnet] project/assembly_name`. `dotnet build` зелёный (0 warn / 0 err), артефакты уходят в
+`.godot/mono/temp/` (уже под gitignore). C#-кода пока нет — фундамент под фазу 1 (лаб-сцена +
+палочник + импортёр `.anim`). Роадмап: spec 2026-07-29.

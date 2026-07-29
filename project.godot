@@ -17,7 +17,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 config/name="OpenFootball"
 config/description="A football simulation game"
 run/main_scene="res://scenes/main_menu.tscn"
-config/features=PackedStringArray("4.7")
+config/features=PackedStringArray("4.7", "C#")
 
 [autoload]
 
@@ -30,6 +30,10 @@ window/size/viewport_height=1080
 window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+
+[dotnet]
+
+project/assembly_name="OpenFootball"
 
 [input]
 

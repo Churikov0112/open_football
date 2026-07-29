@@ -6,8 +6,8 @@
 > Разделы ниже — исторический подробный гайд; при расхождении доверяй вике и коду, и правь вику.
 
 ## Dev commands
-- **Validate, menu-load only (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit`
-- **Validate match scene (headless):** `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "<project>" --headless --quit-after 2 res://scenes/match.tscn`
+- **Validate, menu-load only (headless):** `& "C:\Users\User\Desktop\Godot_v4.7.1-stable_mono_win64\Godot_v4.7.1-stable_mono_win64_console.exe" --path "<project>" --headless --quit`
+- **Validate match scene (headless):** `& "C:\Users\User\Desktop\Godot_v4.7.1-stable_mono_win64\Godot_v4.7.1-stable_mono_win64_console.exe" --path "<project>" --headless --quit-after 2 res://scenes/match.tscn`
   Run **both** — plain `--quit` boots `main_menu.tscn` and never loads `match.tscn`, so it never parses `match_manager.gd`/`teammate_ai.gd`/`simple_ai.gd`/`keeper_ai.gd` at all; the scene command is the one that actually exercises those files. The scene command has a known pre-existing error baseline (`!is_inside_tree()`, `ACTION_CLIPS` transition-duplicate + `states.has`, `WorldEnvironment3D` — all harmless; counts grew when the keeper added a second `PlayerVisual`, see `CLAUDE.md`'s *Commands* section) — diff by error **category/text**, don't expect zero or exact counts.
 - **Run editor:** same exe without flags
 

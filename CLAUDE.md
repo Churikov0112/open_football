@@ -4,7 +4,9 @@ Guidance for Claude Code (claude.ai/code) in this repository.
 
 ## What this is
 
-OpenFootball — аркадный футбол на **Godot 4.7 / GDScript**, поле в масштабе FIFA, **Windows-only**.
+OpenFootball — аркадный футбол на **Godot 4.7.1 (.NET-редакция) / GDScript + C#**, поле в масштабе
+FIFA, **Windows-only**. Идёт порт ядра GameplayFootball на C# (роадмап —
+`docs/superpowers/specs/2026-07-29-gameplayfootball-port-roadmap-design.md`).
 Пока небольшой прототип (человек + ИИ-тиммейт против двух ИИ-соперников + вратари), не 11-на-11.
 Презентация гибридная: поле/разметка/ворота/газон/мяч генерятся кодом, а **игроки — реальные
 риггованные Mixamo-модели** в `PlayerVisual`.
@@ -18,10 +20,12 @@ OpenFootball — аркадный футбол на **Godot 4.7 / GDScript**, п
 Тестов/линта/CI нет, кроме двух команд ниже и `tests/check_*.gd`.
 
 - **Меню-загрузка (парсит глобальные `class_name` + autoload):**
-  `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "C:\Users\User\Desktop\projects\OpenFootball" --headless --quit`
+  `& "C:\Users\User\Desktop\Godot_v4.7.1-stable_mono_win64\Godot_v4.7.1-stable_mono_win64_console.exe" --path "C:\Users\User\Desktop\projects\OpenFootball" --headless --quit`
 - **Сцена матча (реально гоняет `match_manager`/`*_ai`/`keeper_ai`):**
-  `& "C:\Users\User\AppData\Local\Godot\Godot_v4.7-stable_win64_console.exe" --path "C:\Users\User\Desktop\projects\OpenFootball" --headless --quit-after 2 res://scenes/match.tscn`
+  `& "C:\Users\User\Desktop\Godot_v4.7.1-stable_mono_win64\Godot_v4.7.1-stable_mono_win64_console.exe" --path "C:\Users\User\Desktop\projects\OpenFootball" --headless --quit-after 2 res://scenes/match.tscn`
 - **Один check-скрипт:** `& "<godot exe>" --path "<repo>" --headless -s "res://tests/<name>.gd"`
+- **C#-сборка (ядро порта):** `dotnet build "C:\Users\User\Desktop\projects\OpenFootball\OpenFootball.sln"`
+  — гонять после любой правки `.cs`; headless-команды сами C# не пересобирают.
 
 **Нужны ОБЕ headless-команды — ловят разное** (первая не грузит `match.tscn`, значит match-only скрипты
 ею не парсятся). У второй есть **известный baseline ошибок** — диффай по **категории/тексту, не по
