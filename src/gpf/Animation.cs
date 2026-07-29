@@ -352,12 +352,20 @@ namespace Gpf
         // Порт SetVariable (animation.cpp:1340-1356): у нас один словарь вместо XMLTree+variableCache.
         public void SetVariable(string name, string value) => _variables[name] = value;
 
+        // Порт Animation::DirtyCache (animation.cpp:92-105) — там взводятся 12 cache_*_dirty флагов.
         // TODO(задача 3): кэш дескрипторов (скорости/углы) появляется в следующей задаче; пока noop.
         public void DirtyCache() { }
 
         // Порт конструктора копии Animation (animation.cpp:34-85). Extensions у нас интегрированы
         // в сам класс, поэтому `_touches` копируются глубоко — строже shallow-копии оригинала
         // (animation.cpp:43-44), что безопаснее для Mirror/Shift над клоном.
+        //
+        // ХВОСТ ДЛЯ ЗАДАЧ 5-6: в оригинале shallow-копия extensions немедленно затирается —
+        // GenerateAutoAnims сразу после copy-ctor вешает клону СВЕЖИЙ пустой
+        // FootballAnimationExtension (animcollection.cpp:409-417), так что наблюдаемое поведение
+        // там — «у клона касаний нет». Наш Clone переносит _touches. Для movement-шаблонов,
+        // из которых идёт автогенерация, карта касаний пуста → разницы нет; но если клонировать
+        // клип С касаниями по этому пути, поведение разойдётся — держать в голове.
         public Animation Clone()
         {
             var dst = new Animation { _name = _name, _frameCount = _frameCount, _currentFoot = _currentFoot };
@@ -374,7 +382,7 @@ namespace Gpf
 
         // Порт Animation::Shift (animation.cpp:723-787). Поддержан только offset ±1 — как в оригинале
         // («todo: offset does not yet work» для остальных). Касания сдвигаются синхронно (шов 2;
-        // extension->Shift, animation.cpp:782-786 + footballanimationextension.cpp:19-47).
+        // extension->Shift, animation.cpp:782-786 + footballanimationextension.cpp:19-46).
         public void Shift(int fromFrame, int offset)
         {
             if (offset == 1)
@@ -415,7 +423,7 @@ namespace Gpf
                 if (somethingShifted) { _frameCount--; DirtyCache(); }
             }
 
-            // Касания — те же правила сдвига (footballanimationextension.cpp:19-47)
+            // Касания — те же правила сдвига (footballanimationextension.cpp:19-46)
             var newTouches = new SortedDictionary<int, Vector3>();
             foreach (var kv in _touches)
             {
@@ -428,9 +436,11 @@ namespace Gpf
                     newTouches[frameNum] = kv.Value;
                 }
                 // Расхождение с оригиналом (осознанное): при offset вне ±1 C++-extension присваивает
-                // пустой newAnimation и ТЕРЯЕТ все касания (footballanimationextension.cpp:21,45),
-                // хотя ключи клипа при этом не трогаются. Недостижимо — единственный вызов Shift
-                // в оригинале идёт с offset=1 (animcollection.cpp:1060); мы сохраняем касания.
+                // пустой newAnimation и ТЕРЯЕТ все касания (footballanimationextension.cpp:21,46),
+                // хотя ключи клипа при этом не трогаются. Ветка вдвойне недостижима: единственный
+                // вызов Shift в оригинале идёт с offset=1 (animcollection.cpp:1060), да и сам он
+                // сидит внутри Slowdown, а её единственный вызов закомментирован
+                // (animcollection.cpp:1186). Мы касания сохраняем.
                 else newTouches[frameNum] = kv.Value;
             }
             _touches.Clear();
