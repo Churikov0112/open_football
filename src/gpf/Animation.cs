@@ -295,6 +295,10 @@ namespace Gpf
         // Порт FootballAnimationExtension::Load (footballanimationextension.cpp:109-125).
         private void LoadFootballExtension(string[] tokens)
         {
+            // Оригинал чистит карту касаний на каждый вызов Load (footballanimationextension.cpp:110):
+            // при нескольких extension-строках в файле остаётся только последняя. Общий сброс в
+            // LoadFromFile этого не покрывает (он выполняется один раз до цикла по extension-строкам).
+            _touches.Clear();
             int key = 2;
             while (key + 3 < tokens.Length)
             {
@@ -306,6 +310,10 @@ namespace Gpf
         }
 
         // XML-хвост: плоские теги верхнего уровня → словарь тег → тримленный текст.
+        // Расхождение с оригиналом: при загрузке animation.cpp:1157-1192 нормализует (нормирует вектор)
+        // значения тегов bumpdirection/balldirection/incomingballdirection и кладёт в variableCache уже
+        // нормализованными. Здесь GetVariable отдаёт сырой текст тега — нормализация отложена до фазы 2
+        // (AnimCollection), зафиксировано в docs/wiki/открытые-вопросы.md.
         private void LoadXmlTail(string xml)
         {
             if (xml.Trim().Length == 0) return;
