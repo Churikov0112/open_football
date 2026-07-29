@@ -49,8 +49,8 @@ func _initialize() -> void:
 		print("CHECK FAIL: player@0 → ", anim.GetKeyPosition("player", 0)); ok = false
 
 	# Сброс состояния: повторный LoadFromFile на ТОМ ЖЕ экземпляре не должен домешивать
-	# треки/кадры/ключи предыдущего клипа. 000.anim (37 — макс. ключ → frameCount 38) больше
-	# 045.anim (24 → 25), так что несброшенный frameCount тоже поймался бы здесь.
+	# треки/кадры/ключи предыдущего клипа.
+	# Регрессию сброса ловит ТОЛЬКО ассерт ключей left_ankle ниже: _frameCount без сброса лишь растёт, а 38 > 25, так что frameCount==38 прошёл бы и без Clear.
 	if not anim.LoadFromFile("res://assets/gpf/animations/ballcontrol/idle/000.anim"):
 		print("CHECK FAIL: LoadFromFile 000.anim (повторно на том же экземпляре)"); ok = false
 	if anim.GetTrackCount() != 14:

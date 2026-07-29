@@ -166,6 +166,7 @@ namespace Gpf
         // Сентинел timeOffset_ms == -1 (animation.cpp:391-392): «смещение неизвестно» →
         // серединный bias 0.5, а не клампованный ноль. Так рендер-путь зовёт Apply
         // (humanoidbase.cpp:779), поэтому поведение обязано отличаться от timeOffset 0.
+        // Намеренно расширено до "< 0" (оригинал сравнивает строго != -1, animation.cpp:392): параметр у нас float, любое отрицательное значение трактуем как сентинел.
         private static float SampleBias(float timeOffsetMs)
             => timeOffsetMs < 0f ? 0.5f : Mathf.Clamp(timeOffsetMs / 10f, 0f, 1f);
 
