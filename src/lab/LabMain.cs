@@ -84,6 +84,7 @@ namespace Gpf.Lab
 
         private void LoadClip(int index)
         {
+            if (_clipPaths.Count == 0) return;
             int n = _clipPaths.Count;
             _clipIndex = ((index % n) + n) % n;
             _anim = new Gpf.Animation();
