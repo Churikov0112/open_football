@@ -32,9 +32,38 @@ func _initialize() -> void:
 	col.Load("res://assets/gpf/animations", skel)
 	print("[collection] load: ", Time.get_ticks_msec() - t0, " ms, anims: ", col.GetAnimationCount())
 
-	# 283 файла (293 минус 10 templates) × 2 зеркала = 566
-	if col.GetAnimationCount() != 566:
-		print("CHECK FAIL: размер коллекции → ", col.GetAnimationCount(), " (ожидалось 566)"); ok = false
+	# --- после задачи 6: 566 файловых + 2×A автогенов ---
+	var total: int = col.GetAnimationCount()
+	if total <= 566 or (total - 566) % 2 != 0:
+		print("CHECK FAIL: размер коллекции с автогенами → ", total); ok = false
+	var autogen_count := 0
+	var autogen_bad_velo := 0
+	var autogen_first_mirror_ok := true
+	var seen_first_autogen := false
+	for i in range(col.GetAnimationCount()):
+		var anim = col.GetAnim(i)
+		var nm: String = anim.GetName()
+		if nm.begins_with("autogen"):
+			autogen_count += 1
+			if not seen_first_autogen:
+				seen_first_autogen = true
+				# порядок animcollection.cpp:408-419: зеркало ПЕРВЫМ
+				autogen_first_mirror_ok = nm.ends_with("_mirror")
+			if anim.GetVariable("priority") != "1":
+				print("CHECK FAIL: автоген без priority=1: ", nm); ok = false
+			if anim.GetAnimType() != "movement":
+				print("CHECK FAIL: автоген не movement: ", nm); ok = false
+			if anim.GetFrameCount() != 25:
+				print("CHECK FAIL: автоген не 25 кадров: ", nm, " → ", anim.GetFrameCount()); ok = false
+	if autogen_count != total - 566:
+		print("CHECK FAIL: autogen_count ", autogen_count, " ≠ total-566 ", total - 566); ok = false
+	if autogen_count == 0:
+		print("CHECK FAIL: автогены не сгенерировались"); ok = false
+	if not autogen_first_mirror_ok:
+		print("CHECK FAIL: первый автоген — не зеркало (порядок :408-419)"); ok = false
+	if col.GetAutoAnimVelocityMismatchCount() != 0:
+		print("CHECK FAIL: автогены с расхождением скоростей: ", col.GetAutoAnimVelocityMismatchCount()); ok = false
+	print("[collection] autogen: ", autogen_count / 2, " легальных вариаций (×2 зеркала)")
 
 	# Каждый клип обогащён; правило чётности зеркал: чётный индекс — оригинал, нечётный — _mirror
 	var bad_quadrant := 0
