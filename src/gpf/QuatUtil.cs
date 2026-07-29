@@ -38,7 +38,10 @@ namespace Gpf
                 (float)(a.Z * ratioA + qb.Z * ratioB), (float)(a.W * ratioA + qb.W * ratioB));
         }
 
-        // Покомпонентный lerp (нормализует вызывающий — как GetLerped().GetNormalized() в Apply).
+        // Покомпонентный lerp БЕЗ нормализации — нормализует вызывающая сторона.
+        // C++ GetLerped (quaternion.cpp:348-350) нормализует сам, а Apply (animation.cpp:404)
+        // тут же зовёт GetNormalized() повторно; двойная нормализация тождественна одной,
+        // так что результат совпадает 1:1.
         public static Quaternion Lerp(Quaternion a, float bias, Quaternion b)
             => new Quaternion(
                 a.X + (b.X - a.X) * bias, a.Y + (b.Y - a.Y) * bias,

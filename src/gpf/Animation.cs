@@ -139,23 +139,39 @@ namespace Gpf
             }
         }
 
+        // Сентинел timeOffset_ms == -1 (animation.cpp:391-392): «смещение неизвестно» →
+        // серединный bias 0.5, а не клампованный ноль. Так рендер-путь зовёт Apply
+        // (humanoidbase.cpp:779), поэтому поведение обязано отличаться от timeOffset 0.
+        private static float SampleBias(float timeOffsetMs)
+            => timeOffsetMs < 0f ? 0.5f : Mathf.Clamp(timeOffsetMs / 10f, 0f, 1f);
+
         // Субкадровый семпл по схеме Animation::Apply (animation.cpp:389-405).
         public Quaternion SampleRotation(string nodeName, int frame, float timeOffsetMs)
         {
             var track = FindTrack(nodeName);
-            if (track == null) return Quaternion.Identity;
-            float bias = Mathf.Clamp(timeOffsetMs / 10f, 0f, 1f);
+            if (track == null)
+            {
+                GD.PushError($"Gpf.Animation: нет трека {nodeName}");
+                return Quaternion.Identity;
+            }
+            float bias = SampleBias(timeOffsetMs);
             GetInterpolatedValues(track.Keys, frame, out var qPre, out _);
             GetInterpolatedValues(track.Keys, frame + 1, out var qPost, out _);
             qPre = QuatUtil.SameNeighborhood(qPre, qPost);
             return QuatUtil.Lerp(qPre, bias, qPost).Normalized();
         }
 
+        // Флаги getOrientation/getPosition оригинала (animation.hpp:88) опущены: у player-трека
+        // в .anim нет ориентации (она identity), поэтому отдаём только позицию.
         public Vector3 SampleRootPosition(int frame, float timeOffsetMs)
         {
             var track = FindTrack("player");
-            if (track == null) return Vector3.Zero;
-            float bias = Mathf.Clamp(timeOffsetMs / 10f, 0f, 1f);
+            if (track == null)
+            {
+                GD.PushError("Gpf.Animation: нет трека player");
+                return Vector3.Zero;
+            }
+            float bias = SampleBias(timeOffsetMs);
             GetInterpolatedValues(track.Keys, frame, out _, out var pPre);
             GetInterpolatedValues(track.Keys, frame + 1, out _, out var pPost);
             return pPre * (1f - bias) + pPost * bias;
