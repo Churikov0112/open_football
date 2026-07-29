@@ -74,6 +74,93 @@ namespace Gpf
         private NodeAnimation? FindTrack(string nodeName)
             => _tracks.Find(t => t.NodeName == nodeName);
 
+        // Порт GetInterpolatedValues (animation.cpp:179-295).
+        private void GetInterpolatedValues(SortedDictionary<int, KeyFrame> keys, int frame,
+                                           out Quaternion orientation, out Vector3 position)
+        {
+            orientation = Quaternion.Identity;
+            position = Vector3.Zero;
+            if (keys.Count == 0) return;
+
+            if (frame > 0 && frame < _frameCount)
+            {
+                // последний ключ < frame и первый ключ >= frame (animation.cpp:186-206)
+                bool hasBefore = false, hasAfter = false;
+                int beforeFrame = 0, afterFrame = 0;
+                KeyFrame before = default, after = default;
+                foreach (var kv in keys)
+                {
+                    if (kv.Key >= frame) { after = kv.Value; afterFrame = kv.Key; hasAfter = true; break; }
+                    before = kv.Value; beforeFrame = kv.Key; hasBefore = true;
+                }
+
+                if (hasBefore && hasAfter)
+                {
+                    float bias = (frame - beforeFrame) / (float)(afterFrame - beforeFrame);
+                    orientation = QuatUtil.Slerp(before.Orientation, bias, after.Orientation);
+                    position = before.Position * (1f - bias) + after.Position * bias;
+                }
+                else if (hasAfter) // все ключи позже текущего кадра
+                {
+                    orientation = after.Orientation;
+                    position = after.Position;
+                }
+                else // ключи трека кончились раньше frameCount → держим последний
+                {
+                    orientation = before.Orientation;
+                    position = before.Position;
+                }
+            }
+            else if (frame >= _frameCount)
+            {
+                // экстраполяция за концом (animation.cpp:247-282): slerp с bias > 1
+                KeyFrame last = default, secondLast = default;
+                int lastFrame = 0, secondLastFrame = 0, seen = 0;
+                foreach (var kv in keys)
+                {
+                    secondLast = last; secondLastFrame = lastFrame;
+                    last = kv.Value; lastFrame = kv.Key; seen++;
+                }
+                if (seen == 1) { orientation = last.Orientation; position = last.Position; return; }
+                float dist1 = lastFrame - secondLastFrame;
+                float dist2 = frame - lastFrame;
+                float bias = 1f + (1f / dist1) * dist2;
+                orientation = QuatUtil.Slerp(secondLast.Orientation, bias, last.Orientation);
+                position = secondLast.Position * (1f - bias) + last.Position * bias;
+            }
+            else // frame <= 0 → первый ключ (animation.cpp:284-292)
+            {
+                foreach (var kv in keys)
+                {
+                    orientation = kv.Value.Orientation;
+                    position = kv.Value.Position;
+                    break;
+                }
+            }
+        }
+
+        // Субкадровый семпл по схеме Animation::Apply (animation.cpp:389-405).
+        public Quaternion SampleRotation(string nodeName, int frame, float timeOffsetMs)
+        {
+            var track = FindTrack(nodeName);
+            if (track == null) return Quaternion.Identity;
+            float bias = Mathf.Clamp(timeOffsetMs / 10f, 0f, 1f);
+            GetInterpolatedValues(track.Keys, frame, out var qPre, out _);
+            GetInterpolatedValues(track.Keys, frame + 1, out var qPost, out _);
+            qPre = QuatUtil.SameNeighborhood(qPre, qPost);
+            return QuatUtil.Lerp(qPre, bias, qPost).Normalized();
+        }
+
+        public Vector3 SampleRootPosition(int frame, float timeOffsetMs)
+        {
+            var track = FindTrack("player");
+            if (track == null) return Vector3.Zero;
+            float bias = Mathf.Clamp(timeOffsetMs / 10f, 0f, 1f);
+            GetInterpolatedValues(track.Keys, frame, out _, out var pPre);
+            GetInterpolatedValues(track.Keys, frame + 1, out _, out var pPost);
+            return pPre * (1f - bias) + pPost * bias;
+        }
+
         public bool LoadFromFile(string resPath)
         {
             _tracks.Clear();
