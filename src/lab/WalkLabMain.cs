@@ -134,7 +134,27 @@ namespace Gpf.Lab
             _transitions++;
         }
 
-        public override void _PhysicsProcess(double delta) => StepOneFrame();
+        public override void _PhysicsProcess(double delta)
+        {
+            PollDirectionInput();
+            StepOneFrame();
+        }
+
+        // Опрос зажатых стрелок каждый физ-кадр: сумма векторов даёт диагонали (45°/135°),
+        // недостижимые при дискретной обработке одной клавиши за событие. Оси «их» пространства:
+        // вперёд (0,-1,0), «их-влево» (1,0,0) — базис GpfSpace зеркалит X, поэтому это и есть
+        // экранный «влево» (а прежняя раскладка Left→(-1,0,0) уводила на экранправо — баг).
+        // Если ничего не нажато — держим последнее направление (скорость меняется цифрами).
+        private void PollDirectionInput()
+        {
+            Vector3 dir = Vector3.Zero;
+            if (Input.IsKeyPressed(Key.Up)) dir += new Vector3(0, -1, 0);
+            if (Input.IsKeyPressed(Key.Down)) dir += new Vector3(0, 1, 0);
+            if (Input.IsKeyPressed(Key.Left)) dir += new Vector3(1, 0, 0);
+            if (Input.IsKeyPressed(Key.Right)) dir += new Vector3(-1, 0, 0);
+            if (dir.Length() > 0.01f)
+                _desiredDirection = Gpf.BluntMath.GetNormalized(dir, _desiredDirection);
+        }
 
         public override void _Process(double delta)
         {
@@ -154,26 +174,22 @@ namespace Gpf.Lab
                 + $"quadrant: {anim.GetVariable("quadrant_id")}   frame: {_frame}/{anim.GetFrameCount()}\n"
                 + $"state: v={_velocityId} angle={Mathf.RadToDeg(_angle):F0}°   "
                 + $"cmd: v={_desiredVelocityId} dir=({_desiredDirection.X:F1},{_desiredDirection.Y:F1})\n"
-                + "стрелки — направление, 0/1/2/3 — idle/dribble/walk/sprint";
+                + "стрелки (две сразу — диагональ 45°/135°) — направление;  "
+                + "0/1/2/3 — стойка/дриблинг/бег/спринт (медленной ходьбы в датасете нет)";
         }
 
+        // Направление — опросом зажатых стрелок в PollDirectionInput (даёт диагонали).
+        // Здесь только дискретный выбор скорости: 0/1/2/3 = стойка/дриблинг/бег/спринт.
         public override void _UnhandledKeyInput(InputEvent ev)
         {
             if (ev is not InputEventKey k || !k.Pressed || k.Echo) return;
-            Vector3 dir = _desiredDirection;
             switch (k.Keycode)
             {
-                case Key.Up: dir = new Vector3(0, -1, 0); break;
-                case Key.Down: dir = new Vector3(0, 1, 0); break;
-                case Key.Left: dir = new Vector3(-1, 0, 0); break;
-                case Key.Right: dir = new Vector3(1, 0, 0); break;
-                case Key.Key0: SetCommand(dir, 0); return;
-                case Key.Key1: SetCommand(dir, 1); return;
-                case Key.Key2: SetCommand(dir, 2); return;
-                case Key.Key3: SetCommand(dir, 3); return;
-                default: return;
+                case Key.Key0: SetCommand(_desiredDirection, 0); break;
+                case Key.Key1: SetCommand(_desiredDirection, 1); break;
+                case Key.Key2: SetCommand(_desiredDirection, 2); break;
+                case Key.Key3: SetCommand(_desiredDirection, 3); break;
             }
-            SetCommand(dir, _desiredVelocityId);
         }
     }
 }
