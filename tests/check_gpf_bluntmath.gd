@@ -75,6 +75,10 @@ func _initialize() -> void:
 	# GetNormalized(fallback): нулевой вектор → fallback
 	if not vec_eq(BM.GetNormalized(Vector3.ZERO, Vector3(0, -1, 0)), Vector3(0, -1, 0)):
 		print("CHECK FAIL: GetNormalized fallback"); ok = false
+	# GetNormalized(fallback): почти-нулевой вектор (все оси < 1e-6) — тоже fallback, не деление на ~0
+	# (vector3.cpp:170-181 проверяет каждую ось по-отдельности, не длину)
+	if not vec_eq(BM.GetNormalized(Vector3(5.0e-7, 5.0e-7, 5.0e-7), Vector3(0, -1, 0)), Vector3(0, -1, 0)):
+		print("CHECK FAIL: GetNormalized почти-нулевой вектор"); ok = false
 
 	# Скорости (animcollection.hpp:57-104): корзины RangeVelocity
 	if not feq(V.RangeVelocity(1.7), 0.0) or not feq(V.RangeVelocity(1.8), 3.5) \
@@ -100,6 +104,15 @@ func _initialize() -> void:
 	var qz := Quaternion(Vector3(0, 0, 1), 0.3)
 	if not feq(QU.GetAnglesVec(qz).z, 0.3, 1.0e-4):
 		print("CHECK FAIL: GetAngles чистый Z"); ok = false
+	# Гимбал-ветка (quaternion.cpp:203-213): singularityTest = ex*ey+ez*ew, где ex=q.X, ey=q.Z,
+	# ez=q.Y, ew=q.W (перестановка индексов). q = (X=0.70710678, Y=0, Z=0.70710678, W=0), единичный
+	# (0.5+0+0.5+0=1) → singularityTest = 0.70710678*0.70710678 + 0*0 = 0.5 > 0.49999 → северный
+	# полюс: z = 2*atan2(ex, ez) = 2*atan2(0.70710678, 0) = 2*(pi/2) = pi; y = pi/2; x = 0
+	# (посчитано вручную по формуле оригинала, не подогнано под вывод кода).
+	var qs := Quaternion(0.70710678, 0.0, 0.70710678, 0.0)
+	var angles_s: Vector3 = QU.GetAnglesVec(qs)
+	if not feq(angles_s.x, 0.0, 1.0e-4) or not feq(angles_s.y, 0.5 * PI, 1.0e-4) or not feq(angles_s.z, PI, 1.0e-3):
+		print("CHECK FAIL: GetAngles сингулярность → ", angles_s); ok = false
 
 	# AngleAxis (quaternion.cpp:284-296) == конструктор Godot
 	var q1: Quaternion = QU.AngleAxis(0.7, Vector3(0, 0, 1))

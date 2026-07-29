@@ -82,11 +82,15 @@ namespace Gpf
             return ModulateIntoRange(-Mathf.Pi, Mathf.Pi, angle);
         }
 
-        // Vector3::GetNormalized(fallback): нулевая длина → fallback
+        // vector3.cpp:170-181 Vector3::Normalize(ifNull): проверка НЕ по длине, а по каждой оси
+        // независимо (fabs(coords[i]) < 1e-6 для всех трёх) — портировано дословно; проверка по
+        // длине пропускает почти-нулевые вектора (например (5e-7,5e-7,5e-7)) в деление на ~0.
         public static Vector3 GetNormalized(Vector3 v, Vector3 fallback)
         {
-            float len = v.Length();
-            return len == 0f ? fallback : v / len;
+            if (Mathf.Abs(v.X) < 0.000001f && Mathf.Abs(v.Y) < 0.000001f && Mathf.Abs(v.Z) < 0.000001f)
+                return fallback;
+            float f = 1.0f / Mathf.Sqrt(v.Dot(v));
+            return v * f;
         }
 
         // vector3.hpp:336-339
