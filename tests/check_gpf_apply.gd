@@ -46,6 +46,13 @@ func _initialize() -> void:
 	if not vec_eq(skel.get_bone_pose_position(root), Vector3(0, 0, -0.05)):
 		print("CHECK FAIL: noPos → ", skel.get_bone_pose_position(root)); ok = false
 
+	# baseRotZ: доворот body вокруг вертикали слева (animation.cpp:417-422).
+	applier.Apply(skel, anim, 12, 0.0, false, PI / 2.0)
+	var expected_body := (Quaternion(Vector3(0, 0, 1), PI / 2.0) \
+			* Quaternion(0.060027, -0.163966, -0.174606, 0.969033)).normalized()
+	if not quat_close(skel.get_bone_pose_rotation(body), expected_body):
+		print("CHECK FAIL: body baseRotZ → ", skel.get_bone_pose_rotation(body)); ok = false
+
 	skel.queue_free()
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
