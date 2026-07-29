@@ -18,8 +18,8 @@ func _initialize() -> void:
 	var applier = load("res://src/gpf/AnimationApplier.cs").new()
 
 	# Мост C#→GDScript не переносит значения по умолчанию (default_args пуст),
-	# поэтому noPos/baseRotZ всегда передаются явно.
-	applier.Apply(skel, anim, 12, 0.0, false, 0.0)
+	# поэтому noPos/baseRotZ/basePos всегда передаются явно.
+	applier.Apply(skel, anim, 12, 0.0, false, 0.0, Vector3.ZERO)
 
 	# body: локальная ротация == ключ кадра 12 из файла.
 	var body := skel.find_bone("body")
@@ -42,16 +42,31 @@ func _initialize() -> void:
 		print("CHECK FAIL: middle позиция сползла → ", skel.get_bone_pose_position(middle)); ok = false
 
 	# noPos: X,Y корня зануляются, Z остаётся.
-	applier.Apply(skel, anim, 12, 0.0, true, 0.0)
+	applier.Apply(skel, anim, 12, 0.0, true, 0.0, Vector3.ZERO)
 	if not vec_eq(skel.get_bone_pose_position(root), Vector3(0, 0, -0.05)):
 		print("CHECK FAIL: noPos → ", skel.get_bone_pose_position(root)); ok = false
 
 	# baseRotZ: доворот body вокруг вертикали слева (animation.cpp:417-422).
-	applier.Apply(skel, anim, 12, 0.0, false, PI / 2.0)
+	applier.Apply(skel, anim, 12, 0.0, false, PI / 2.0, Vector3.ZERO)
 	var expected_body := (Quaternion(Vector3(0, 0, 1), PI / 2.0) \
 			* Quaternion(0.060027, -0.163966, -0.174606, 0.969033)).normalized()
 	if not quat_close(skel.get_bone_pose_rotation(body), expected_body):
 		print("CHECK FAIL: body baseRotZ → ", skel.get_bone_pose_rotation(body)); ok = false
+
+	# --- фаза 2 (шов 5): baseRot вращает позицию корня, basePos смещает ---
+	# кадр 12: локальная позиция корня (-0.30, -0.461739, -0.05); baseRot 90° CCW:
+	# Rotate2D(v, pi/2) = (-v.y, v.x) → (0.461739, -0.30)
+	applier.Apply(skel, anim, 12, 0.0, false, PI / 2.0, Vector3.ZERO)
+	if not vec_eq(skel.get_bone_pose_position(root), Vector3(0.461739, -0.30, -0.05)):
+		print("CHECK FAIL: baseRot позиция корня → ", skel.get_bone_pose_position(root)); ok = false
+	# basePos прибавляется после поворота (animation.cpp:715)
+	applier.Apply(skel, anim, 12, 0.0, false, PI / 2.0, Vector3(10, 20, 0))
+	if not vec_eq(skel.get_bone_pose_position(root), Vector3(10.461739, 19.70, -0.05)):
+		print("CHECK FAIL: basePos → ", skel.get_bone_pose_position(root)); ok = false
+	# noPos: X/Y клипа занулены, но basePos остаётся
+	applier.Apply(skel, anim, 12, 0.0, true, PI / 2.0, Vector3(10, 20, 0))
+	if not vec_eq(skel.get_bone_pose_position(root), Vector3(10, 20, -0.05)):
+		print("CHECK FAIL: noPos+basePos → ", skel.get_bone_pose_position(root)); ok = false
 
 	skel.queue_free()
 	print("CHECK PASS" if ok else "CHECK FAIL")

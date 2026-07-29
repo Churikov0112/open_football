@@ -8,9 +8,9 @@ namespace Gpf
     public partial class AnimationApplier : RefCounted
     {
         // GDScript-мост не переносит default-аргументы C# (default_args пуст на стороне GDScript),
-        // поэтому из GDScript звать с полным списком из 6 аргументов.
+        // поэтому из GDScript звать с полным списком из 7 аргументов.
         public void Apply(Skeleton3D skel, Animation anim, int frame, float timeOffsetMs,
-                          bool noPos = false, float baseRotZ = 0f)
+                          bool noPos = false, float baseRotZ = 0f, Vector3 basePos = default)
         {
             for (int i = 0; i < anim.GetTrackCount(); i++)
             {
@@ -25,9 +25,9 @@ namespace Gpf
                 if (name == "player")
                 {
                     Vector3 pos = anim.SampleRootPosition(frame, timeOffsetMs);
-                    // TODO фаза 2: animation.cpp:413-415 — при !noPos оригинал доворачивает позицию
-                    // корня position.Rotate2D(baseRot); здесь не портировано (в фазе 1 baseRotZ всегда 0)
-                    if (noPos) { pos.X = 0; pos.Y = 0; } // animation.cpp:409-412 (Z остаётся)
+                    if (noPos) { pos.X = 0; pos.Y = 0; }                       // animation.cpp:410-412 (Z остаётся)
+                    else pos = BluntMath.GetRotated2D(pos, baseRotZ);           // animation.cpp:413-415 (шов 5)
+                    pos += basePos;                                             // animation.cpp:715
                     skel.SetBonePosePosition(idx, pos);
                 }
                 else
