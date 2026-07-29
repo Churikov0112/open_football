@@ -48,13 +48,24 @@ func _initialize() -> void:
 	if not vec_eq(anim.GetKeyPosition("player", 0), Vector3(0.0, 0.0, -0.09)):
 		print("CHECK FAIL: player@0 → ", anim.GetKeyPosition("player", 0)); ok = false
 
+	# Сброс состояния: повторный LoadFromFile на ТОМ ЖЕ экземпляре не должен домешивать
+	# треки/кадры/ключи предыдущего клипа. 000.anim (37 — макс. ключ → frameCount 38) больше
+	# 045.anim (24 → 25), так что несброшенный frameCount тоже поймался бы здесь.
+	if not anim.LoadFromFile("res://assets/gpf/animations/ballcontrol/idle/000.anim"):
+		print("CHECK FAIL: LoadFromFile 000.anim (повторно на том же экземпляре)"); ok = false
+	if anim.GetTrackCount() != 14:
+		print("CHECK FAIL: trackCount после повторного LoadFromFile → ", anim.GetTrackCount()); ok = false
+	if anim.GetFrameCount() != 38:
+		print("CHECK FAIL: frameCount 000 → ", anim.GetFrameCount()); ok = false
+	var la_frames_2: Array = anim.GetKeyFrames("left_ankle")
+	if la_frames_2 != [0, 12, 26, 33, 37]:
+		print("CHECK FAIL: left_ankle keyframes после повторного LoadFromFile → ", la_frames_2); ok = false
+
 	# Смоук по всему корпусу .anim (без .anim.util): каждый файл грузится, кадры есть,
-	# 14 треков. templates/ проверены отдельно эмпирически (см. отчёт задачи 2) — на всём
-	# корпусе (293 файла) исключений не нашлось, все дают ровно 14; отдельный счётчик
-	# templates/ оставлен на случай, если новые ассеты это когда-нибудь нарушат.
+	# ровно 14 треков — на всём корпусе (293 файла, включая templates/) эмпирически
+	# подтверждено, исключений нет.
 	var corpus_files := _find_anim_files("res://assets/gpf/animations")
 	var corpus_checked := 0
-	var templates_nonstandard: Array = []
 	for path in corpus_files:
 		var a = AnimScript.new()
 		if not a.LoadFromFile(path):
@@ -63,16 +74,9 @@ func _initialize() -> void:
 		if a.GetFrameCount() <= 0:
 			print("CHECK FAIL: frameCount <= 0 → ", path); ok = false
 		if a.GetTrackCount() != 14:
-			if path.begins_with("res://assets/gpf/animations/templates/"):
-				templates_nonstandard.append([path, a.GetTrackCount()])
-			else:
-				print("CHECK FAIL: trackCount != 14 → ", path, " (", a.GetTrackCount(), ")"); ok = false
+			print("CHECK FAIL: trackCount != 14 → ", path, " (", a.GetTrackCount(), ")"); ok = false
 		corpus_checked += 1
-	if templates_nonstandard.size() > 0:
-		print("INFO: templates/ с нестандартным числом треков (исключение из правила 14): ",
-			templates_nonstandard)
-	print("INFO: корпус .anim проверен: ", corpus_checked, " файлов, templates-исключений: ",
-		templates_nonstandard.size())
+	print("INFO: корпус .anim проверен: ", corpus_checked, " файлов")
 
 	# Негатив: несуществующий путь.
 	var missing = AnimScript.new()
@@ -82,6 +86,8 @@ func _initialize() -> void:
 	# Негатив: битый файл (мусорная строка без нужных токенов).
 	var bad_path := "user://gpf_bad_test.anim"
 	var bad_f := FileAccess.open(bad_path, FileAccess.WRITE)
+	if bad_f == null:
+		print("CHECK FAIL: user:// недоступен"); quit(1); return
 	bad_f.store_line("body,abc,1,2")
 	bad_f.close()
 	var bad = AnimScript.new()
