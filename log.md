@@ -251,3 +251,26 @@ AnimCollection → варпинг → smuggle + физика мяча → сло
 `[dotnet] project/assembly_name`. `dotnet build` зелёный (0 warn / 0 err), артефакты уходят в
 `.godot/mono/temp/` (уже под gitignore). C#-кода пока нет — фундамент под фазу 1 (лаб-сцена +
 палочник + импортёр `.anim`). Роадмап: spec 2026-07-29.
+
+## [2026-07-29] feat | Порт GameplayFootball — фаза 1 готова (датасет + C#-ядро + лаб-сцена + палочник)
+
+Первая веха порта ядра GameplayFootball закрыта и принята визуально человеком. Датасет — 293 файла
+`.anim` (+3 `.anim.util`) из оригинала (Apache 2.0) в `assets/gpf/animations/**`, read-only. C#-ядро
+`src/gpf/`: `Gpf.Animation` — парсер трёхфазного формата `.anim` (CSV-треки → extension-касания →
+XML-хвост) + интерполяция кадра 1:1 с `animation.cpp` (slerp между ключами, нормализованный lerp
+субкадра, экстраполяция за концом клипа с `bias>1`); `Gpf.QuatUtil` — кватернионная математика порта
+(не заменена на Godot `Quaternion.Slerp` намеренно); `Gpf.SkeletonBuilder` — утилитарный 14-костный
+`Skeleton3D` 1:1 `player.object` + базис конверсии осей `GpfSpace` (их Z-вверх/−Y-вперёд → Godot,
+`det=+1`, ротация не зеркало); `Gpf.AnimationApplier` — применение сэмпла кадра на `Skeleton3D` (порт
+`Animation::Apply`, несглаженный путь). Лаб-сцена `scenes/lab/anim_lab.tscn` + `src/lab/` (`LabMain`,
+`StickmanRenderer`) — палочник (левая сторона красная/правая синяя), листалка клипов стрелками,
+маркеры касаний мяча, фикс-тик 100 Гц (только в лабе). 5 headless-тестов `tests/check_gpf_*.gd`
+(parse/sample/meta/skeleton/apply) зелёные, обе стандартные headless-валидации и `dotnet build` без
+регрессий. Приёмка человеком по чек-листу (шаг игры, сгиб колена/локтя назад/вперёд правильный, стопы
+на полу, маркер касания на месте, вертикаль) — пройдена. Ревью в процессе поймало и закрыло два гэпа
+плана: сентинел `timeOffset_ms == -1` (не был предусмотрен планом, найден по коду оригинала — bias 0.5,
+а не клампованный 0) и отсутствие `_touches.Clear()` в `FootballAnimationExtension::Load`-порту
+(несколько `extension,football`-строк в одном файле иначе домешивали бы касания предыдущей). Отложено
+до фазы 2: `Mirror`/автогенерация вариаций/контекстный выбор клипа (`AnimCollection`), нормализация
+`*direction`-тегов при загрузке, `position.Rotate2D(baseRot)` для корня. См.
+[[порт-gameplayfootball]], [[открытые-вопросы]].

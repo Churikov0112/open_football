@@ -76,6 +76,13 @@ PAGES = {
     # --- камера / константы ---
     "match_camera.gd":        "поле-и-камера",
     "football_constants.gd":  "константы",
+    # --- порт GameplayFootball (C#) ---
+    "Animation.cs":         "порт-gameplayfootball",
+    "QuatUtil.cs":          "порт-gameplayfootball",
+    "SkeletonBuilder.cs":   "порт-gameplayfootball",
+    "AnimationApplier.cs":  "порт-gameplayfootball",
+    "LabMain.cs":           "порт-gameplayfootball",
+    "StickmanRenderer.cs":  "порт-gameplayfootball",
 }
 
 def main():
