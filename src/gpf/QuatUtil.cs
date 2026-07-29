@@ -6,7 +6,8 @@ namespace Gpf
     // Порт кватернионной математики Blunted2 (src/base/math/quaternion.cpp).
     // НЕ заменять на Godot Slerp: оригинал допускает bias>1 (экстраполяция, animation.cpp:277)
     // и мы обязаны сохранить поведение 1:1.
-    public static class QuatUtil
+    // RefCounted (не static class) — чтобы GDScript мог звать статические методы через load().
+    public partial class QuatUtil : RefCounted
     {
         // quaternion.cpp:426 MakeSameNeighborhood — вернуть q в полусфере reference.
         public static Quaternion SameNeighborhood(Quaternion q, Quaternion reference)
@@ -46,5 +47,40 @@ namespace Gpf
             => new Quaternion(
                 a.X + (b.X - a.X) * bias, a.Y + (b.Y - a.Y) * bias,
                 a.Z + (b.Z - a.Z) * bias, a.W + (b.W - a.W) * bias);
+
+        // quaternion.cpp:197-226. ВНИМАНИЕ: перестановка индексов оригинала — x=elements[0],
+        // y=elements[2], z=elements[1]. НЕ заменять на Godot GetEuler (другая конвенция).
+        public static void GetAngles(Quaternion q, out float x, out float y, out float z)
+        {
+            float ex = q.X, ey = q.Z, ez = q.Y, ew = q.W; // el[0], el[2], el[1], el[3]
+            float singularityTest = ex * ey + ez * ew;
+            if (singularityTest > 0.49999f || singularityTest < -0.49999f)
+            {
+                if (singularityTest > 0) { z = 2f * Mathf.Atan2(ex, ez); y = Mathf.Pi * 0.5f; }
+                else { z = -2f * Mathf.Atan2(ex, ez); y = -Mathf.Pi * 0.5f; }
+                x = 0;
+                return;
+            }
+            float sqx = ex * ex, sqy = ey * ey, sqz = ez * ez;
+            z = Mathf.Atan2(2f * ey * ew - 2f * ex * ez, 1f - 2f * sqy - 2f * sqz);
+            y = Mathf.Asin(2f * ex * ey + 2f * ez * ew);
+            x = Mathf.Atan2(2f * ex * ew - 2f * ey * ez, 1f - 2f * sqx - 2f * sqz);
+        }
+
+        // Мост-обёртка для GDScript-тестов (out-параметры через мост не ходят).
+        public static Vector3 GetAnglesVec(Quaternion q)
+        {
+            GetAngles(q, out float x, out float y, out float z);
+            return new Vector3(x, y, z);
+        }
+
+        // quaternion.cpp:284-296 (эквивалент конструктора Godot Quaternion(axis, angle);
+        // держим свою обёртку, чтобы код порта читался как оригинал).
+        public static Quaternion AngleAxis(float angle, Vector3 axis)
+        {
+            float half = 0.5f * angle;
+            float s = Mathf.Sin(half);
+            return new Quaternion(s * axis.X, s * axis.Y, s * axis.Z, Mathf.Cos(half));
+        }
     }
 }
