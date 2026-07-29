@@ -82,9 +82,12 @@ solution `OpenFootball.sln`); существующий GDScript **не** пер�
 - **Мост не переносит C#-дефолт-аргументы** (`default_args` на GDScript-стороне пуст) — `AnimationApplier
   .Apply(skel, anim, frame, offset, noPos: bool = false, baseRotZ: float = 0f)` из GDScript зовётся
   только полным списком из 6 аргументов, иначе parse error.
-- **`Gpf.Animation` затеняет `Godot.Animation`** при `using Godot;` вне `namespace Gpf` — новые
-  C#-файлы порта, ссылающиеся на тип клипа из другого неймспейса (как `src/lab/LabMain.cs`), обязаны
-  писать полное `Gpf.Animation`; короткое `Animation` резолвится в импортированный `Godot.Animation`.
+- **`Gpf.Animation` может быть затенено `Godot.Animation`** при `using Godot;` — но только в
+  C#-файлах ВНЕ `namespace Gpf` и его вложенных подпространств. Поиск типа в C# сначала обходит
+  объемлющие неймспейсы изнутри наружу и лишь потом — using-директивы, поэтому внутри `Gpf`/`Gpf.Lab`
+  (как `src/lab/LabMain.cs`) голое `Animation` и так резолвится в `Gpf.Animation` — риска нет
+  (проверено минимальной репродукцией). Риск реален для будущего C#-кода в других слоях (например,
+  gameplay) с `using Godot;` без `using Gpf;` — там пиши полное `Gpf.Animation`.
 
 ## Что НЕ портировано в фазе 1
 
@@ -135,9 +138,13 @@ HUD (`CanvasLayer`) печатает имя клипа, `type`, `frameCount`, т
 - `check_gpf_anim_sample.gd` — интерполяция: точный ключ, lerp позиции корня, slerp между ключами,
   субкадровый lerp+normalize, сентинел `timeOffset=-1`, края (`frame<=0`, экстраполяция за концом клипа,
   трек, кончившийся раньше `frameCount`).
-- `check_gpf_anim_meta.gd` — метаданные: касания (кадр+позиция, сортировка по кадру при нескольких
-  extension-строках), сброс касаний/переменных при повторной загрузке, `GetVariable`/`GetAnimType`,
-  выход за границы (`GetTouchFrame`/`GetTouchPosition` вне диапазона), битый XML-хвост → `false`.
+- `check_gpf_anim_meta.gd` — метаданные: касания (кадр+позиция, сортировка по кадру внутри одной
+  extension-строки с несколькими касаниями в обратном файловом порядке — сценарий нескольких
+  отдельных extension-строк в одном файле тестом не покрыт, по коду там last-wins, см. «Формат
+  `.anim`» выше), сброс касаний при повторной загрузке (пиннится тестом), обновление
+  `GetAnimType()`/`GetVariable()` при повторной загрузке (пиннится только перезапись `type`; сброс
+  протухшего тега вроде `baseanim` не проверен), выход за границы (`GetTouchFrame`/`GetTouchPosition`
+  вне диапазона), битый XML-хвост → `false`.
 - `check_gpf_skeleton.gd` — 14 костей, иерархия родителей, рест-позы 1:1 `player.object`, базис
   `GpfSpace` (det=+1, «их-вперёд»/«их-верх» → ожидаемые Godot-оси).
 - `check_gpf_apply.gd` — `Apply()`: ротация джойнта == ключ клипа, позиция корня, глобальная поза
