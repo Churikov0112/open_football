@@ -48,5 +48,66 @@ func _initialize() -> void:
 	if not vec_eq(anim.GetKeyPosition("player", 0), Vector3(0.0, 0.0, -0.09)):
 		print("CHECK FAIL: player@0 → ", anim.GetKeyPosition("player", 0)); ok = false
 
+	# Смоук по всему корпусу .anim (без .anim.util): каждый файл грузится, кадры есть,
+	# 14 треков. templates/ проверены отдельно эмпирически (см. отчёт задачи 2) — на всём
+	# корпусе (293 файла) исключений не нашлось, все дают ровно 14; отдельный счётчик
+	# templates/ оставлен на случай, если новые ассеты это когда-нибудь нарушат.
+	var corpus_files := _find_anim_files("res://assets/gpf/animations")
+	var corpus_checked := 0
+	var templates_nonstandard: Array = []
+	for path in corpus_files:
+		var a = AnimScript.new()
+		if not a.LoadFromFile(path):
+			print("CHECK FAIL: LoadFromFile корпус → ", path); ok = false
+			continue
+		if a.GetFrameCount() <= 0:
+			print("CHECK FAIL: frameCount <= 0 → ", path); ok = false
+		if a.GetTrackCount() != 14:
+			if path.begins_with("res://assets/gpf/animations/templates/"):
+				templates_nonstandard.append([path, a.GetTrackCount()])
+			else:
+				print("CHECK FAIL: trackCount != 14 → ", path, " (", a.GetTrackCount(), ")"); ok = false
+		corpus_checked += 1
+	if templates_nonstandard.size() > 0:
+		print("INFO: templates/ с нестандартным числом треков (исключение из правила 14): ",
+			templates_nonstandard)
+	print("INFO: корпус .anim проверен: ", corpus_checked, " файлов, templates-исключений: ",
+		templates_nonstandard.size())
+
+	# Негатив: несуществующий путь.
+	var missing = AnimScript.new()
+	if missing.LoadFromFile("res://assets/gpf/animations/__does_not_exist__.anim"):
+		print("CHECK FAIL: LoadFromFile на несуществующем пути вернул true"); ok = false
+
+	# Негатив: битый файл (мусорная строка без нужных токенов).
+	var bad_path := "user://gpf_bad_test.anim"
+	var bad_f := FileAccess.open(bad_path, FileAccess.WRITE)
+	bad_f.store_line("body,abc,1,2")
+	bad_f.close()
+	var bad = AnimScript.new()
+	if bad.LoadFromFile(bad_path):
+		print("CHECK FAIL: LoadFromFile на битом файле вернул true"); ok = false
+	DirAccess.remove_absolute(bad_path)
+
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)
+
+func _find_anim_files(dir_path: String) -> Array:
+	var result: Array = []
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
+		return result
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while entry != "":
+		if entry == "." or entry == "..":
+			entry = dir.get_next()
+			continue
+		var full_path := dir_path.path_join(entry)
+		if dir.current_is_dir():
+			result.append_array(_find_anim_files(full_path))
+		elif entry.ends_with(".anim"):
+			result.append(full_path)
+		entry = dir.get_next()
+	dir.list_dir_end()
+	return result

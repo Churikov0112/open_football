@@ -1,4 +1,5 @@
 using Godot;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 
@@ -49,16 +50,35 @@ namespace Gpf
         }
 
         public Quaternion GetKeyRotation(string nodeName, int frame)
-            => FindTrack(nodeName)!.Keys[frame].Orientation;
+        {
+            var track = FindTrack(nodeName);
+            if (track == null)
+            {
+                GD.PushError($"Gpf.Animation: нет трека {nodeName}");
+                return Quaternion.Identity;
+            }
+            return track.Keys[frame].Orientation;
+        }
 
         public Vector3 GetKeyPosition(string nodeName, int frame)
-            => FindTrack(nodeName)!.Keys[frame].Position;
+        {
+            var track = FindTrack(nodeName);
+            if (track == null)
+            {
+                GD.PushError($"Gpf.Animation: нет трека {nodeName}");
+                return Vector3.Zero;
+            }
+            return track.Keys[frame].Position;
+        }
 
-        private NodeAnimation FindTrack(string nodeName)
+        private NodeAnimation? FindTrack(string nodeName)
             => _tracks.Find(t => t.NodeName == nodeName);
 
         public bool LoadFromFile(string resPath)
         {
+            _tracks.Clear();
+            _frameCount = 0;
+
             using var f = FileAccess.Open(resPath, FileAccess.ModeFlags.Read);
             if (f == null)
             {
@@ -80,10 +100,20 @@ namespace Gpf
             int cursor = 0;
             for (; cursor < lines.Count; cursor++)
             {
-                if (lines[cursor].StartsWith("extension") || lines[cursor].StartsWith("<")) break;
+                string stripped = lines[cursor].StripEdges();
+                if (stripped.StartsWith("extension") || stripped.StartsWith("<")) break;
                 csv.Add(lines[cursor].Split(','));
             }
-            LoadData(csv);
+
+            try
+            {
+                LoadData(csv);
+            }
+            catch (Exception e) when (e is FormatException or IndexOutOfRangeException or OverflowException)
+            {
+                GD.PushError($"Gpf.Animation: битый файл {resPath}: {e.Message}");
+                return false;
+            }
 
             // extension-строки и XML-хвост подключаются в задаче 4.
             return _tracks.Count > 0;
