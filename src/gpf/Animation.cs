@@ -37,6 +37,10 @@ namespace Gpf
         private int _frameCount;
         private string _name = "";
 
+        // e_Foot (animation.hpp:41-44): 0 left / 1 right. Дефолт right (animation.cpp:29):
+        // «все клипы начинают движение с правой ноги, если не отзеркалены».
+        private int _currentFoot = 1;
+
         public string GetName() => _name;
         public int GetFrameCount() => _frameCount;
         public int GetTrackCount() => _tracks.Count;
@@ -325,7 +329,9 @@ namespace Gpf
                     _variables[child.Name] = child.InnerText.Trim();
         }
 
-        private void SetKeyFrame(string nodeName, int frame, Quaternion orientation, Vector3 position)
+        // Порт Animation::SetKeyFrame (animation.cpp:122-158). Ключ на существующем кадре —
+        // замена, не дубликат (SortedDictionary по индексатору делает ровно это).
+        public void SetKeyFrame(string nodeName, int frame, Quaternion orientation, Vector3 position)
         {
             var track = FindTrack(nodeName);
             if (track == null)
@@ -335,7 +341,111 @@ namespace Gpf
             }
             track.Keys[frame] = new KeyFrame { Orientation = orientation, Position = position };
             if (frame >= _frameCount) _frameCount = frame + 1; // animation.cpp:123
+            DirtyCache();
         }
+
+        public int GetCurrentFootId() => _currentFoot;
+        public void SetCurrentFootId(int id) => _currentFoot = id;
+
+        public void SetName(string name) => _name = name;
+
+        // Порт SetVariable (animation.cpp:1340-1356): у нас один словарь вместо XMLTree+variableCache.
+        public void SetVariable(string name, string value) => _variables[name] = value;
+
+        // TODO(задача 3): кэш дескрипторов (скорости/углы) появляется в следующей задаче; пока noop.
+        public void DirtyCache() { }
+
+        // Порт конструктора копии Animation (animation.cpp:34-85). Extensions у нас интегрированы
+        // в сам класс, поэтому `_touches` копируются глубоко — строже shallow-копии оригинала
+        // (animation.cpp:43-44), что безопаснее для Mirror/Shift над клоном.
+        public Animation Clone()
+        {
+            var dst = new Animation { _name = _name, _frameCount = _frameCount, _currentFoot = _currentFoot };
+            foreach (var track in _tracks)
+            {
+                var t = new NodeAnimation { NodeName = track.NodeName };
+                foreach (var kv in track.Keys) t.Keys[kv.Key] = kv.Value; // KeyFrame — struct, копия по значению
+                dst._tracks.Add(t);
+            }
+            foreach (var kv in _touches) dst._touches[kv.Key] = kv.Value;
+            foreach (var kv in _variables) dst._variables[kv.Key] = kv.Value; // шов 4: enumerator не нужен
+            return dst;
+        }
+
+        // Порт Animation::Shift (animation.cpp:723-787). Поддержан только offset ±1 — как в оригинале
+        // («todo: offset does not yet work» для остальных). Касания сдвигаются синхронно (шов 2;
+        // extension->Shift, animation.cpp:782-786 + footballanimationextension.cpp:19-47).
+        public void Shift(int fromFrame, int offset)
+        {
+            if (offset == 1)
+            {
+                bool somethingShifted = false;
+                foreach (var track in _tracks)
+                {
+                    var newKeys = new SortedDictionary<int, KeyFrame>();
+                    foreach (var kv in track.Keys)
+                    {
+                        int frameNum = kv.Key;
+                        if (kv.Key >= fromFrame) { frameNum++; somethingShifted = true; }
+                        newKeys[frameNum] = kv.Value;
+                    }
+                    track.Keys.Clear();
+                    foreach (var kv in newKeys) track.Keys[kv.Key] = kv.Value;
+                }
+                if (somethingShifted) { _frameCount++; DirtyCache(); }
+            }
+            if (offset == -1)
+            {
+                bool somethingShifted = false;
+                foreach (var track in _tracks)
+                {
+                    var newKeys = new SortedDictionary<int, KeyFrame>();
+                    foreach (var kv in track.Keys)
+                    {
+                        int frameNum = kv.Key;
+                        if (kv.Key != fromFrame) // ключ на fromFrame выбрасывается (animation.cpp:764)
+                        {
+                            if (kv.Key > fromFrame) { frameNum--; somethingShifted = true; }
+                            newKeys[frameNum] = kv.Value;
+                        }
+                    }
+                    track.Keys.Clear();
+                    foreach (var kv in newKeys) track.Keys[kv.Key] = kv.Value;
+                }
+                if (somethingShifted) { _frameCount--; DirtyCache(); }
+            }
+
+            // Касания — те же правила сдвига (footballanimationextension.cpp:19-47)
+            var newTouches = new SortedDictionary<int, Vector3>();
+            foreach (var kv in _touches)
+            {
+                int frameNum = kv.Key;
+                if (offset == 1) { if (kv.Key >= fromFrame) frameNum++; newTouches[frameNum] = kv.Value; }
+                else if (offset == -1)
+                {
+                    if (kv.Key == fromFrame) continue;
+                    if (kv.Key > fromFrame) frameNum--;
+                    newTouches[frameNum] = kv.Value;
+                }
+                // Расхождение с оригиналом (осознанное): при offset вне ±1 C++-extension присваивает
+                // пустой newAnimation и ТЕРЯЕТ все касания (footballanimationextension.cpp:21,45),
+                // хотя ключи клипа при этом не трогаются. Недостижимо — единственный вызов Shift
+                // в оригинале идёт с offset=1 (animcollection.cpp:1060); мы сохраняем касания.
+                else newTouches[frameNum] = kv.Value;
+            }
+            _touches.Clear();
+            foreach (var kv in newTouches) _touches[kv.Key] = kv.Value;
+        }
+
+        // Доступ для AnimCollection/генератора клипов (задачи 5-6) — внутри одной сборки.
+        internal SortedDictionary<int, KeyFrame> TrackKeys(int i) => _tracks[i].Keys;
+        internal void ClearTrackKeys(int i) => _tracks[i].Keys.Clear();
+        internal SortedDictionary<int, Vector3> Touches => _touches;
+        internal Dictionary<string, string> Variables => _variables;
+
+        internal void GetInterpolatedValuesAt(int trackIndex, int frame,
+                                              out Quaternion orientation, out Vector3 position)
+            => GetInterpolatedValues(_tracks[trackIndex].Keys, frame, out orientation, out position);
 
         private static float ParseF(string s) => float.Parse(s, CultureInfo.InvariantCulture);
     }
