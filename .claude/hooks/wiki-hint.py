@@ -83,6 +83,12 @@ PAGES = {
     "AnimationApplier.cs":  "порт-gameplayfootball",
     "LabMain.cs":           "порт-gameplayfootball",
     "StickmanRenderer.cs":  "порт-gameplayfootball",
+    "BluntMath.cs":            "порт-gameplayfootball",
+    "Velo.cs":                 "порт-gameplayfootball",
+    "AnimCollection.cs":       "порт-gameplayfootball",
+    "CrudeSelectionQuery.cs":  "порт-gameplayfootball",
+    "AnimSelector.cs":         "порт-gameplayfootball",
+    "WalkLabMain.cs":          "порт-gameplayfootball",
 }
 
 def main():
