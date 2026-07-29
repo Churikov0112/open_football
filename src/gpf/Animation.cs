@@ -269,6 +269,9 @@ namespace Gpf
                 return false;
             }
 
+            NormalizeDirectionTags();     // animation.cpp:1157-1179 (шов 3)
+            if (_tracks.Count >= 2) ConvertToStartFacingForwardIfIdle(); // animation.cpp:1196 (шов 2)
+
             return _tracks.Count > 0;
         }
 
@@ -322,10 +325,9 @@ namespace Gpf
         }
 
         // XML-хвост: плоские теги верхнего уровня → словарь тег → тримленный текст.
-        // Расхождение с оригиналом: при загрузке animation.cpp:1157-1192 нормализует (нормирует вектор)
-        // значения тегов bumpdirection/balldirection/incomingballdirection и кладёт в variableCache уже
-        // нормализованными. Здесь GetVariable отдаёт сырой текст тега — нормализация отложена до фазы 2
-        // (AnimCollection), зафиксировано в docs/wiki/открытые-вопросы.md.
+        // Нормализация тегов bumpdirection/balldirection/incomingballdirection (animation.cpp:1157-1179)
+        // выполняется отдельно в NormalizeDirectionTags() уже после разбора всего файла — как в
+        // Animation::Load, где нормализация идёт перед созданием variableCache.
         private void LoadXmlTail(string xml)
         {
             if (xml.Trim().Length == 0) return;
@@ -758,6 +760,139 @@ namespace Gpf
             }
             _touches.Clear();
             foreach (var kv in newTouches) _touches[kv.Key] = kv.Value;
+        }
+
+        // Порт Animation::Mirror (animation.cpp:1246-1313) + зеркало касаний
+        // (footballanimationextension.cpp:59-67) — extensions у нас интегрированы (шов 2).
+        public void Mirror()
+        {
+            _name += "_mirror";
+            _currentFoot = _currentFoot == 1 ? 0 : 1;
+
+            // swap треков left* ↔ right* (animation.cpp:1250-1269)
+            for (int i = 0; i < _tracks.Count; i++)
+            {
+                if (!_tracks[i].NodeName.StartsWith("left")) continue;
+                string needle = "right" + _tracks[i].NodeName.Substring(4);
+                for (int j = 0; j < _tracks.Count; j++)
+                {
+                    if (_tracks[j].NodeName != needle) continue;
+                    (_tracks[i].Keys, _tracks[j].Keys) = (_tracks[j].Keys, _tracks[i].Keys);
+                    break;
+                }
+            }
+
+            // негация: root X, у джойнтов — Y/Z кватерниона (animation.cpp:1271-1284)
+            for (int i = 0; i < _tracks.Count; i++)
+            {
+                var newKeys = new SortedDictionary<int, KeyFrame>();
+                foreach (var kv in _tracks[i].Keys)
+                {
+                    var k = kv.Value;
+                    if (i == 0) k.Position = new Vector3(-k.Position.X, k.Position.Y, k.Position.Z);
+                    else k.Orientation = new Quaternion(k.Orientation.X, -k.Orientation.Y,
+                                                        -k.Orientation.Z, k.Orientation.W);
+                    newKeys[kv.Key] = k;
+                }
+                _tracks[i].Keys.Clear();
+                foreach (var kv in newKeys) _tracks[i].Keys[kv.Key] = kv.Value;
+            }
+
+            // касания: X-негация (footballanimationextension.cpp:59-67)
+            var mirroredTouches = new SortedDictionary<int, Vector3>();
+            foreach (var kv in _touches)
+                mirroredTouches[kv.Key] = new Vector3(-kv.Value.X, kv.Value.Y, kv.Value.Z);
+            _touches.Clear();
+            foreach (var kv in mirroredTouches) _touches[kv.Key] = kv.Value;
+
+            // значения переменных left↔right (animation.cpp:1293-1303)
+            foreach (string key in new List<string>(_variables.Keys))
+            {
+                string v = _variables[key];
+                if (v.StartsWith("left")) _variables[key] = "right" + v.Substring(4);
+                else if (v.StartsWith("right")) _variables[key] = "left" + v.Substring(5);
+            }
+
+            // direction-теги: X-негация (animation.cpp:1305-1310). В оригинале SetVariable зовётся
+            // безусловно (пустой тег станет "0.000000, 0.000000, 0.000000") — bug-for-bug.
+            foreach (string tag in new[] { "balldirection", "incomingballdirection", "bumpdirection" })
+            {
+                Vector3 v = GetVariable(tag) != ""
+                    ? BluntMath.GetVectorFromString(GetVariable(tag)) * new Vector3(-1, 1, 1)
+                    : Vector3.Zero;
+                SetVariable(tag, BluntMath.GetStringFromVector(v));
+            }
+
+            DirtyCache();
+        }
+
+        // animation.cpp:1157-1179 (шов 3): три direction-тега нормализуются при загрузке,
+        // GetVariable дальше отдаёт уже нормализованный вектор.
+        // КОРРЕКЦИЯ ОТНОСИТЕЛЬНО БРИФА: сериализация тут — НЕ GetStringFromVector. Load оригинала
+        // (animation.cpp:1162/1170/1178) собирает строку инлайн: real_to_str(x)+","+real_to_str(y)+
+        // ","+real_to_str(z), где real_to_str = snprintf("%f") (utils.cpp:205-211) — БЕЗ пробелов
+        // после запятых. GetStringFromVector же даёт "%f, %f, %f" с пробелами (utils.cpp:213-219) и
+        // используется только в Convert/Mirror (:337-339,:1308-1310). Чтобы Load-формат был 1:1 с
+        // оригиналом ("0.000000,1.000000,0.000000"), формируем строку без пробелов.
+        private void NormalizeDirectionTags()
+        {
+            foreach (string tag in new[] { "bumpdirection", "balldirection", "incomingballdirection" })
+            {
+                if (!_variables.ContainsKey(tag)) continue;
+                Vector3 v = BluntMath.GetVectorFromString(_variables[tag]);
+                if (v.Length() > 0) v = v.Normalized();
+                _variables[tag] = string.Format(CultureInfo.InvariantCulture,
+                    "{0:F6},{1:F6},{2:F6}", v.X, v.Y, v.Z);
+            }
+        }
+
+        // Порт ConvertToStartFacingForwardIfIdle (animation.cpp:297-342): idle-входные клипы
+        // разворачиваются лицом вперёд; касания и direction-теги вращаются синхронно (шов 2).
+        private void ConvertToStartFacingForwardIfIdle()
+        {
+            float incomingBodyAngle = GetIncomingBodyAngle();
+            if (GetIncomingVelocity() >= 1.8f) return;
+
+            // позиции root (animation.cpp:305-311)
+            var rootKeys = new SortedDictionary<int, KeyFrame>();
+            foreach (var kv in _tracks[0].Keys)
+            {
+                var k = kv.Value;
+                k.Position = BluntMath.GetRotated2D(k.Position, -incomingBodyAngle);
+                rootKeys[kv.Key] = k;
+            }
+            _tracks[0].Keys.Clear();
+            foreach (var kv in rootKeys) _tracks[0].Keys[kv.Key] = kv.Value;
+
+            // ориентации body (animation.cpp:313-325)
+            Quaternion zRot = QuatUtil.AngleAxis(-incomingBodyAngle, new Vector3(0, 0, 1));
+            var bodyKeys = new SortedDictionary<int, KeyFrame>();
+            foreach (var kv in _tracks[1].Keys)
+            {
+                var k = kv.Value;
+                k.Orientation = zRot * k.Orientation;
+                bodyKeys[kv.Key] = k;
+            }
+            _tracks[1].Keys.Clear();
+            foreach (var kv in bodyKeys) _tracks[1].Keys[kv.Key] = kv.Value;
+
+            // касания (animation.cpp:327-331 → footballanimationextension.cpp:49-57)
+            var rotTouches = new SortedDictionary<int, Vector3>();
+            foreach (var kv in _touches)
+                rotTouches[kv.Key] = BluntMath.GetRotated2D(kv.Value, -incomingBodyAngle);
+            _touches.Clear();
+            foreach (var kv in rotTouches) _touches[kv.Key] = kv.Value;
+
+            // direction-теги (animation.cpp:333-339; безусловный SetVariable — bug-for-bug)
+            foreach (string tag in new[] { "balldirection", "incomingballdirection", "bumpdirection" })
+            {
+                Vector3 v = GetVariable(tag) != ""
+                    ? BluntMath.GetRotated2D(BluntMath.GetVectorFromString(GetVariable(tag)), -incomingBodyAngle)
+                    : Vector3.Zero;
+                SetVariable(tag, BluntMath.GetStringFromVector(v));
+            }
+
+            DirtyCache();
         }
 
         // Доступ для AnimCollection/генератора клипов (задачи 5-6) — внутри одной сборки.
