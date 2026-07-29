@@ -89,13 +89,66 @@ func _initialize() -> void:
 	# /5*100 → (3.4909, -14.9141), длина 15.317 → корзина 7.0.
 	var w = AnimScript.new()
 	w.LoadFromFile(WALK)
-	var warm: float = w.GetOutgoingVelocity() # прогреть кэш
-	if not feq(warm, 5.0):
-		print("CHECK FAIL: прогрев кэша → ", warm); ok = false
+	# прогреть ВСЕ три кэша, которые проверяем после записи
+	var warm: float = w.GetOutgoingVelocity()
+	var warm_tr: Vector3 = w.GetTranslation()
+	var warm_oa: float = w.GetOutgoingAngle()
+	if not feq(warm, 5.0) or not vec_eq(warm_tr, Vector3(-0.64, -0.84, 0.0)) or not feq(warm_oa, OUT_ANGLE):
+		print("CHECK FAIL: прогрев кэша → ", warm, " ", warm_tr, " ", warm_oa); ok = false
 	w.SetKeyFrame("player", 24, Quaternion.IDENTITY, Vector3(-0.30, -1.42, -0.08))
 	var ov2: float = w.GetOutgoingVelocity()
 	if not feq(ov2, 7.0):
-		print("CHECK FAIL: DirtyCache после SetKeyFrame → ", ov2); ok = false
+		print("CHECK FAIL: DirtyCache после SetKeyFrame (velocity) → ", ov2); ok = false
+	# translation = pos@24 - pos@0 = (-0.30 - 0, -1.42 - 0)
+	var tr2: Vector3 = w.GetTranslation()
+	if not vec_eq(tr2, Vector3(-0.30, -1.42, 0.0)):
+		print("CHECK FAIL: DirtyCache после SetKeyFrame (translation) → ", tr2); ok = false
+	# angle: atan2(-0.745703, 0.174545) = -1.3409680 → +2pi = 4.9423173 → FixAngle = 0.2299283
+	var oa2: float = w.GetOutgoingAngle()
+	if not feq(oa2, 0.2299283):
+		print("CHECK FAIL: DirtyCache после SetKeyFrame (angle) → ", oa2); ok = false
+
+	# ── Ветка ±180° в GetOutgoingAngle (animation.cpp:925-933) ──────────────────────────
+	# Синтетика: на копии walk/045 подменяем последний ключ root так, чтобы перемещение 19→24
+	# смотрело почти в +Y. Тогда a = GetAngle2D(delta) ≈ pi/2, FixAngle даёт |угол| > 0.95*pi
+	# и включается разруливание стороны по z-эйлеру ПОСЛЕДНЕГО ключа body.
+	# Знак берётся из СЫРОГО z (без ModulateIntoRange) — у walk/045 это -0.7853957, signSide = -1.
+	# key@19 = (-0.474545, -0.674297, ...), знаменатель 24-19 = 5, значит |delta|*20 = скорость.
+	for c in [
+		# [dx, dy, z-эйлер body@24 (NAN = не трогать), ожидаемый угол, подпись]
+		# a = atan2(0.249, 0.02) = 1.4906471 → FixAngle = +3.0614434 (> 0.95pi).
+		# signSide(+) != signSide(-0.785) → переброс: pi*0.99*signSide(z) = -3.1101767
+		[0.02, 0.249, NAN, -3.1101767, "переброс на сторону body (z<0, угол>0)"],
+		# a = atan2(0.249, -0.02) = 1.6509455 → FixAngle = -3.0614434 (< -0.95pi).
+		# signSide(-) == signSide(-0.785) → кламп, но |угол| < 0.99pi → значение проходит НАСКВОЗЬ.
+		# Именно этот случай отличает ветку «стороны совпали» от переброса.
+		[-0.02, 0.249, NAN, -3.0614434, "кламп сквозной (z<0, угол<0, |угол| < 0.99pi)"],
+		# a = atan2(0.249, -0.004) = 1.5868592 → FixAngle = -3.1255298 (за -0.99pi).
+		# Стороны совпали → кламп РЕАЛЬНО срезает до -0.99pi = -3.1101767.
+		[-0.004, 0.249, NAN, -3.1101767, "кламп кусает (z<0, угол<0, |угол| > 0.99pi)"],
+		# То же перемещение, что во второй строке, но body@24 развёрнут на +0.5 рад:
+		# signSide(-3.0614) != signSide(+0.5) → переброс: pi*0.99*(+1) = +3.1101767.
+		# Пара со второй строкой доказывает, что сторона берётся именно из body.
+		[-0.02, 0.249, 0.5, 3.1101767, "переброс на сторону body (z>0, угол<0)"],
+	]:
+		var dx: float = c[0]
+		var dy: float = c[1]
+		var zbody: float = c[2]
+		var want: float = c[3]
+		var label: String = c[4]
+		var b = AnimScript.new()
+		b.LoadFromFile(WALK)
+		b.SetKeyFrame("player", 24, Quaternion.IDENTITY, Vector3(-0.474545 + dx, -0.674297 + dy, -0.08))
+		if not is_nan(zbody):
+			# z-эйлер по QuatUtil.GetAngles для (0, 0, sin(t/2), cos(t/2)) равен ровно t
+			b.SetKeyFrame("body", 24, Quaternion(0.0, 0.0, sin(zbody * 0.5), cos(zbody * 0.5)), Vector3.ZERO)
+		# ветка ±180° живёт только при outgoing velocity >= 1.8 — держим 5.0
+		var bv: float = b.GetOutgoingVelocity()
+		if not feq(bv, 5.0):
+			print("CHECK FAIL: ±180° [", label, "] скорость вне ветки → ", bv); ok = false
+		var ba: float = b.GetOutgoingAngle()
+		if not feq(ba, want):
+			print("CHECK FAIL: ±180° [", label, "] угол → ", ba, " ждали ", want); ok = false
 
 	# GetOutgoingFootId (animation.cpp:1029-1052). Полная таблица ветвлений:
 	# нечётное число шагов меняет ногу, чётное — оставляет текущую.
