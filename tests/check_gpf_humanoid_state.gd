@@ -41,6 +41,9 @@ func _initialize() -> void:
 	var h0 = make_humanoid(HB, c, sel)
 	var idle_id: int = c.GetIdleMovementAnimID()
 	var idle_cache: Array = AC.BuildPositionCache(c.GetAnim(idle_id))
+	# до первого Tick noPos = false — дефолт конструктора AnimApplyBuffer (humanoidbase.hpp:139)
+	if h0.GetApplyNoPos():
+		print("CHECK FAIL: noPos == true сразу после ResetSituation (hpp:139 даёт false)"); ok = false
 	h0.Tick(fwd, 0.0, false, Vector3.ZERO)
 	if h0.GetCurrentAnimId() != idle_id:
 		print("CHECK FAIL: после Reset текущий клип ", h0.GetCurrentAnimId(), " != idle ", idle_id); ok = false
@@ -124,6 +127,52 @@ func _initialize() -> void:
 	# --- 4. apply-данные согласованы: noPos и позиция от startPos ---
 	if not h.GetApplyNoPos():
 		print("CHECK FAIL: apply без noPos при живом кэше positions"); ok = false
+
+	# --- 5. Data-pinned: лерп rotationSmuggleOffset наследника (humanoid.cpp:722-742) ---
+	# Для клипов после смены сверяем GetApplyOrientation() на кадре k с пересчётом формулы:
+	# startAngle + begin*(1-capped) + end*capped, capped = min(1, (k+1)/min(16, effective+1));
+	# 16 — beginRotationFrameCount (humanoid.cpp:724). startAngle на тике смены == spatial.Angle
+	# этого тика (:648-649); begin/end — через мост-геттеры.
+	var h5 = make_humanoid(HB, c, sel)
+	var dir_right: Vector3 = Vector3(0, -1, 0).rotated(Vector3(0, 0, 1), -0.5 * PI)
+	var pinned_any := false
+	var switches_seen := 0
+	var tt := 0
+	while switches_seen < 4 and tt < 2000 and ok:
+		var sw: bool = h5.Tick(dir_right, 8.0, true, h5.GetSpatialPosition() + dir_right * 10.0)
+		tt += 1
+		if not sw: continue
+		switches_seen += 1
+		var start_angle: float = h5.GetSpatialAngle()
+		var begin_s: float = h5.GetRotationSmuggleBegin()
+		var end_s: float = h5.GetRotationSmuggleEnd()
+		var eff: int = c.GetAnim(h5.GetCurrentAnimId()).GetEffectiveFrameCount()
+		if absf(begin_s) > 1.0e-6 or absf(end_s) > 1.0e-6:
+			pinned_any = true
+		# кадр 0 (тик смены) и дальше до кадра 17 (покрывает кап 16) либо до конца клипа
+		var k := 0
+		while ok:
+			var capped: float = minf(1.0, (k + 1) / float(mini(16, eff + 1)))
+			var expected_or: float = start_angle + begin_s * (1.0 - capped) + end_s * capped
+			if h5.GetApplyFrameNum() != k:
+				print("CHECK FAIL: apply-кадр ", h5.GetApplyFrameNum(), " != ", k); ok = false
+				break
+			if absf(h5.GetApplyOrientation() - expected_or) > 1.0e-4:
+				print("CHECK FAIL: apply-ориентация на кадре ", k, ": ",
+					h5.GetApplyOrientation(), " != формула ", expected_or); ok = false
+				break
+			if k >= 17:
+				break
+			var sw2: bool = h5.Tick(dir_right, 8.0, true, h5.GetSpatialPosition() + dir_right * 10.0)
+			tt += 1
+			if sw2:
+				switches_seen += 1
+				break # клип кончился раньше 18 кадров — захват завершён
+			k += 1
+	if switches_seen < 4 and ok:
+		print("CHECK FAIL: секция 5 — 4 смены клипа не случились за 2000 тиков"); ok = false
+	if not pinned_any:
+		print("CHECK FAIL: ни одна смена клипа не дала ненулевой rotationSmuggle"); ok = false
 
 	print("CHECK PASS" if ok else "CHECK FAIL")
 	quit(0 if ok else 1)

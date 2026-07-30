@@ -7,6 +7,11 @@ namespace Gpf
     // (:569-714, без ReQueue/Trip — в лабе только Switch на границе клипа), movement-ветка SelectAnim
     // (:1374-1601), CalculateOutgoingMovement (:1617-1620), CalculateSpatialState (:1622-1726),
     // CalculateFactualSpatialState (:1728-1737). Один тик = 10 мс = один кадр анимации.
+    // ВАЖНО: там, где наследник Humanoid переопределяет базу, портирован НАСЛЕДНИК — игроки
+    // инстанцируются как Humanoid (player.cpp:88), эталонный exe гоняет его путь (голый
+    // HumanoidBase — только судьи): rotation smuggle с 16-кадровым капом (humanoid.cpp:722-742)
+    // и «hax»-формула desiredBodyDirectionRel (humanoid.cpp:1664-1665). Порядок тика и
+    // apply-буфер у наследника совпадают с базой (humanoid.cpp:120-138, :270-271, :763-780).
     // Smuggle-поля (Action*/Movement*-офсеты и *Movement в SpatialState) до фазы 4 — нули,
     // но участвуют в формулах дословно.
     public partial class HumanoidBase : RefCounted
@@ -22,12 +27,16 @@ namespace Gpf
         // CS0162 unreachable code на живой сборке)
         private static readonly bool PreferCorrectVeloOverCorrectAngle = true;
 
+        // humanoid.cpp:64 (false) — участвует только в мёртвой для movement ветке touchFrame != -1
+        private static readonly bool AllowPreTouchRotationSmuggle = false;
+
         // Подмножество struct Anim (humanoidbase.hpp:85-112): только то, что нужно movement-пути.
         private class CurrentAnimState
         {
             public int Id = -1;
             public Animation Anim = null!;
             public int FrameNum;
+            public int TouchFrame = -1; // humanoidbase.hpp:97; для movement всегда -1 (до фазы 4)
             public List<Vector3> Positions = new();
             public float RotationSmuggleBegin, RotationSmuggleEnd, RotationSmuggleOffset;
             public Vector3 IncomingMovement, OutgoingMovement;
@@ -81,6 +90,7 @@ namespace Gpf
             // Clear при следующем выборе клипа стёр бы кэш коллекции)
             _current.Positions.AddRange(_anims.GetPositionCacheInternal(_current.Id));
             _current.FrameNum = 0;                          // вместо random :954 (см. выше)
+            _current.TouchFrame = -1;                       // :956
             _current.ActionSmuggleOffset = Vector3.Zero;        // :960
             _current.ActionSmuggleSustainOffset = Vector3.Zero; // :962
             _current.MovementSmuggleOffset = Vector3.Zero;      // :964
@@ -90,14 +100,17 @@ namespace Gpf
             _current.IncomingMovement = Vector3.Zero;       // :969
             _current.OutgoingMovement = Vector3.Zero;       // :970
 
-            // apply-буфер стартового состояния (до первого Tick) — аналог :996-1004
+            // apply-буфер стартового состояния (до первого Tick) — аналог :996-1004;
+            // noPos = false — дефолт конструктора AnimApplyBuffer (humanoidbase.hpp:139),
+            // ResetPosition его не трогает
             _applyFrameNum = 0;
             _applyPosition = position;
             _applyOrientation = angle;
-            _applyNoPos = true;
+            _applyNoPos = false;
         }
 
-        // Один тик — порядок Process (humanoidbase.cpp:569-714). Возвращает true при смене клипа.
+        // Один тик — порядок Process (humanoidbase.cpp:569-714; rotation smuggle — по наследнику
+        // humanoid.cpp:722-742). Возвращает true при смене клипа.
         public bool Tick(Vector3 desiredDirectionWorld, float desiredVelocityFloat,
                          bool useDesiredLookAt, Vector3 desiredLookAt)
         {
@@ -122,15 +135,40 @@ namespace Gpf
                 }
             }
 
-            // movement/rotation smuggle → apply-данные (:684-711)
-            // +1: влияем и на первый кадр; финиш при frameBias = 1.0 на предпоследнем кадре (:684-686)
-            float frameBias = (_current.FrameNum + 1)
-                / (float)(_current.Anim.GetEffectiveFrameCount() + 1);         // :687
-            _current.RotationSmuggleOffset = _current.RotationSmuggleBegin * (1.0f - frameBias)
-                + _current.RotationSmuggleEnd * frameBias;                     // :694-695
+            // rotation smuggle — блок НАСЛЕДНИКА Humanoid::Process (humanoid.cpp:722-742), НЕ базы
+            // (humanoidbase.cpp:684-695): игроки исполняют версию наследника с 16-кадровым капом
+            // ease-in; базовый незакапленный лерп гоняют только судьи.
+            int beginRotationFrameCount = 16; // humanoid.cpp:724 — после стольких кадров ease-in готов
+            float cappedFrameBias = Mathf.Min(1.0f, (_current.FrameNum + 1)
+                / (float)Mathf.Min(beginRotationFrameCount,
+                    _current.Anim.GetEffectiveFrameCount() + 1));              // :725
+            float beginFrameBias = cappedFrameBias;                            // :726
+            float endFrameBias = cappedFrameBias;                              // :727
+            if (_current.TouchFrame != -1) // :728 — мёртвая ветка для movement (touchFrame всегда -1)
+            {
+                // beginFrameBias идёт 0→1 за кадры 0..min(touchFrame, beginRotationFrameCount) (:729-730)
+                beginFrameBias = Mathf.Min(1.0f, (_current.FrameNum + 1)
+                    / (float)Mathf.Min(beginRotationFrameCount, _current.TouchFrame + 1));
+                if (!AllowPreTouchRotationSmuggle)                             // :731 (humanoid.cpp:64)
+                {
+                    if (_current.FrameNum > _current.TouchFrame)
+                    {
+                        // end-смаггл начинается после касания (:732-734)
+                        endFrameBias = (_current.FrameNum - _current.TouchFrame)
+                            / (float)(_current.Anim.GetEffectiveFrameCount() - _current.TouchFrame);
+                    }
+                    else
+                    {
+                        endFrameBias = 0.0f;                                   // :735-737 — до касания смаггла нет
+                    }
+                }
+            }
+            _current.RotationSmuggleOffset = _current.RotationSmuggleBegin * (1.0f - beginFrameBias)
+                + _current.RotationSmuggleEnd * endFrameBias;                  // :741-742
 
-            _applyFrameNum = _current.FrameNum;                                // :700
-            if (_current.Positions.Count > _current.FrameNum)                  // :702-705
+            // apply-данные — у наследника дословно как в базе (humanoid.cpp:763-780 == :700-711)
+            _applyFrameNum = _current.FrameNum;                                // :700 / humanoid.cpp:765
+            if (_current.Positions.Count > _current.FrameNum)                  // :702-705 / :767-772
             {
                 _applyPosition = _startPos + _current.ActionSmuggleOffset
                     + _current.ActionSmuggleSustainOffset + _current.MovementSmuggleOffset
@@ -138,7 +176,7 @@ namespace Gpf
                 _applyOrientation = _startAngle + _current.RotationSmuggleOffset; // :704
                 _applyNoPos = true;                                            // :705
             }
-            else                                                               // :706-711
+            else                                                               // :706-711 / :773-778
             {
                 _applyPosition = _startPos + _current.ActionSmuggleOffset
                     + _current.ActionSmuggleSustainOffset + _current.MovementSmuggleOffset; // :708
@@ -163,18 +201,22 @@ namespace Gpf
                 useDesiredLookAt, desiredLookAt);
             if (dataSet.Count == 0) return false;                              // :1510-1514
 
-            int selectedAnimID = dataSet[0];                                   // :1521
+            // desiredBodyDirectionRel — формула НАСЛЕДНИКА Humanoid::SelectAnim
+            // (humanoid.cpp:1664-1665), НЕ базы (humanoidbase.cpp:1529-1530): игроки исполняют
+            // Humanoid::SelectAnim. Отличия: упреждение движения на 0.1 с, нормализация ДО
+            // GetRotated2D, БЕЗ вычета nextAnim.GetTranslation(); todo-«hax» оригинала переносим
+            // bug-for-bug. Не зависит от выбранного клипа — считается до выбора, как в наследнике.
+            Vector3 desiredBodyDirectionRel = new Vector3(0, -1, 0);           // humanoid.cpp:1664
+            if (useDesiredLookAt)
+                desiredBodyDirectionRel = BluntMath.GetRotated2D(
+                    BluntMath.GetNormalized(
+                        desiredLookAt - (_spatial.Position + _spatial.Movement * 0.1f),
+                        new Vector3(0, -1, 0)),
+                    -_spatial.Angle);                                          // humanoid.cpp:1665
+
+            int selectedAnimID = dataSet[0];                                   // :1521 / humanoid.cpp:1671
             Animation nextAnim = _anims.GetAnim(selectedAnimID);               // :1522
             Vector3 desiredMovement = desiredDirectionWorld * desiredVelocityFloat; // :1523
-            Vector3 desiredBodyDirectionRel = new Vector3(0, -1, 0);           // :1529
-            if (useDesiredLookAt)
-                desiredBodyDirectionRel = BluntMath.GetNormalized(
-                    BluntMath.GetRotated2D(BluntMath.Get2D(desiredLookAt - _spatial.Position),
-                        -_spatial.Angle)
-                    - nextAnim.GetTranslation(), new Vector3(0, -1, 0));       // :1530
-            // ВЫБОР ФОРМУЛЫ: базовый класс :1529-1530 (с вычетом nextAnim.GetTranslation());
-            // в humanoid.cpp:1664-1665 наследник считает иначе («хаки» под мяч) — портируем базу,
-            // movement-путь лабы идёт через HumanoidBase::SelectAnim.
 
             // CalculatePhysicsVector (:1531) — член в C++, у нас отдельный объект с тем же состоянием
             _physics.SetSpatialState(_spatial.Position, _spatial.Angle, _spatial.DirectionVec,
@@ -188,6 +230,7 @@ namespace Gpf
             _current.Anim = nextAnim;                                          // :1572
             _current.Id = selectedAnimID;                                      // :1573
             _current.FrameNum = 0;                                             // :1575
+            _current.TouchFrame = -1;                                          // :1576 (touchFrame_tmp: movement не трогает, :1503)
             _current.RotationSmuggleBegin = Mathf.Clamp(
                 BluntMath.ModulateIntoRange(-Mathf.Pi, Mathf.Pi,
                     _spatial.RelBodyAngleNonquantized - nextAnim.GetIncomingBodyAngle())
@@ -359,5 +402,9 @@ namespace Gpf
         public Vector3 GetSpatialMovement() => _spatial.Movement;
         public Vector3 GetRelBodyDirectionVec() => _spatial.RelBodyDirectionVec;
         public int GetFoot() => _spatial.Foot;
+        // Мост для тестируемости лерпа rotation smuggle (humanoid.cpp:722-742): begin/end живут
+        // приватно в CurrentAnimState; тест пересчитывает формулу наследника по ним.
+        public float GetRotationSmuggleBegin() => _current.RotationSmuggleBegin;
+        public float GetRotationSmuggleEnd() => _current.RotationSmuggleEnd;
     }
 }
