@@ -7,11 +7,15 @@ namespace Gpf
     // (:569-714, без ReQueue/Trip — в лабе только Switch на границе клипа), movement-ветка SelectAnim
     // (:1374-1601), CalculateOutgoingMovement (:1617-1620), CalculateSpatialState (:1622-1726),
     // CalculateFactualSpatialState (:1728-1737). Один тик = 10 мс = один кадр анимации.
-    // ВАЖНО: там, где наследник Humanoid переопределяет базу, портирован НАСЛЕДНИК — игроки
-    // инстанцируются как Humanoid (player.cpp:88), эталонный exe гоняет его путь (голый
-    // HumanoidBase — только судьи): rotation smuggle с 16-кадровым капом (humanoid.cpp:722-742)
-    // и «hax»-формула desiredBodyDirectionRel (humanoid.cpp:1664-1665). Порядок тика и
-    // apply-буфер у наследника совпадают с базой (humanoid.cpp:120-138, :270-271, :763-780).
+    // ВАЖНО: игроки инстанцируются как Humanoid (player.cpp:88; голый HumanoidBase — судьи),
+    // поэтому по НАСЛЕДНИКУ портированы ровно два места: лерп rotationSmuggleOffset с
+    // 16-кадровым капом (humanoid.cpp:722-742) и «hax»-формула desiredBodyDirectionRel
+    // (humanoid.cpp:1664-1665). ОТБОР клипов при этом — по базе humanoidbase.cpp:1374-1496
+    // (AnimSelector, фаза 2), хотя Humanoid::SelectAnim переопределяет и его (ForceLinearity-флаги
+    // :1396-1397 у наследника false; bySide при useDesiredLookAt humanoid.cpp:1306-1311;
+    // двухнаборная lenient/strict цепочка :1386-1447) — расхождение с путём игроков
+    // задокументировано в docs/wiki/открытые-вопросы.md (фаза 3, задача 6). Порядок тика и
+    // startPos/startAngle наследника совпадают с базой (humanoid.cpp:120-138, :270-271).
     // Smuggle-поля (Action*/Movement*-офсеты и *Movement в SpatialState) до фазы 4 — нули,
     // но участвуют в формулах дословно.
     public partial class HumanoidBase : RefCounted
@@ -166,7 +170,10 @@ namespace Gpf
             _current.RotationSmuggleOffset = _current.RotationSmuggleBegin * (1.0f - beginFrameBias)
                 + _current.RotationSmuggleEnd * endFrameBias;                  // :741-742
 
-            // apply-данные — у наследника дословно как в базе (humanoid.cpp:763-780 == :700-711)
+            // apply-данные (:700-711; у наследника humanoid.cpp:763-780 та же логика, но ИНОЙ
+            // порядок слагаемых позиции: startPos + positions + смагглы (:769) против базы
+            // startPos + смагглы + positions (:703) — при нулевых смагглах численно одинаково,
+            // при ненулевых разойдётся на ULP; выровнять по наследнику в фазе 4)
             _applyFrameNum = _current.FrameNum;                                // :700 / humanoid.cpp:765
             if (_current.Positions.Count > _current.FrameNum)                  // :702-705 / :767-772
             {
