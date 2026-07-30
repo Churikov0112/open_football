@@ -94,6 +94,11 @@ namespace Gpf
         // (ball.hpp:67) вырезана вместе с Put-буферами
         public Vector3 GetPositionBuffer() => _positionBuffer;
 
+        // ball.hpp:100 orientationBuffer. В оригинале буфер уезжает в узел сцены внутри Put()
+        // (ball.cpp:589-599) — Put/TemporalSmoother вырезаны, поэтому ориентацию читает
+        // сцена-потребитель (лаба задачи 8), а не физика.
+        public Quaternion GetOrientationBuffer() => _orientationBuffer;
+
         // ball.cpp:91-103
         public void Touch(Vector3 target)
         {

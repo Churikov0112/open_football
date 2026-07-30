@@ -1122,6 +1122,25 @@ namespace Gpf
             return 0.0f;                                                       // :145
         }
 
+        // ---- Аксессоры для лаб-оркестратора коллизий (задача 8) ----
+        // Match::CheckBallCollisions (match.cpp:1943-1972) читает у players[i] ровно эти
+        // предикаты; в порте цикл по игрокам выполняет вызывающий (комментарий у ExecuteTouchTick),
+        // поэтому те же значения он обязан уметь достать. Логики здесь нет — только доступ.
+        public int GetCurrentFunctionType() => _current.FunctionType;   // player: GetCurrentFunctionType()
+        public bool GetHasPossession() => HasPossession();              // :1972 players[i]->HasPossession()
+        // HasUniquePossession (match.cpp:1972) — «мяч только у меня»; соперников в лабе нет,
+        // поэтому предикат совпадает с HasPossession. Матч-слой (задача 9+) разведёт их.
+        public bool GetHasUniquePossession() => HasPossession();
+        public long GetActualTimeMs() => _actualTimeMs;                 // match->GetActualTime_ms()
+        public float GetLastTouchBiasMs(int decayMs) => GetLastTouchBias(decayMs); // playerbase.cpp:141
+        // Player::TriggerControlledBallCollision (player.hpp) — вызывается из match.cpp:1998.
+        public void TriggerControlledBallCollision() => _controlledBallCollisionTriggered = true;
+        // Team::SetLastTouchPlayer(..., e_TouchType_Accidental) (match.cpp:2006 → team.cpp:241-248):
+        // player-часть уже есть (RegisterTouch), наружу её зовёт оркестратор по флагу коллайдера.
+        public void RegisterAccidentalTouch() => RegisterTouch(TouchTypeAccidental);
+        // touchPos текущего клипа (humanoidbase.hpp:98) — маркер приёмки «нога у мяча» в лабе.
+        public Vector3 GetCurrentTouchPos() => _current.TouchPos;
+
         // ---- GetBodyBallDistanceAdvantage (:1859-1997) ----
         // 1.0 == «дотягиваемся» (мяч внутри деформированной смаггл-зоны), 0.0 == deny.
         // Ассерты Z==0 оригинала (:1861-1862) не переносим; их семантику держит вызывающий код.
