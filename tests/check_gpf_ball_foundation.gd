@@ -27,6 +27,10 @@ func _initialize() -> void:
 	# Обе перестановки не гасят друг друга: круговой проход точен, только если вращение
 	# вокруг одной оси, а на смешанном расходится (перекрёстные члены с sin(bank/2)).
 	# Поэтому проверяем то, чем SetAngles является на самом деле.
+	# ВАЖНО: единственный вызов SetAngles в оригинале (ball.cpp:509-512) — это как раз пара
+	# GetAngles → масштабирование на timeStep → SetAngles над ОДНИМ кватернионом (интегрирование
+	# вращения мяча). То есть асимметрия входит в интегрирование вращения мяча и обязана быть
+	# воспроизведена задачей 2 — «починить» SetAngles до настоящей обратной нельзя.
 
 	# (а) независимая характеризация: SetAngles(X,Y,Z) == Ry(Y) * Rz(Z) * Rx(X)
 	#     (сверено численно с формулой C++; Godot-умножение кватернионов совпадает с
@@ -57,6 +61,24 @@ func _initialize() -> void:
 		print("CHECK FAIL: SetAngles стал обратной к GetAngles — расхождение с C++"); ok = false
 	if not feq(back.w, src.w, 1.0e-5) or not feq(back.x, src.x, 1.0e-5):
 		print("CHECK FAIL: w/x должны совпадать даже на смешанном (симметричны по h<->a)"); ok = false
+
+	# --- GetInverse (quaternion.cpp:159-168): деление на МАГНИТУДУ, а не на её квадрат ---
+	# Пин квирка оригинала: на НЕединичном кватернионе это не настоящая обратная.
+	# Ожидание перевычислено прямо из формулы C++: (-x,-y,-z,w) / |q|.
+	var unit_q: Quaternion = Q.AngleAxis(0.8, Vector3(0.2, -0.5, 0.84).normalized())
+	var nonunit := Quaternion(unit_q.x * 2.0, unit_q.y * 2.0, unit_q.z * 2.0, unit_q.w * 2.0)
+	var nu_mag: float = sqrt(nonunit.x * nonunit.x + nonunit.y * nonunit.y \
+		+ nonunit.z * nonunit.z + nonunit.w * nonunit.w) # == 2.0
+	var inv_expected := Quaternion(-nonunit.x / nu_mag, -nonunit.y / nu_mag, \
+		-nonunit.z / nu_mag, nonunit.w / nu_mag)
+	var inv_got: Quaternion = Q.GetInverse(nonunit)
+	if not inv_got.is_equal_approx(inv_expected):
+		print("CHECK FAIL: GetInverse(неединичный) = ", inv_got, " ожидалось conj/|q| = ", \
+			inv_expected); ok = false
+	# и это ровно НЕ настоящая обратная: та была бы conj/|q|^2, т.е. вдвое короче
+	if inv_got.is_equal_approx(Quaternion(inv_expected.x / nu_mag, inv_expected.y / nu_mag, \
+			inv_expected.z / nu_mag, inv_expected.w / nu_mag)):
+		print("CHECK FAIL: GetInverse стал настоящей обратной — расхождение с C++"); ok = false
 
 	# --- GetRotationTo (quaternion.cpp:403-406): q1.GetRotationTo(q2) * q1 == q2 ---
 	var q1: Quaternion = Q.AngleAxis(0.3, Vector3(0, 0, 1))
