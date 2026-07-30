@@ -121,6 +121,9 @@ namespace Gpf
         public bool Tick(Vector3 desiredDirectionWorld, float desiredVelocityFloat,
                          bool useDesiredLookAt, Vector3 desiredLookAt)
         {
+            // ШОВ match->GetActualTime_ms(): матчевое время тикает +10 мс на тик 100 Гц
+            // (поле — Humanoid.cs; потребитель — GetLastTouchBias, humanoid.cpp:2204)
+            _actualTimeMs += 10;
             CalculateSpatialState();                        // :585
             _spatial.PositionOffsetMovement = Vector3.Zero; // :586
             _current.FrameNum++;                            // :588

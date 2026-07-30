@@ -485,6 +485,27 @@ namespace Gpf
             _ => false,
         };
 
+        // Порт StringToFunctionType (gamedefines.cpp:112-127): строка типа клипа → e_FunctionType.
+        // «header» в цепочке оригинала отсутствует (как и в _CheckFunctionType) → FnNone.
+        // Потребитель — GetBestCheatableAnimID (humanoid.cpp:2016, фаза 4 задача 4).
+        public static int StringToFunctionType(string fun) => fun switch
+        {
+            "movement" => FnMovement,       // gamedefines.cpp:113
+            "ballcontrol" => FnBallControl, // :114
+            "trap" => FnTrap,               // :115
+            "shortpass" => FnShortPass,     // :116
+            "longpass" => FnLongPass,       // :117
+            "highpass" => FnHighPass,       // :118
+            "shot" => FnShot,               // :119
+            "deflect" => FnDeflect,         // :120
+            "catch" => FnCatch,             // :121
+            "interfere" => FnInterfere,     // :122
+            "trip" => FnTrip,               // :123
+            "sliding" => FnSliding,         // :124
+            "special" => FnSpecial,         // :125
+            _ => FnNone,                    // :126
+        };
+
         // Публичная мост-обёртка для GDScript: нетипизированный Godot Array (мост не строг к
         // типизированным массивам), наполняется int-индексами выбранных клипов.
         public void CrudeSelection(Godot.Collections.Array dataSet, CrudeSelectionQuery query)
