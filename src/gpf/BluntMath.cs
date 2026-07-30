@@ -130,5 +130,25 @@ namespace Gpf
 
         // vector3.hpp:336-339
         public static Vector3 Get2D(Vector3 v) => new Vector3(v.X, v.Y, 0f);
+
+        // geometry/line.cpp:60-71 Line::GetClosestToPoint — u проекции точки на прямую v0→v1
+        // («0 == v0, 1 == v1»), БЕЗ клампа: обрезает вызывающая сторона (humanoid.cpp:2124 клампит
+        // в [0,1], humanoid.cpp:2369 — нет).
+        // КВИРК ОРИГИНАЛА, переносим как есть: числитель строго 2D (только coords[0]/[1]), а
+        // знаменатель — КВАДРАТ ПОЛНОЙ 3D-длины отрезка. Для отрезка с наклоном по Z это не
+        // настоящая 2D-проекция: u занижается. Совпадает с 2D-проекцией только при v0.Z == v1.Z.
+        // Z самой точки не участвует никогда.
+        // Оригинальный GetLength (vector3.cpp:262-266) обнуляет длину < 1e-6 — у нас тот же исход
+        // даёт следующая же проверка lineDistance < 0.000001f, поведение совпадает.
+        public static float LineClosestToPoint(Vector3 v0, Vector3 v1, Vector3 point)
+        {
+            if (v0 == v1) return 0.0f;
+            float lineDistance = (v1 - v0).Length();
+            if (lineDistance < 0.000001f) return 0.0f;
+            float u = ((point.X - v0.X) * (v1.X - v0.X) +
+                       (point.Y - v0.Y) * (v1.Y - v0.Y)) /
+                      (lineDistance * lineDistance);
+            return u;
+        }
     }
 }
