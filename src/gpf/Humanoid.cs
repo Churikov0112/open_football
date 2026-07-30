@@ -19,8 +19,9 @@ namespace Gpf
     // (playerbase.cpp:141-146), GetBodyBallDistanceAdvantage (:1859-1997) и
     // GetBestCheatableAnimID (:1999-2323); с задачи 5 — CalculateMovementSmuggle (:2326-2408).
     //
+    // С задачи 6 — отказные фильтры ReQueue (:1192-1234) и quadrant-reject (:1727-1742).
+    //
     // НЕ портированы (по скоупу фазы): оптимизации-ранние-выходы SelectAnim (:1163-1189),
-    // ветка e_InterruptAnim_ReQueue (:1191-1240 и quadrant-reject :1727-1742 — задача 6),
     // action-ветки Trap/Interfere/Deflect/пасов/удара/Sliding (:1687-1722 — задачи 7-8).
     public partial class HumanoidBase
     {
@@ -44,7 +45,8 @@ namespace Gpf
         private static readonly bool ForceFullActionSmuggleDiscard = false; // :51 — сбросить смаггл целиком
         private static readonly bool DiscardForwardSmuggle = true;  // :52 — гасить переднюю компоненту
         private static readonly bool DiscardSidewaysSmuggle = false; // :53 — гасить боковую компоненту
-        // ReQueue-константы (:56-63) — потребитель придёт задачей 6, заведены по списку задачи 4
+        // ReQueue-константы (:56-63); потребители — гейт тика (:140-212, HumanoidBase.cs) и
+        // отказные фильтры SelectAnim (:1192-1234, ниже)
         private const int InitialReQueueDelayFrames = 22;       // :56
         // :57 — осталось меньше кадров? пусть клип доиграет, мы почти у цели
         private const int MinRemainingMovementReQueueFrames = 6;
@@ -95,19 +97,57 @@ namespace Gpf
         // PhysicsVector (humanoidbase.cpp:2021-2024) в лабе.
         private float _statTechnicalBallControl = 0.6f;
 
-        // ШОВ team->GetDesignatedTeamPossessionPlayer() == player &&
-        // match->GetDesignatedPossessionPlayer() == player (:2330): команд/матча в лабе нет —
-        // одинокий игрок с мячом и есть «designated», дефолт true.
+        // ШОВ match->GetDesignatedPossessionPlayer() == player (:165, :168, :2330): матча в лабе
+        // нет — одинокий игрок с мячом и есть «designated», дефолт true.
         private bool _designatedPossession = true;
+        // ШОВ team->GetDesignatedTeamPossessionPlayer() == player (:171, :2330). До задачи 6 оба
+        // «designated»-предиката жили одним полем (в :2330 они И-нятся); маска частоты ReQueue
+        // (:165-179) различает их ветками, поэтому поле разведено. Дефолт тот же — true.
+        private bool _teamDesignatedPossession = true;
+        // ШОВ team->GetID() (:166, :169, :172, :175, :178) — сдвиг фазы маски частоты по команде;
+        // в лабе команда одна, ID = 0.
+        private int _teamId = 0;
+        // ШОВ match->GetDesignatedPossessionPlayer()->GetPosition() (:1194): позиция игрока,
+        // «назначенного» на мяч. null == этот игрок и есть designated (лаба) → focusDistance 0.
+        // Задача 9 (матч) подставит сюда реальную позицию.
+        private Vector3? _designatedPossessionPlayerPos = null;
+        // ШОВ PlayerBase::GetLastTouchType() (:1229) — тип последнего касания; касания приходят
+        // задачей 7, до неё дефолт «касания не было».
+        private int _lastTouchType = TouchTypeNone;
+
+        // enum e_TouchType (gamedefines.hpp:111-116) → int-константы порта.
+        internal const int TouchTypeIntentionalKicked = 0;    // :112
+        internal const int TouchTypeIntentionalNonkicked = 1; // :113
+        internal const int TouchTypeAccidental = 2;           // :114
+        internal const int TouchTypeNone = 3;                 // :115
         // ШОВ CastPlayer()->GetTimeNeededToGetToBall_ms() (:2340): считает AI (AIfunctions);
         // в лабе — сеттер, дефолт 0 («уже у мяча»).
         private int _timeNeededToGetToBallMs = 0;
         // ШОВ CastPlayer()->GetDesiredTimeToBall_ms() (:2341): задаёт тактика команды; дефолт 0.
         private int _desiredTimeToBallMs = 0;
 
-        public void SetDesignatedPossession(bool designated) => _designatedPossession = designated;
+        // Оба designated-предиката разом: до задачи 6 они были одним полем, внешний API это
+        // сохраняет (лаб-вызовы «этот игрок назначен/не назначен на мяч»).
+        public void SetDesignatedPossession(bool designated)
+        {
+            _designatedPossession = designated;
+            _teamDesignatedPossession = designated;
+        }
+        public void SetTeamId(int teamId) => _teamId = teamId;
         public void SetTimeNeededToGetToBall(int ms) => _timeNeededToGetToBallMs = ms;
         public void SetDesiredTimeToBall(int ms) => _desiredTimeToBallMs = ms;
+
+        // TouchPending (humanoid.hpp:29) — ДОСЛОВНО: `frameNum < touchFrame`. Для клипа без
+        // касания (touchFrame == -1) всегда false, т.к. frameNum >= 0. Потребитель — гейт
+        // «правильный ли клип для реквея» (:194-195).
+        internal bool TouchPending() => _current.FrameNum < _current.TouchFrame;
+
+        // TouchAnim (humanoid.hpp:30) — держим рядом с TouchPending, потребители придут задачей 7.
+        internal bool TouchAnim() => _current.TouchFrame != -1;
+
+        // ШОВ :1194: позиция designated possession player; в лабе это сам игрок.
+        private Vector3 DesignatedPossessionPlayerPosition() =>
+            _designatedPossessionPlayerPos ?? _spatial.Position;
 
         // ШОВ CastPlayer()->HasPossession() (:2358): настоящий предикат живёт в
         // Match::CalculatePossession (придёт с матчем, задача 9+). Лаб-суррогат: мяч ближе
@@ -489,13 +529,112 @@ namespace Gpf
         // ---- Humanoid::SelectAnim (:1159-1820) — единый выбор клипа наследника ----
         // Голова (crude query) — BuildCrudeDataSet, сорт-цепочка — SortDataSet; здесь — каркас,
         // ветки по типам команд и заполнение Anim («make it so», :1747-1786).
-        // ПО СКОУПУ ФАЗЫ не портированы: оптимизации-ранние-выходы (:1163-1189), ReQueue-гейты
-        // (:1192-1234) и quadrant-reject (:1727-1742) — задача 6; ветки Trap/Interfere/Deflect
-        // (:1687-1692), пасов/удара (:1693-1709) и Sliding (:1710-1722) — задачи 7-8 (лаб-очередь
-        // команд таких типов не порождает).
+        // ПО СКОУПУ ФАЗЫ не портированы: оптимизации-ранние-выходы (:1163-1189); ветки
+        // Trap/Interfere/Deflect (:1687-1692), пасов/удара (:1693-1709) и Sliding (:1710-1722) —
+        // задачи 7-8 (лаб-очередь команд таких типов не порождает).
         internal bool SelectAnim(PlayerCommand command, int localInterruptAnim, bool preferPassAndShot)
         {
             // :1160 assert(desiredDirection.z == 0) — не переносим
+            // :1163-1189 оптимизации-ранние-выходы — по скоупу фазы не портированы (см. шапку)
+
+            // ---- отказные фильтры ReQueue (:1192-1234) ----
+            // Работают ТОЛЬКО когда прерывание пришло по ReQueue: Switch (граница клипа) обязан
+            // выбрать хоть что-то, реквей — лишь «улучшение» и вправе отказаться.
+            if (localInterruptAnim == HumanoidBase.InterruptReQueue)            // :1192
+            {
+                // :1194 ШОВ — расстояние до игрока, назначенного на мяч (в лабе это мы сами → 0)
+                float focusDistance =
+                    (DesignatedPossessionPlayerPosition() - _spatial.Position).Length();
+
+                // из НЕ-движения в движение реквея не бывает (:1196)
+                if (_current.FunctionType != AnimCollection.FnMovement
+                    && command.DesiredFunctionType == AnimCollection.FnMovement) return false;
+                // движение→движение: с мячом у ног или вдали от очага борьбы клип доигрывается
+                // (:1197; закомментированный в оригинале GetTeamPossessionAmount не переносим)
+                if (_current.FunctionType == AnimCollection.FnMovement
+                    && command.DesiredFunctionType == AnimCollection.FnMovement
+                    && (HasPossession() || focusDistance > 12.0f)) return false;
+                // осталось меньше 6 кадров — доигрываем (:1198)
+                if (_current.FunctionType == AnimCollection.FnMovement
+                    && command.DesiredFunctionType == AnimCollection.FnMovement
+                    && _current.FrameNum + MinRemainingMovementReQueueFrames
+                       > _current.Anim.GetEffectiveFrameCount()) return false;
+                // флаг выключен или не истёк делэй после прошлого реквея того же типа (:1199)
+                if (_current.FunctionType == AnimCollection.FnMovement
+                    && command.DesiredFunctionType == AnimCollection.FnMovement
+                    && (!AllowMovementReQueue || _reQueueDelayFrames > 0)) return false;
+                // ballcontrol→ballcontrol: только в первые 8 кадров (:1200)
+                if (_current.FunctionType == AnimCollection.FnBallControl
+                    && command.DesiredFunctionType == AnimCollection.FnBallControl
+                    && (!AllowBallControlReQueue || _current.FrameNum > MaxBallControlReQueueFrame
+                        || _reQueueDelayFrames > 0)) return false;
+                // ballcontrol→trap не реквеится вовсе (:1201)
+                if (_current.FunctionType == AnimCollection.FnBallControl
+                    && command.DesiredFunctionType == AnimCollection.FnTrap) return false;
+                // trap→trap: пока до касания больше 6 кадров (:1202)
+                if (_current.FunctionType == AnimCollection.FnTrap
+                    && command.DesiredFunctionType == AnimCollection.FnTrap
+                    && (!AllowTrapReQueue
+                        || _current.FrameNum + MinRemainingTrapReQueueFrames > _current.TouchFrame
+                        || _reQueueDelayFrames > 0)) return false;
+                // trap→ballcontrol: то же условие, что и trap→trap (:1203)
+                if (_current.FunctionType == AnimCollection.FnTrap
+                    && command.DesiredFunctionType == AnimCollection.FnBallControl
+                    && (!AllowTrapReQueue
+                        || _current.FrameNum + MinRemainingTrapReQueueFrames > _current.TouchFrame
+                        || _reQueueDelayFrames > 0)) return false;
+
+                // слишком похоже на то, что уже пытаемся сделать (:1205-1209). Сравнение идёт со
+                // СНИМКОМ команды, породившей текущий клип (:1784 копирует по значению — см.
+                // PlayerCommand.Clone).
+                if (_current.OriginatingCommand.DesiredFunctionType == command.DesiredFunctionType
+                    && ((_current.OriginatingCommand.DesiredDirection
+                         * _current.OriginatingCommand.DesiredVelocityFloat)
+                        - (command.DesiredDirection * command.DesiredVelocityFloat)).Length() < 1.5f)
+                {
+                    return false;                                              // :1208
+                }
+
+                // реквей не нужен? (:1211-1226)
+                if ((_current.FunctionType == AnimCollection.FnMovement
+                     && command.DesiredFunctionType == AnimCollection.FnMovement) ||    // :1212
+                    (_current.FunctionType == AnimCollection.FnBallControl
+                     && command.DesiredFunctionType == AnimCollection.FnBallControl) || // :1213
+                    (_current.FunctionType == AnimCollection.FnTrap
+                     && command.DesiredFunctionType == AnimCollection.FnBallControl) || // :1214
+                    (_current.FunctionType == AnimCollection.FnTrap
+                     && command.DesiredFunctionType == AnimCollection.FnTrap))          // :1215
+                {
+                    // запланированная смена импульса против желаемой (:1217-1219)
+                    Vector3 plannedMomentumChange =
+                        _current.OutgoingMovement - _current.IncomingMovement;          // :1218
+                    Vector3 desiredMomentumChange =
+                        (command.DesiredDirection * command.DesiredVelocityFloat)
+                        - _spatial.Movement;                                            // :1219
+
+                    // GetDistance(a, b) оригинала == длина разности (:1221-1222)
+                    if ((desiredMomentumChange.Dot(plannedMomentumChange) > 0.0f
+                         && (desiredMomentumChange - plannedMomentumChange).Length() < 4.0f) ||
+                        desiredMomentumChange.Dot(plannedMomentumChange) > 0.8f ||
+                        (desiredMomentumChange - plannedMomentumChange).Length() < 2.0f)
+                    {
+                        return false;                                          // :1223
+                    }
+                }
+
+                // не реквеим движение в ballcontrol на полпути движ-клипа, если только не
+                // запрошена серьёзная смена движения (:1228-1232)
+                if (_current.FunctionType == AnimCollection.FnMovement
+                    && command.DesiredFunctionType == AnimCollection.FnBallControl
+                    && (_actualTimeMs - _lastTouchTimeMs < 600
+                        && _lastTouchType == TouchTypeIntentionalKicked)
+                    && HasPossession())
+                {
+                    float desiredMovementChange = (_spatial.Movement
+                        - (command.DesiredDirection * command.DesiredVelocityFloat)).Length(); // :1230
+                    if (desiredMovementChange < 1.0f) return false;            // :1231
+                }
+            }
 
             if (localInterruptAnim != HumanoidBase.InterruptReQueue || _current.FrameNum > 12)
                 CalculateFactualSpatialState();                                // :1236
@@ -567,7 +706,32 @@ namespace Gpf
             }
             // :1687-1722 Trap/Interfere/Deflect, пасы/удар, Sliding — задачи 7-8 (см. шапку метода)
 
-            // :1727-1742 «не реквеить в тот же квадрант» — задача 6 (ReQueue)
+            // ---- «а точно ли реквей лучше текущего?» (:1725-1742) ----
+            // Гейт :1727 требует, чтобы ОБА набора позиций были длиннее 1 кадра (иначе сравнивать
+            // нечего).
+            if (localInterruptAnim == HumanoidBase.InterruptReQueue && selectedAnimID != -1
+                && _current.Positions.Count > 1 && positionsTmp.Count > 1)     // :1727
+            {
+                Animation selectedAnim = _anims.GetAnim(selectedAnimID);
+                // не реквеим в тот же квадрант (:1729-1737): для НЕ-idle клипов сравнивается
+                // строковый quadrant_id, для пары idle→idle — исходящие углы, сведённые в
+                // предпочтительные направления, с порогом 0.06π
+                if (_current.FunctionType == command.DesiredFunctionType &&    // :1730
+                    ((Velo.FloatToEnumVelocity(_current.Anim.GetOutgoingVelocity()) != Velo.IdVelIdle
+                      && _current.Anim.GetVariable("quadrant_id")
+                         == selectedAnim.GetVariable("quadrant_id"))           // :1732-1733
+                     ||
+                     ((Velo.FloatToEnumVelocity(_current.Anim.GetOutgoingVelocity()) == Velo.IdVelIdle
+                       && Velo.FloatToEnumVelocity(selectedAnim.GetOutgoingVelocity()) == Velo.IdVelIdle)
+                      && Mathf.Abs(
+                          _selector.ForceIntoPreferredDirectionAngle(_current.Anim.GetOutgoingAngle())
+                          - _selector.ForceIntoPreferredDirectionAngle(selectedAnim.GetOutgoingAngle()))
+                         < 0.06f * Mathf.Pi)))                                 // :1735-1736
+                {
+                    selectedAnimID = -1;                                       // :1739
+                    // :1740 debug printf — не переносим
+                }
+            }
 
             // make it so (:1745-1786)
             if (selectedAnimID != -1)                                          // :1747
@@ -609,7 +773,9 @@ namespace Gpf
                 _current.Positions.Clear();                                    // :1781
                 _current.Positions.AddRange(positionsTmp);                     // :1782
                 _current.PositionOffset = Vector3.Zero;                        // :1783
-                _current.OriginatingCommand = command;                         // :1784
+                // :1784 — в C++ PlayerCommand копируется ПО ЗНАЧЕНИЮ; снимок читают ReQueue-фильтры
+                // (:1206-1207), поэтому берём копию, а не ссылку (см. PlayerCommand.Clone)
+                _current.OriginatingCommand = command.Clone();                 // :1784
                 _current.MovementSmuggle = CalculateMovementSmuggle(
                     command.DesiredDirection, command.DesiredVelocityFloat);   // :1785
                 _current.MovementSmuggleOffset = Vector3.Zero;                 // :1786
@@ -633,9 +799,9 @@ namespace Gpf
 
             if (!EnableMovementSmuggle) return Vector3.Zero;                   // :2328
 
-            // гейты :2330-2332 дословно; швы: _designatedPossession (:2330),
+            // гейты :2330-2332 дословно; швы: team+match designated (:2330 И-нит оба предиката),
             // match->GetBallRetainer() != 0 → _isBallRetainer (в лабе ретейнер — только сам)
-            if (!_designatedPossession ||                                      // :2330
+            if (!(_teamDesignatedPossession && _designatedPossession) ||        // :2330
                 _current.TouchFrame != -1 ||
                 (_current.FunctionType == AnimCollection.FnTrip
                     && _current.Anim.GetVariable("triptype") != "1") ||

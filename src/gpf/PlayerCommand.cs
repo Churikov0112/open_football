@@ -15,6 +15,10 @@ namespace Gpf
         public float AutoPowerBias = 0.0f;              // ctor :150
         public Vector3 DesiredDirection = Vector3.Zero; // :162 — inputDirection после пас-функции
         public float DesiredPower = 0.0f;               // ctor :153
+
+        // В C++ TouchInfo — POD-структура внутри PlayerCommand, копируемая по значению вместе
+        // с ней (humanoid.cpp:1784 `currentAnim->originatingCommand = command;`). См. PlayerCommand.Clone.
+        public TouchInfo Clone() => (TouchInfo)MemberwiseClone();
     }
 
     // Порт struct PlayerCommand (gamedefines.hpp:175-229). Все дефолты — из конструктора
@@ -57,5 +61,17 @@ namespace Gpf
         public int SpecialVar2 = 0;                                  // ctor :197
 
         public int Modifier = 0;                                     // ctor :198
+
+        // КОПИЯ ПО ЗНАЧЕНИЮ. В C++ PlayerCommand — struct, и `currentAnim->originatingCommand =
+        // command` (humanoid.cpp:1784) копирует её целиком; ReQueue-фильтры :1206-1207 читают
+        // этот СНИМОК команды, породившей текущий клип. В C# присваивание было бы ссылкой:
+        // переиспользование объекта команды вызывающим кодом задним числом «переписало» бы
+        // снимок и сломало фильтр «слишком похоже на то, что уже делаем». Копируем явно.
+        public PlayerCommand Clone()
+        {
+            var copy = (PlayerCommand)MemberwiseClone();
+            copy.TouchInfo = TouchInfo.Clone(); // вложенная структура — тоже по значению
+            return copy;
+        }
     }
 }

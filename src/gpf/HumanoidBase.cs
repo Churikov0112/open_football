@@ -4,7 +4,8 @@ using System.Collections.Generic;
 namespace Gpf
 {
     // Порт контура состояния movement-пути HumanoidBase (humanoidbase.cpp): порядок тика Process
-    // (:569-714, без ReQueue/Trip — в лабе только Switch на границе клипа), movement-ветка SelectAnim
+    // (:569-714; с задачи 6 фазы 4 — вместе с ReQueue-машинерией наследника humanoid.cpp:140-212
+    // и очередью команд :214-247; Trip-ветка ждёт столкновений), movement-ветка SelectAnim
     // (:1374-1601), CalculateOutgoingMovement (:1617-1620), CalculateSpatialState (:1622-1726),
     // CalculateFactualSpatialState (:1728-1737). Один тик = 10 мс = один кадр анимации.
     // ВАЖНО: игроки инстанцируются как Humanoid (player.cpp:88; голый HumanoidBase — судьи),
@@ -70,8 +71,10 @@ namespace Gpf
 
         // previousAnim (humanoidbase.hpp:236) — УСЕЧЁННАЯ копия: в C++ `*previousAnim =
         // *currentAnim` (:1759) копирует весь struct, но живые потребители порта — только
-        // functionType (правило smoothFactor humanoid.cpp:277, requeue-делэй :319 — задача 6)
-        // и frameNum (инкремент :124). Расширять по мере появления потребителей.
+        // functionType (правило smoothFactor humanoid.cpp:277 и requeue-делэй :319) и frameNum
+        // (инкремент :124). Задача 6 (ReQueue) сверена: её фильтры (:1192-1234) и quadrant-reject
+        // (:1727-1742) читают ТОЛЬКО currentAnim — расширять копию не потребовалось.
+        // Правило прежнее: расширять по мере появления потребителей.
         private class PreviousAnimState
         {
             public int FunctionType = AnimCollection.FnMovement;
@@ -89,6 +92,13 @@ namespace Gpf
         private Vector3 _previousPosition2D; // humanoidbase.hpp:263
         private readonly CurrentAnimState _current = new();
         private readonly PreviousAnimState _previous = new(); // см. комментарий у класса
+        // humanoidbase.hpp:357-358; дефолты — конструктор HumanoidBase (humanoidbase.cpp:48-49).
+        // interruptAnim — ПОЛЕ, а не локальная переменная тика: прерывание может быть выставлено
+        // вне Process (Trip, humanoidbase.cpp:1048-1050) и живёт до сброса в конце тика (:336).
+        private int _interruptAnim = InterruptNone;   // :48
+        private int _reQueueDelayFrames = 0;          // :49
+        // Тестовый счётчик перевыборов по ReQueue — НЕ из оригинала (нужен check_gpf_requeue.gd).
+        private int _reQueueCount = 0;
         // animApplyBuffer (humanoidbase.hpp:133-162) — подмножество пути игроков; с задачи 5
         // добавлены smooth/smoothFactor (закрывает открытый вопрос фазы 3)
         private int _applyFrameNum;
@@ -151,6 +161,9 @@ namespace Gpf
             _current.OutgoingMovement = Vector3.Zero;       // :970
             _current.PositionOffset = Vector3.Zero;         // :971
             _current.OriginatingCommand = new PlayerCommand();
+            _interruptAnim = InterruptNone;                 // :1006
+            // ОТКЛОНЕНИЕ ОТСУТСТВУЕТ: reQueueDelayFrames в ResetPosition оригинала НЕ сбрасывается
+            // (только в конструкторе, :49) — не сбрасываем и мы.
             // previousAnim (:973-994) — усечённая копия, см. PreviousAnimState
             _previous.FunctionType = AnimCollection.FnMovement; // :991
             _previous.FrameNum = 0;                             // :977
@@ -166,16 +179,59 @@ namespace Gpf
             _applySmoothFactor = 0.0f;                      // :1000
         }
 
-        // Один тик — порядок Humanoid::Process наследника (humanoid.cpp:97-781; ссылки ниже —
-        // humanoid.cpp, если не сказано иное). Возвращает true при смене клипа.
-        // wantBall — ВРЕМЕННЫЙ ЛАБ-ВВОД (нет Player::RequestCommand, :225): true кладёт в очередь
-        // команд BallControl-команду перед движ-командой. Задача 6 заменит на очередь команд,
-        // задача 8 — на клавиши.
+        // ШОВ Player::RequestCommand (:225): очереди контроллера нет — собираем её из лаб-входов
+        // тика. wantBall → BallControl-команда первой (контроллер оригинала кладёт тач-команды
+        // перед движ-фолбэком), затем движ-команда. Порядок важен: тик берёт ПЕРВУЮ применимую
+        // (:229-247). Задача 8 добавит сюда pass/shot-команды.
+        private static List<PlayerCommand> BuildLabCommandQueue(
+            Vector3 desiredDirectionWorld, float desiredVelocityFloat, bool wantBall,
+            bool useDesiredLookAt, Vector3 desiredLookAt)
+        {
+            var commandQueue = new List<PlayerCommand>();    // :218
+            if (wantBall)
+                commandQueue.Add(new PlayerCommand
+                {
+                    DesiredFunctionType = AnimCollection.FnBallControl,
+                    UseDesiredMovement = true,
+                    DesiredDirection = desiredDirectionWorld,
+                    DesiredVelocityFloat = desiredVelocityFloat,
+                    UseDesiredLookAt = useDesiredLookAt,
+                    DesiredLookAt = desiredLookAt,
+                });
+            commandQueue.Add(new PlayerCommand
+            {
+                DesiredFunctionType = AnimCollection.FnMovement,
+                UseDesiredMovement = true,
+                DesiredDirection = desiredDirectionWorld,
+                DesiredVelocityFloat = desiredVelocityFloat,
+                UseDesiredLookAt = useDesiredLookAt,
+                DesiredLookAt = desiredLookAt,
+            });
+            return commandQueue;
+        }
+
+        // Мост лаб-уровня: тик по направлению/скорости/«хочу мяч». Лукэт собирается по правилу
+        // GetBasicMovementCommand (humanoidbase.cpp:1768-1771) — точка в 10 м по команде, ровно
+        // как это делает ходунок и контроллеры оригинала.
+        public bool TickBridge(Vector3 desiredDirectionWorld, float desiredVelocityFloat, bool wantBall)
+            => Tick(desiredDirectionWorld, desiredVelocityFloat, wantBall,
+                    true, _spatial.Position + desiredDirectionWorld * 10.0f);
+
+        // Мост лаб-уровня с явным лукэтом (сигнатура фазы 3 — её зовут ходунок и старые тесты).
         public bool Tick(Vector3 desiredDirectionWorld, float desiredVelocityFloat, bool wantBall,
                          bool useDesiredLookAt, Vector3 desiredLookAt)
+            => Tick(BuildLabCommandQueue(desiredDirectionWorld, desiredVelocityFloat, wantBall,
+                                         useDesiredLookAt, desiredLookAt));
+
+        // Один тик — порядок Humanoid::Process наследника (humanoid.cpp:97-781; ссылки ниже —
+        // humanoid.cpp, если не сказано иное). Возвращает true при смене клипа.
+        // ВНУТРЕННИЙ путь: принимает готовую ОЧЕРЕДЬ команд — ровно то, что в оригинале отдаёт
+        // Player::RequestCommand (:225). Мосты выше собирают её из лаб-входов.
+        internal bool Tick(List<PlayerCommand> commandQueue)
         {
             // ШОВ match->GetActualTime_ms(): матчевое время тикает +10 мс на тик 100 Гц
-            // (поле — Humanoid.cs; потребитель — GetLastTouchBias, humanoid.cpp:2204)
+            // (поле — Humanoid.cs; потребители — GetLastTouchBias humanoid.cpp:2204 и маска
+            // частоты ReQueue :166-178)
             _actualTimeMs += 10;
             CalculateSpatialState();                        // :120
             _spatial.PositionOffsetMovement = Vector3.Zero; // :121
@@ -191,52 +247,104 @@ namespace Gpf
             */
 
             bool switched = false;
-            int interruptAnim = InterruptNone;
             // на границе клипа — Switch-прерывание (:136-138)
-            if (_current.FrameNum == _current.Anim.GetFrameCount() - 1 && interruptAnim == InterruptNone)
-                interruptAnim = InterruptSwitch;
+            if (_current.FrameNum == _current.Anim.GetFrameCount() - 1 && _interruptAnim == InterruptNone)
+                _interruptAnim = InterruptSwitch;
 
-            // ReQueue-машинерия (:140-212) — задача 6; в лабе interrupt только Switch.
+            // ---- ReQueue: можно ли прервать клип на этом кадре? (:140-212) ----
+            bool mayReQueue = AllowReQueue;                 // :140
 
-            if (interruptAnim != InterruptNone)             // :214
+            // уже висит какое-то прерывание — реквей не нужен (:145-149)
+            if (mayReQueue)
             {
-                // ШОВ Player::RequestCommand (:225): очереди контроллера нет — собираем её из
-                // лаб-входов тика. wantBall → BallControl-команда первой (контроллер оригинала
-                // кладёт тач-команды перед движ-фолбэком), затем движ-команда (тот же набор
-                // полей, что движ-команда фазы 3).
-                var commandQueue = new List<PlayerCommand>(); // :218
-                if (wantBall)
-                    commandQueue.Add(new PlayerCommand
-                    {
-                        DesiredFunctionType = AnimCollection.FnBallControl,
-                        UseDesiredMovement = true,
-                        DesiredDirection = desiredDirectionWorld,
-                        DesiredVelocityFloat = desiredVelocityFloat,
-                        UseDesiredLookAt = useDesiredLookAt,
-                        DesiredLookAt = desiredLookAt,
-                    });
-                commandQueue.Add(new PlayerCommand
+                if (_interruptAnim != InterruptNone) mayReQueue = false;
+            }
+
+            /*
+            // :154-159 — ЗАКОММЕНТИРОВАН в оригинале («can't do this: requeued movement anims
+            // should be requeueable into touch anims»), переносится комментарием:
+            // if (mayReQueue) { // never requeue a requeued anim
+            //   if (currentAnim->originatingInterrupt != e_Interrupt_None &&
+            //       currentAnim->originatingInterrupt != e_Interrupt_Switch) {
+            //   mayRequeue = false;
+            // }
+            */
+
+            // маска частоты: попытки реквея разрежены по времени, а фаза разведена по teamID,
+            // чтобы команды не считали в один и тот же миллисекундный слот (:161-184)
+            if (mayReQueue)
+            {
+                bool frameNumPredicate = false;             // :162
+                float actionDistance = ((_spatial.Position + _spatial.Movement * 0.1f)
+                    - BluntMath.Get2D(_ball.Predict(100))).Length();               // :163
+
+                if (_designatedPossession && actionDistance < 3.0f)                // :165
+                    frameNumPredicate = ((_actualTimeMs + _teamId * 10) % 20) == 0; // :166
+                else if (_designatedPossession)                                    // :168
+                    frameNumPredicate = ((_actualTimeMs + _teamId * 10) % 30) == 0; // :169
+                else if (_teamDesignatedPossession)                                // :171
+                    frameNumPredicate = ((_actualTimeMs + _teamId * 20) % 40) == 0; // :172
+                else if (actionDistance < 5.0f)                                    // :174
+                    frameNumPredicate = ((_actualTimeMs + _teamId * 20) % 50) == 0; // :175
+                else if (actionDistance < 10.0f)                                   // :177
+                    frameNumPredicate = ((_actualTimeMs + _teamId * 40) % 80) == 0; // :178
+
+                if (!frameNumPredicate) mayReQueue = false;                        // :182
+            }
+
+            // правильный ли клип для реквея? (:189-205)
+            if (mayReQueue)
+            {
+                // ШОВ MentalImage (как в GetHasteFactor): GetBallPrediction(500) → _ball.Predict(500)
+                float ballDistance = (BluntMath.Get2D(_ball.Predict(500))
+                    - _spatial.Position).Length();                                 // :191
+                if (((_current.FunctionType == AnimCollection.FnMovement
+                        && !HasPossession() && ballDistance < 16.0f) ||            // :192
+                     (_current.FunctionType == AnimCollection.FnMovement
+                        && HasPossession()) ||                                     // :193 passes / shot
+                     (_current.FunctionType == AnimCollection.FnTrap && TouchPending()) ||   // :194
+                     (_current.FunctionType == AnimCollection.FnBallControl && TouchPending())) // :195
+                    // :196-199 — закомментированный в оригинале кусок про
+                    // maxTrapReQueueFrame/maxBallControlReQueueFrame («now done later on, else we
+                    // can't requeue to pass/shot during trap/ballcontrol») не переносим
+                    && _current.Anim.GetVariable("incoming_special_state") == ""
+                    && _current.Anim.GetVariable("outgoing_special_state") == "")  // :200
                 {
-                    DesiredFunctionType = AnimCollection.FnMovement,
-                    UseDesiredMovement = true,
-                    DesiredDirection = desiredDirectionWorld,
-                    DesiredVelocityFloat = desiredVelocityFloat,
-                    UseDesiredLookAt = useDesiredLookAt,
-                    DesiredLookAt = desiredLookAt,
-                });
+                    mayReQueue = true;                                             // :201
+                }
+                else
+                {
+                    mayReQueue = false;                                            // :203
+                }
+            }
+
+            // окей, реквеим (:210-212)
+            if (mayReQueue) _interruptAnim = InterruptReQueue;
+
+            if (_interruptAnim != InterruptNone)            // :214
+            {
+                // :220-223 Trip-ветка сборки очереди (AddTripCommandToQueue) — задача со
+                // столкновениями; лаб-очередь приходит аргументом (ШОВ :225 RequestCommand)
 
                 // первый применимый из очереди (:229-247)
                 bool found = false;                          // :231
-                bool preferPassAndShot = false;              // :232 (пас/удар в очереди — задача 8)
+                // :232 — если в очереди есть пас/удар, trap/ballcontrol-клипы становятся менее
+                // предпочтительными; флаг НЕ сбрасывается между итерациями, как в оригинале
+                bool preferPassAndShot = false;              // :232
                 foreach (var command in commandQueue)        // :233-247
                 {
-                    // :237-242 preferPassAndShot по типам пас/удар — команд таких типов
-                    // лаб-очередь не порождает
-                    found = SelectAnim(command, interruptAnim, preferPassAndShot); // :245
+                    if (command.DesiredFunctionType == AnimCollection.FnShortPass ||
+                        command.DesiredFunctionType == AnimCollection.FnLongPass ||
+                        command.DesiredFunctionType == AnimCollection.FnHighPass ||
+                        command.DesiredFunctionType == AnimCollection.FnShot)
+                    {
+                        preferPassAndShot = true;            // :237-242
+                    }
+                    found = SelectAnim(command, _interruptAnim, preferPassAndShot); // :245
                     if (found) break;                        // :246
                 }
 
-                if (interruptAnim == InterruptSwitch && !found)
+                if (_interruptAnim == InterruptSwitch && !found)
                 {
                     // «RED ALERT» (:249-267) в лабе недостижим: движ-команда в очереди всегда
                     // есть, а её отбор несёт idle-фолбэк (:1657-1660). Страховка от вылета на
@@ -256,7 +364,7 @@ namespace Gpf
                     // :275 animApplyBuffer.anim — клип буфера у нас читается по GetCurrentAnimId()
                     _applySmooth = AnimSmoothing;            // :276
                     // :277 — больше сглаживания mid-anim реквеям; movement→movement на Switch = 0
-                    _applySmoothFactor = (interruptAnim == InterruptSwitch
+                    _applySmoothFactor = (_interruptAnim == InterruptSwitch
                         && _previous.FunctionType == AnimCollection.FnMovement
                         && _current.FunctionType == AnimCollection.FnMovement) ? 0.0f : 1.0f;
                     if (_current.FunctionType == AnimCollection.FnShot)
@@ -271,11 +379,27 @@ namespace Gpf
                         _current.FunctionType == AnimCollection.FnTrap)
                         _applySmoothFactor = 0.8f;           // :283-284
 
-                    // :288-310 debug-выводы — не переносим; :312-314 decayingDifficultyFactor и
-                    // :317-321 reQueueDelayFrames — система сложности/ReQueue, задача 6.
+                    // :288-310 debug-выводы — не переносим (счётчик реквеев ниже — тестовый шов
+                    // на месте отладочной метки «[R]», :299-300);
+                    // :312-314 decayingDifficultyFactor — система сложности, вне скоупа фазы.
+                    if (_interruptAnim == InterruptReQueue) _reQueueCount++;
+
+                    // :317-321 — если только что реквеились, скажем, из movement в ballcontrol,
+                    // нет причин не реквеить сразу же в другой ballcontrol (в следующий раз);
+                    // начальный делэй накладывается только на ПОСЛЕДУЮЩИЕ клипы того же типа
+                    if (_interruptAnim == InterruptReQueue
+                        && _previous.FunctionType == _current.FunctionType)
+                    {
+                        _reQueueDelayFrames = InitialReQueueDelayFrames; // :320
+                    }
                 }
             }
-            // :326 reQueueDelayFrames-- — задача 6; :336 interruptAnim = None — локальная переменная.
+            // :326 — в оригинале std::max(reQueueDelayFrames - 1, 0) у наследника
+            // (в базе, humanoidbase.cpp:671, тот же смысл через clamp(.., 0, 10000))
+            _reQueueDelayFrames = Mathf.Max(_reQueueDelayFrames - 1, 0);       // :326
+
+            // :328-334 debug-пилоны — не переносим
+            _interruptAnim = InterruptNone;                                    // :336
 
             // сторож «FLYING PLAYERS» (:338-340) — живой код
             if (_startPos.Z != 0f)
@@ -573,6 +697,12 @@ namespace Gpf
                 ? _startPos + _current.Positions[_current.FrameNum]
                 : _startPos;
         public int GetCurrentAnimId() => _current.Id;
+        // ---- Мост-геттеры ReQueue (задача 6) ----
+        // Счётчик перевыборов по ReQueue — тестовый шов, в оригинале его нет.
+        public int GetReQueueCount() => _reQueueCount;
+        public int GetReQueueDelayFrames() => _reQueueDelayFrames;
+        // originatingInterrupt текущего клипа (humanoidbase.hpp:90) — чем он был порождён.
+        public int GetOriginatingInterrupt() => _current.OriginatingInterrupt;
         public Vector3 GetSpatialPosition() => _spatial.Position;
         public float GetSpatialAngle() => _spatial.Angle;
         public int GetSpatialEnumVelocity() => _spatial.EnumVelocity;
