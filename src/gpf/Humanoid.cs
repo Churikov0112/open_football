@@ -256,8 +256,12 @@ namespace Gpf
             _anims.CrudeSelectionInternal(dataSet, query);                         // :1357
             if (dataSet.Count == 0)                                                // :1359
             {
-                if (command.DesiredFunctionType == AnimCollection.FnMovement)      // :1360
-                    dataSet.Add(_anims.GetIdleMovementAnimID());                   // :1363
+                // :1363 — движение доигрывается idle-клипом. Страховка порта (как в фазе 3):
+                // на пустой коллекции GetIdleMovementAnimID() == -1, и класть -1 в отбор нельзя;
+                // в оригинале такого состояния не бывает (клипы всегда загружены).
+                if (command.DesiredFunctionType == AnimCollection.FnMovement       // :1360
+                    && _anims.GetIdleMovementAnimID() >= 0)
+                    dataSet.Add(_anims.GetIdleMovementAnimID());
                 // :1364 — иначе SelectAnim возвращает false; у нас это пустой список
             }
             return dataSet;

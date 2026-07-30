@@ -219,7 +219,9 @@ namespace Gpf
             if (dataSet.Count == 0) return false;                              // :1364
             if (!SortDataSet(dataSet, command)) return false;                  // :1535 «too wrong»
             // :1657-1660 — если после фильтров ничего не осталось, движение идёт idle-клипом
-            if (dataSet.Count == 0 && command.DesiredFunctionType == AnimCollection.FnMovement)
+            // (>= 0 — та же страховка порта, что в BuildCrudeDataSet)
+            if (dataSet.Count == 0 && command.DesiredFunctionType == AnimCollection.FnMovement
+                && _anims.GetIdleMovementAnimID() >= 0)
                 dataSet.Add(_anims.GetIdleMovementAnimID());
             if (dataSet.Count == 0) return false;                              // :1510-1514
 
