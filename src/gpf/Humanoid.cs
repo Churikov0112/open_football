@@ -21,8 +21,10 @@ namespace Gpf
     //
     // С задачи 6 — отказные фильтры ReQueue (:1192-1234) и quadrant-reject (:1727-1742).
     //
-    // НЕ портированы (по скоупу фазы): оптимизации-ранние-выходы SelectAnim (:1163-1189),
-    // action-ветки Trap/Interfere/Deflect/пасов/удара/Sliding (:1687-1722 — задачи 7-8).
+    // С задачи 7 — исполнение касания: оптимизации-ранние-выходы SelectAnim (:1163-1189),
+    // action-ветки выбора Trap/Interfere/Deflect/пасов/удара/Sliding (:1687-1722),
+    // touch-ветки тика (:342-646, ExecuteTouchTick), GetBestPossibleTouch (:2410-2486);
+    // формулы touch-векторов — src/gpf/TouchVectors.cs (humanoid_utils.cpp:146-520).
     public partial class HumanoidBase
     {
         // ---- Константы наследника (humanoid.cpp:40-65) ----
@@ -120,6 +122,75 @@ namespace Gpf
         internal const int TouchTypeIntentionalNonkicked = 1; // :113
         internal const int TouchTypeAccidental = 2;           // :114
         internal const int TouchTypeNone = 3;                 // :115
+        // ---- Швы и состояние задачи 7 (исполнение касания) ----
+        // _PassFiddlingEnabled() (humanoid.cpp:88-90) — всегда true; readonly, не const (правило
+        // фазы 3: выключаемая ветка обязана компилироваться).
+        private static readonly bool PassFiddlingEnabled = true;
+        // decayingPositionOffset (humanoidbase.hpp; распад — humanoid.cpp:98-99, сброс —
+        // humanoidbase.cpp:1009). Копится столкновениями игроков (humanoidbase.cpp:1040-1041,
+        // не портированы) — в лабе остаётся нулём, но контур распада/потребители живут.
+        private Vector3 _decayingPositionOffset = Vector3.Zero;
+        // Player::TriggerControlledBallCollision / IsControlledBallCollisionTriggered /
+        // ResetControlledBallCollisionTrigger (player.hpp) — одиночный флаг.
+        private bool _controlledBallCollisionTriggered = false;
+        // ЛАБ-ПАРАМЕТР (решение плана): canRetain deflect-ветки (:599-616) в лабе выключен —
+        // вратарский контур (ретейнер/superglue) не входит в фазу 4; ветка портирована дословно.
+        private bool _labAllowDeflectRetain = false;
+        // ШОВ team->GetSide() (team.cpp:102-108): -1 == левая половина (команда 0 в первом
+        // тайме); потребитель — deflect-вынос (:620).
+        private int _teamSide = -1;
+        // ШВЫ player->GetStat(...) — статы задачи 7, дефолт 0.6 (как статы PhysicsVector).
+        private float _statMentalCalmness = 0.6f;     // humanoid_utils.cpp:254
+        private float _statPhysicalBalance = 0.6f;    // humanoid_utils.cpp:254
+        private float _statTechnicalDribble = 0.6f;   // humanoid_utils.cpp:294
+        private float _statPhysicalReaction = 0.6f;   // humanoid_utils.cpp:187, humanoid.cpp:609
+        private float _statPhysicalShotPower = 0.6f;  // humanoid_utils.cpp:412
+        private float _statTechnicalVolley = 0.6f;    // humanoid_utils.cpp:437
+        private float _statTechnicalShot = 0.6f;      // humanoid_utils.cpp:493
+        private float _statTechnicalShortPass = 0.6f; // humanoid.cpp:2446
+        private float _statTechnicalHighPass = 0.6f;  // humanoid.cpp:2447
+        private float _statPhysicalVelocity = 0.6f;   // playerbase.cpp:138
+
+        public void SetTeamSide(int side) => _teamSide = side;
+        public void SetAllowDeflectRetain(bool allow) => _labAllowDeflectRetain = allow;
+
+        // ШОВ GetLastTouchBias команды соперника / её lastTouchPlayer (humanoid.cpp:345, :605-611;
+        // humanoid_utils.cpp:182-195): соперников в лабе нет — биас 0 при любом окне. Матч-слой
+        // (задача 9+) заменит на реальную команду.
+        private float OppLastTouchBias(int decayMs)
+        {
+            _ = decayMs;
+            return 0.0f;
+        }
+
+        // ШОВ player->GetController()->GetFloatVelocity() (humanoid_utils.cpp:235): контроллера
+        // в лабе нет — желаемая скорость команды, породившей текущий клип (решение брифа).
+        private float ControllerFloatVelocity() => _current.OriginatingCommand.DesiredVelocityFloat;
+
+        // player->GetMaxVelocity() (playerbase.cpp:131-139) поверх шва-стата.
+        private float MaxVelocity() => PhysicsVector.GetMaxVelocity(_statPhysicalVelocity);
+
+        // Порт player-части Team::SetLastTouchPlayer (team.cpp:241-248): SetLastTouchTime_ms
+        // (:245) + SetLastTouchType (:246). Командная и матчевая части (lastTouchPlayers,
+        // SetLastTouchTeamID) — матч-слой (задача 9+).
+        private void RegisterTouch(int touchType)
+        {
+            _lastTouchTimeMs = _actualTimeMs; // team.cpp:245
+            _lastTouchType = touchType;       // team.cpp:246
+        }
+
+        // FootballAnimationExtension::GetTouchPos(frame) (footballanimationextension.cpp:178-186):
+        // точный поиск позиции касания по кадру. Не найдено → Vector3.Zero (в C++ выходной
+        // параметр остался бы неинициализированным; touchFrame всегда берётся из списка касаний
+        // клипа, так что ветка мертва).
+        private static Vector3 GetAnimTouchPosAtFrame(Animation anim, int frame)
+        {
+            int n = anim.GetTouchCount();
+            for (int i = 0; i < n; i++)
+                if (anim.GetTouchFrame(i) == frame) return anim.GetTouchPosition(i);
+            return Vector3.Zero;
+        }
+
         // ШОВ CastPlayer()->GetTimeNeededToGetToBall_ms() (:2340): считает AI (AIfunctions);
         // в лабе — сеттер, дефолт 0 («уже у мяча»).
         private int _timeNeededToGetToBallMs = 0;
@@ -535,7 +606,46 @@ namespace Gpf
         internal bool SelectAnim(PlayerCommand command, int localInterruptAnim, bool preferPassAndShot)
         {
             // :1160 assert(desiredDirection.z == 0) — не переносим
-            // :1163-1189 оптимизации-ранние-выходы — по скоупу фазы не портированы (см. шапку)
+
+            // ---- оптимизации-ранние-выходы (:1163-1189) ----
+            if (command.DesiredFunctionType != AnimCollection.FnMovement &&
+                command.DesiredFunctionType != AnimCollection.FnTrip &&
+                command.DesiredFunctionType != AnimCollection.FnSpecial &&
+                command.DesiredFunctionType != AnimCollection.FnSliding)       // :1165-1168
+            {
+                // :1169 ШОВ MentalImage (см. GetHasteFactor): GetBallPrediction → _ball.Predict
+                if ((BluntMath.Get2D(_ball.Predict(200)) - _spatial.Position).Length()
+                    > GpfPitch.BallDistanceOptimizeThreshold)
+                    return false;                                              // :1170
+                // мяч дальше 2 м и удаляется от игрока (:1172-1177)
+                if ((BluntMath.Get2D(_ball.Predict(GpfPitch.DefaultTouchOffsetMs))
+                     - _spatial.Position).Length() > 2.0f &&                   // :1172
+                    (BluntMath.Get2D(_ball.Predict(GpfPitch.DefaultTouchOffsetMs))
+                     - (_spatial.Position
+                        + _spatial.Movement * GpfPitch.DefaultTouchOffsetMs * 0.001f)).Length() >
+                    (BluntMath.Get2D(_ball.Predict(0)) - _spatial.Position).Length()) // :1174-1175
+                {
+                    return false;                                              // :1176
+                }
+            }
+
+            // :1180-1187 — гейт «в памяти игрока мяч не там, где он есть» (после чужого касания
+            // клипы не должны стартовать по устаревшей картинке). ШОВ MentalImage: задержка
+            // восприятия в лабе нулевая → mental-предсказание == реальному, разность 0 <= 2 м —
+            // ветка НИКОГДА не срабатывает. Портируем дословно поверх шва: обе стороны сравнения —
+            // один и тот же _ball.Predict(1000).
+            if (command.DesiredFunctionType != AnimCollection.FnMovement &&
+                command.DesiredFunctionType != AnimCollection.FnTrip &&
+                command.DesiredFunctionType != AnimCollection.FnSpecial &&
+                command.DesiredFunctionType != AnimCollection.FnSliding &&
+                command.DesiredFunctionType != AnimCollection.FnDeflect &&
+                !_isBallRetainer)                                              // :1181-1185
+            {
+                if ((_ball.Predict(1000) - _ball.Predict(1000)).Length() > 2.0f)
+                    return false;                                              // :1186
+            }
+
+            // /optimizations (:1189)
 
             // ---- отказные фильтры ReQueue (:1192-1234) ----
             // Работают ТОЛЬКО когда прерывание пришло по ReQueue: Switch (граница клипа) обязан
@@ -687,6 +797,9 @@ namespace Gpf
                 // отдельный объект, передаём то же состояние
                 _physics.SetSpatialState(_spatial.Position, _spatial.Angle, _spatial.DirectionVec,
                     _spatial.FloatVelocity, _spatial.Movement);
+                // player->GetLastTouchBias(1000) + decayingPositionOffset — контекст
+                // CalculatePhysicsVector (humanoidbase.cpp:2082-2084), читается на месте вызова
+                _physics.SetTouchContext(GetLastTouchBias(1000), _decayingPositionOffset.Length());
                 _physics.Calculate(nextAnim, _anims.GetPositionCacheInternal(selectedAnimID),
                     command.UseDesiredMovement, desiredMovement, command.UseDesiredLookAt,
                     desiredBodyDirectionRel, positionsTmp, out rotationSmuggleTmp); // :1679
@@ -704,7 +817,64 @@ namespace Gpf
                         hasteFactor, localInterruptAnim, preferPassAndShot);   // :1684
                 }
             }
-            // :1687-1722 Trap/Interfere/Deflect, пасы/удар, Sliding — задачи 7-8 (см. шапку метода)
+            else if (command.DesiredFunctionType == AnimCollection.FnTrap ||
+                     command.DesiredFunctionType == AnimCollection.FnInterfere ||
+                     command.DesiredFunctionType == AnimCollection.FnDeflect)  // :1687-1689
+            {
+                float hasteFactor = GetHasteFactor(false);                     // :1690
+                selectedAnimID = GetBestCheatableAnimID(dataSet, command.UseDesiredMovement,
+                    command.DesiredDirection, command.DesiredVelocityFloat,
+                    command.UseDesiredLookAt, desiredBodyDirectionRel, positionsTmp,
+                    ref touchFrameTmp, ref radiusOffsetTmp, ref touchPosTmp,
+                    ref fullActionSmuggleTmp, ref actionSmuggleTmp, ref rotationSmuggleTmp,
+                    hasteFactor, localInterruptAnim, preferPassAndShot);       // :1691
+            }
+            else if (command.DesiredFunctionType == AnimCollection.FnShortPass ||
+                     command.DesiredFunctionType == AnimCollection.FnLongPass ||
+                     command.DesiredFunctionType == AnimCollection.FnHighPass ||
+                     command.DesiredFunctionType == AnimCollection.FnShot)     // :1693-1696
+            {
+                float hasteFactor = GetHasteFactor(false);                     // :1697
+                // :1698 — preferPassAndShot в этом вызове НЕ передаётся (дефолт false C++)
+                selectedAnimID = GetBestCheatableAnimID(dataSet, command.UseDesiredMovement,
+                    command.DesiredDirection, command.DesiredVelocityFloat,
+                    command.UseDesiredLookAt, desiredBodyDirectionRel, positionsTmp,
+                    ref touchFrameTmp, ref radiusOffsetTmp, ref touchPosTmp,
+                    ref fullActionSmuggleTmp, ref actionSmuggleTmp, ref rotationSmuggleTmp,
+                    hasteFactor, localInterruptAnim, false);
+                // :1699-1708 debug-блок закомментирован в оригинале — не переносим
+            }
+            else if (command.DesiredFunctionType == AnimCollection.FnSliding)  // :1710
+            {
+                float hasteFactor = GetHasteFactor(false);                     // :1711
+                // :1712 — preferPassAndShot не передаётся (дефолт false C++)
+                selectedAnimID = GetBestCheatableAnimID(dataSet, command.UseDesiredMovement,
+                    command.DesiredDirection, command.DesiredVelocityFloat,
+                    command.UseDesiredLookAt, desiredBodyDirectionRel, positionsTmp,
+                    ref touchFrameTmp, ref radiusOffsetTmp, ref touchPosTmp,
+                    ref fullActionSmuggleTmp, ref actionSmuggleTmp, ref rotationSmuggleTmp,
+                    hasteFactor, localInterruptAnim, false);
+                if (selectedAnimID == -1)                                      // :1713
+                {
+                    // подкат без дотягиваемого касания — берём лучший клип как есть (:1714-1720)
+                    if (dataSet.Count > 0)                                     // :1714
+                    {
+                        selectedAnimID = dataSet[0];                           // :1715
+                        Animation nextAnim = _anims.GetAnim(selectedAnimID);   // :1716
+                        Vector3 slideDesiredMovement =
+                            command.DesiredDirection * command.DesiredVelocityFloat; // :1717
+                        // :1718 assert — не переносим; ШОВ PhysicsVector — как движ-ветка выше
+                        _physics.SetSpatialState(_spatial.Position, _spatial.Angle,
+                            _spatial.DirectionVec, _spatial.FloatVelocity, _spatial.Movement);
+                        _physics.SetTouchContext(GetLastTouchBias(1000),
+                            _decayingPositionOffset.Length());
+                        _physics.Calculate(nextAnim, _anims.GetPositionCacheInternal(selectedAnimID),
+                            command.UseDesiredMovement, slideDesiredMovement,
+                            command.UseDesiredLookAt, desiredBodyDirectionRel, positionsTmp,
+                            out rotationSmuggleTmp);                           // :1719
+                    }
+                }
+            }
 
             // ---- «а точно ли реквей лучше текущего?» (:1725-1742) ----
             // Гейт :1727 требует, чтобы ОБА набора позиций были длиннее 1 кадра (иначе сравнивать
@@ -1083,6 +1253,10 @@ namespace Gpf
             // (как SelectNextMovementAnim, HumanoidBase.cs).
             _physics.SetSpatialState(_spatial.Position, _spatial.Angle, _spatial.DirectionVec,
                 _spatial.FloatVelocity, _spatial.Movement);
+            // player->GetLastTouchBias(1000) + decayingPositionOffset — контекст
+            // CalculatePhysicsVector (humanoidbase.cpp:2082-2084); единообразно с движ-веткой
+            // SelectAnim (ревью задачи 4)
+            _physics.SetTouchContext(GetLastTouchBias(1000), _decayingPositionOffset.Length());
 
             Vector3 incomingMovement = BluntMath.GetRotated2D(_spatial.Movement, -_spatial.Angle); // :2004
 
@@ -1382,6 +1556,429 @@ namespace Gpf
             rotationSmuggleRet = rotationSmuggleTmp;                           // :2320
 
             return bestAnimID;                                                 // :2322
+        }
+
+        // ---- Контекст-обёртки touch-векторов (сбор аргументов C++-вызовов) ----
+        // GetTrapVector(match, player, nextStartPos, nextStartAngle, nextBodyAngle,
+        // CalculateOutgoingMovement(currentAnim->positions), currentAnim, currentAnim->frameNum,
+        // spatialState, decayingPositionOffset, xRot, yRot) — humanoid.cpp:372/:430/:587.
+        private Vector3 TrapVectorFromContext(float nextBodyAngle, out float xRot, out float yRot)
+            => TouchVectors.GetTrapVector(_ball, _nextStartPos, _nextStartAngle, nextBodyAngle,
+                CalculateOutgoingMovement(_current.Positions),
+                _current.Anim.GetOutgoingVelocity(), _current.Anim.GetEffectiveFrameCount(),
+                _current.FrameNum,
+                _current.OriginatingCommand.DesiredDirection,
+                _current.OriginatingCommand.DesiredVelocityFloat,
+                _spatial.Angle, _spatial.DirectionVec, _spatial.BodyDirectionVec,
+                HasPossession(), ControllerFloatVelocity(), MaxVelocity(),
+                _closestOpponentDistance, _statMentalCalmness, _statPhysicalBalance,
+                _statTechnicalDribble, _statTechnicalBallControl,
+                _spatial.Movement, _spatial.Position, _decayingPositionOffset,
+                OppLastTouchBias(1000 - (int)(_statPhysicalReaction * 500)), // humanoid_utils.cpp:187
+                _statPhysicalReaction, _rng, out xRot, out yRot);
+
+        // GetBallControlVector(ball, player, ..., xRot, yRot) без ffoOffset — humanoid.cpp:448.
+        private Vector3 BallControlVectorFromContext(float nextBodyAngle,
+            out float xRot, out float yRot)
+            => TouchVectors.GetBallControlVector(_ball, _nextStartPos, _nextStartAngle,
+                nextBodyAngle, CalculateOutgoingMovement(_current.Positions),
+                _current.Anim.GetOutgoingVelocity(), _current.Anim.GetEffectiveFrameCount(),
+                _current.FrameNum,
+                _current.OriginatingCommand.DesiredDirection,
+                _current.OriginatingCommand.DesiredVelocityFloat,
+                _spatial.Angle, _spatial.DirectionVec, _spatial.BodyDirectionVec,
+                HasPossession(), ControllerFloatVelocity(), MaxVelocity(),
+                _closestOpponentDistance, _statMentalCalmness, _statPhysicalBalance,
+                _statTechnicalDribble, _statTechnicalBallControl, _decayingPositionOffset,
+                out xRot, out yRot, 0.0f); // ffoOffset — дефолт C++ (humanoid_utils.hpp:30)
+
+        // ---- GetBestPossibleTouch (:2410-2486) ----
+        // Модель ошибки паса: кламп к максимально возможной силе клипа, стат-скидки сложности,
+        // случайный поворот/сползание к «родному» направлению клипа, надбавки высоты.
+        internal Vector3 GetBestPossibleTouch(Vector3 desiredTouch, int functionType)
+        {
+            float maxPowerShortPass = 30.0f;                                   // :2412
+            float maxPowerHighPass = 42.0f;                                    // :2413
+            float maxPowerBase = maxPowerShortPass;                            // :2414
+            if (functionType == AnimCollection.FnHighPass) maxPowerBase = maxPowerHighPass; // :2415
+
+            Vector3 resultTouch = desiredTouch;                                // :2417
+
+            // fetch vars (:2422-2426)
+            float maxPowerFactor = BluntMath.AtoF(
+                _current.Anim.GetVariable("touch_maxpowerfactor"));            // :2424
+            if (maxPowerFactor == 0.0f) maxPowerFactor = 1.0f;                 // :2425
+            maxPowerFactor = maxPowerFactor * 0.7f + 0.3f;                     // :2426
+
+            // кламп к максимально возможной силе (:2429-2437)
+            float maxPower = maxPowerBase * maxPowerFactor
+                * (1.0f - Mathf.Clamp(_decayingPositionOffset.Length() * 2.5f, 0.0f, 0.25f)); // :2431
+            maxPower += _ball.GetMovement().Length() * 0.5f; // :2432 — часть текущего момента мяча
+            if (resultTouch.Length() > maxPower)                               // :2433
+            {
+                float missingPower = resultTouch.Length() - maxPower;          // :2434
+                resultTouch = BluntMath.GetNormalized(resultTouch, Vector3.Zero) * maxPower; // :2435
+                resultTouch.Z += Mathf.Clamp(missingPower, 0.0f, 10.0f) * 0.25f; // :2436
+            }
+
+            // сложность (:2440-2453)
+            float difficultyFactor = BluntMath.AtoF(
+                _current.Anim.GetVariable("touch_difficultyfactor"));          // :2442
+            if (functionType == AnimCollection.FnShortPass ||
+                functionType == AnimCollection.FnLongPass)
+                difficultyFactor *= (1.0f - _statTechnicalShortPass * 0.5f);   // :2445-2446
+            if (functionType == AnimCollection.FnHighPass)
+                difficultyFactor *= (1.0f - _statTechnicalHighPass * 0.5f);    // :2447
+
+            TouchVectors.GetDifficultyFactors(_ball, _spatial.Movement, _spatial.Position,
+                _spatial.DirectionVec, _decayingPositionOffset.Length(), _statTechnicalBallControl,
+                OppLastTouchBias(1000 - (int)(_statPhysicalReaction * 500)), _statPhysicalReaction,
+                _rng, out float distanceFactor, out float heightFactor,
+                out float ballMovementFactor);                                 // :2450-2453
+
+            // трудные мячи уходят случайнее — либо сползают к дефолтному направлению клипа,
+            // если оно есть (для клипа это самое лёгкое направление) (:2455-2468)
+            float randomRotation = distanceFactor * 0.15f + heightFactor * 0.15f
+                + ballMovementFactor * 0.3f + difficultyFactor * 0.5f;         // :2456-2457
+            Vector3 animBallDirection = BluntMath.GetRotated2D(
+                BluntMath.GetVectorFromString(_current.Anim.GetVariable("balldirection")),
+                _startAngle + _current.RotationSmuggleOffset);                 // :2459
+            if (animBallDirection.Length() > 0.01f)                            // :2460
+            {
+                float bias = Mathf.Clamp(randomRotation * 1.5f, 0.0f, 1.0f);   // :2461
+                // :2462 — resultTouch * Vector3(0,0,1) оригинала == (0, 0, resultTouch.z)
+                Vector3 nativeTouch = BluntMath.Get2D(
+                    BluntMath.GetNormalized(animBallDirection, resultTouch)) * resultTouch.Length()
+                    + new Vector3(0, 0, resultTouch.Z);
+                resultTouch = resultTouch * (1.0f - bias) + nativeTouch * bias; // :2463
+            }
+            else
+            {
+                float rotation = _rng.Uniform(-0.5f * Mathf.Pi, 0.5f * Mathf.Pi)
+                    * Mathf.Min(randomRotation, 0.5f);                         // :2465
+                resultTouch = BluntMath.GetRotated2D(resultTouch, rotation);   // :2467
+            }
+
+            // мяч далеко == меньше силы (:2470-2472); компенсация высотой (меньше трения о газон)
+            resultTouch *= 1.0f - distanceFactor * 0.3f;                       // :2471
+            resultTouch.Z += distanceFactor * 1.5f;                            // :2472
+
+            resultTouch.Z += _ball.GetMovement().Z * heightFactor * 0.5f
+                + heightFactor * 1.0f;                                         // :2474-2475
+
+            resultTouch = resultTouch * (1.0f - ballMovementFactor)
+                + _ball.GetMovement() * ballMovementFactor;                    // :2477-2478
+
+            resultTouch.Z += difficultyFactor * 5.0f * _rng.Uniform(0.2f, 1.0f); // :2480
+
+            return resultTouch;                                                // :2485
+        }
+
+        // ---- Исполнение касания в тике (:342-646) ----
+        // Вызывается из Tick (HumanoidBase.cs) после сброса interruptAnim (:336) и сторожа
+        // «FLYING PLAYERS» (:338-340), перед action-смагглом (:668).
+        private void ExecuteTouchTick()
+        {
+            // триггер контролируемой коллизии (:342-360)
+            float ballDistanceNow =
+                (BluntMath.Get2D(_ball.Predict(0)) - _spatial.Position).Length();      // :342
+            float ballDistanceFuture = (BluntMath.Get2D(_ball.Predict(200))
+                - (_spatial.Position + _spatial.Movement * 0.2f)).Length();            // :343
+            float lastTouchBias = GetLastTouchBias(1500);                              // :344
+            float oppLastTouchBias = OppLastTouchBias(240);                            // :345 (ШОВ)
+
+            if (_designatedPossession &&                                               // :347 (ШОВ)
+                (
+                  (lastTouchBias <= 0.01f && oppLastTouchBias <= 0.01f &&
+                   _current.FunctionType == AnimCollection.FnMovement &&
+                   ballDistanceNow < 0.6f && ballDistanceFuture > 0.65f &&
+                   ballDistanceFuture > ballDistanceNow)                               // :349-350
+                  ||
+                  // todo оригинала: only when triptype is 1 ? (:354)
+                  (lastTouchBias <= 0.7f && HasPossession() &&
+                   _current.FunctionType == AnimCollection.FnTrip && ballDistanceNow < 0.4f)
+                ) && _ball.Predict(0).Z < 1.6f)                                        // :356
+            {
+                _controlledBallCollisionTriggered = true; // :358 TriggerControlledBallCollision
+            }
+
+            // контролируемая коллизия (:362-388, «EXPERIMENTAL» оригинала)
+            bool controlledBallCollision = _controlledBallCollisionTriggered;          // :363
+            if (controlledBallCollision) _controlledBallCollisionTriggered = false;    // :364
+            if (EnableControlledBallCollisions && controlledBallCollision &&
+                _current.TouchFrame == -1)                                             // :365
+            {
+                Vector3 currentBallVec = _ball.GetMovement();                          // :367
+                float nextBodyAngle = _startAngle + _current.Anim.GetOutgoingAngle()
+                    + _current.Anim.GetOutgoingBodyAngle() + _current.RotationSmuggleEnd; // :368
+
+                Vector3 touchVec = TrapVectorFromContext(nextBodyAngle,
+                    out float xRot, out float yRot);                                   // :370-372
+                if ((_current.OriginatingCommand.Modifier & PlayerCommand.ModifierKnockOn) != 0)
+                    touchVec *= 1.35f;                                                 // :373-375 (1.2 в комм.)
+
+                float bumpyRideBias = 0.0f;                                            // :377
+                touchVec = touchVec * (1.0f - bumpyRideBias) + currentBallVec * bumpyRideBias; // :378
+
+                _ball.Touch(touchVec);                                                 // :381
+                _ball.SetRotation(xRot, yRot, 0, 0.2f * (1.0f - bumpyRideBias));       // :382 (0.9 в комм.)
+                // :383 TriggerBallTouchSound — звук не переносим
+
+                RegisterTouch(TouchVectors.GetTouchTypeForBodyPart(
+                    _current.Anim.GetVariable("touch_bodypart")));                     // :385
+                // :386 UpdatePossessionStats — матч-слой
+            }
+
+            // touch-ветки по типам клипа (:390-646)
+            if (_current.TouchFrame == _current.FrameNum)                              // :390
+            {
+                // позиция мяча клипа в кадр касания (:392-394)
+                Vector3 desiredBallPosition =
+                    GetAnimTouchPosAtFrame(_current.Anim, _current.TouchFrame);        // :393
+                float desiredBallHeight = desiredBallPosition.Z;                       // :394
+
+                float touchableDistance = 0.4f;                                        // :396
+
+                float fullBallDistance = (_ball.Predict(0)
+                    - (_current.TouchPos + _current.PositionOffset)).Length();         // :398
+
+                // :400-409 verbose/debug — не переносим
+
+                if (_current.Anim.GetVariable("incoming_retain_state") != "")          // :411
+                {
+                    fullBallDistance = 0.0f;                                           // :412
+                    touchableDistance = 1.0f;                                          // :413
+                }
+
+                float bumpyRideBias = fullBallDistance / touchableDistance;            // :416
+                bumpyRideBias = Mathf.Clamp(bumpyRideBias - 0.001f, 0.0f, 1.0f);       // :417
+                bumpyRideBias = BluntMath.Curve(bumpyRideBias, 1.0f);                  // :418
+                bumpyRideBias = BluntMath.Curve(bumpyRideBias, 0.5f);                  // :419
+                Vector3 currentBallVec = _ball.GetMovement();                          // :420
+
+                if (fullBallDistance < touchableDistance &&
+                    Mathf.Abs(desiredBallHeight - _ball.Predict(0).Z) < 1.0f)          // :422
+                {
+                    float nextBodyAngle = _startAngle + _current.Anim.GetOutgoingAngle()
+                        + _current.Anim.GetOutgoingBodyAngle() + _current.RotationSmuggleEnd; // :424
+
+                    if (_current.FunctionType == AnimCollection.FnTrap ||
+                        (_current.FunctionType == AnimCollection.FnBallControl &&
+                         HasPossession() == false))                                    // :426
+                    {
+                        Vector3 touchVec = TrapVectorFromContext(nextBodyAngle,
+                            out float xRot, out float yRot);                           // :430
+                        if ((_current.OriginatingCommand.Modifier
+                             & PlayerCommand.ModifierKnockOn) != 0)
+                            touchVec *= 1.35f;                                         // :431-433
+
+                        touchVec = touchVec * (1.0f - bumpyRideBias)
+                            + currentBallVec * bumpyRideBias;                          // :435
+
+                        _ball.Touch(touchVec);                                         // :438
+                        _ball.SetRotation(xRot, yRot, 0, 0.5f * (1.0f - bumpyRideBias)); // :439
+
+                        RegisterTouch(TouchVectors.GetTouchTypeForBodyPart(
+                            _current.Anim.GetVariable("touch_bodypart")));             // :441
+                        // :442 UpdatePossessionStats — матч-слой
+                    }
+
+                    else if (_current.FunctionType == AnimCollection.FnBallControl)    // :445
+                    {
+                        Vector3 touchVec = BallControlVectorFromContext(nextBodyAngle,
+                            out float xRot, out float yRot);                           // :448
+                        if ((_current.OriginatingCommand.Modifier
+                             & PlayerCommand.ModifierKnockOn) != 0)
+                            touchVec *= 1.35f;                                         // :449-451
+
+                        touchVec = touchVec * (1.0f - bumpyRideBias)
+                            + currentBallVec * bumpyRideBias;                          // :453
+
+                        _ball.Touch(touchVec);                                         // :456
+                        _ball.SetRotation(xRot, yRot, 0, 0.6f * (1.0f - bumpyRideBias)); // :457 (1.0 в комм.)
+
+                        RegisterTouch(TouchVectors.GetTouchTypeForBodyPart(
+                            _current.Anim.GetVariable("touch_bodypart")));             // :459
+                        // :460 UpdatePossessionStats — матч-слой
+                    }
+
+                    else if (_current.FunctionType == AnimCollection.FnShortPass ||
+                             _current.FunctionType == AnimCollection.FnLongPass ||
+                             _current.FunctionType == AnimCollection.FnHighPass)       // :463-465
+                    {
+                        Vector3 ballDirection =
+                            _current.OriginatingCommand.TouchInfo.DesiredDirection;    // :467
+                        float ballPower = _current.OriginatingCommand.TouchInfo.DesiredPower; // :468
+                        // :469-507 — ШОВ решения плана: AI_GetPass-рефайн цели/направления
+                        // (:474-505) и targetPlayer/SelectPlayer (:469, :507) не портируются —
+                        // AI-слой вне скоупа; ballDirection/ballPower берутся из
+                        // originatingCommand.touchInfo как есть, targetPlayer == null.
+
+                        float zcurve = 0.0f;                                           // :510
+                        Vector3 touchVec = ballDirection * 36f * (ballPower + 0.3f);   // :511
+
+                        if (PassFiddlingEnabled)                                       // :513 (:88-90)
+                        {
+                            touchVec = GetBestPossibleTouch(touchVec, _current.FunctionType); // :516
+
+                            // немного кривизны для эстетики и реализма (:518-526)
+                            float bodyTouchAngle = BluntMath.GetAngle2D(
+                                _spatial.BodyDirectionVec, touchVec) / Mathf.Pi;       // :519
+                            if (Mathf.Abs(bodyTouchAngle) > 0.5f)
+                                bodyTouchAngle = (1.0f - Mathf.Abs(bodyTouchAngle))
+                                    * BluntMath.SignSide(bodyTouchAngle);              // :520
+                            bodyTouchAngle *= 2.0f;                                    // :521
+                            float amount = bodyTouchAngle * 0.25f;                     // :523
+                            if (_current.FunctionType == AnimCollection.FnHighPass)
+                                amount *= 0.2f;                                        // :524
+                            touchVec = BluntMath.GetRotated2D(touchVec, amount
+                                * (0.4f + 0.6f * BluntMath.NormalizedClamp(
+                                    touchVec.Length(), 0.0f, 70.0f)));                 // :525
+                            zcurve = amount * -340f;                                   // :526 (-600 в комм.)
+                        }
+
+                        touchVec = touchVec * (1.0f - bumpyRideBias)
+                            + currentBallVec * bumpyRideBias;                          // :531
+
+                        _ball.Touch(touchVec);                                         // :534
+                        // :535 TriggerBallTouchSound — звук не переносим
+
+                        float forwardness = 3.5f;                                      // :537
+                        if (_current.FunctionType == AnimCollection.FnHighPass)
+                            forwardness = -1.3f;                                       // :538
+                        float xRot = BluntMath.GetNormalized(touchVec, Vector3.Zero).Y
+                            * (Mathf.Clamp(touchVec.Length(), 0f, 15f) * forwardness); // :539
+                        float yRot = BluntMath.GetNormalized(touchVec, Vector3.Zero).X
+                            * (Mathf.Clamp(touchVec.Length(), 0f, 15f) * forwardness); // :540
+                        _ball.SetRotation(xRot, yRot, zcurve, 0.9f * (1.0f - bumpyRideBias)); // :541
+
+                        RegisterTouch(TouchVectors.GetTouchTypeForBodyPart(
+                            _current.Anim.GetVariable("touch_bodypart")));             // :543
+                        // :544-545 UpdatePossessionStats своих/цели — матч-слой (цели нет — ШОВ выше)
+                    }
+
+                    else if (_current.FunctionType == AnimCollection.FnShot)           // :548
+                    {
+                        // :550-566 — ШОВ решения плана: AI_GetShotDirection-рефайн не портируется.
+                        // КВИРК оригинала: локальный ballDirection после рефайна дальше НЕ
+                        // используется — GetShotVector читает touchInfo.desiredDirection напрямую
+                        // (:571), так что пропуск рефайна на вектор удара не влияет вовсе.
+                        Vector3 touchVec = TouchVectors.GetShotVector(_ball,
+                            _nextStartPos, _nextStartAngle, nextBodyAngle,
+                            CalculateOutgoingMovement(_current.Positions),
+                            _anims.GetPositionCacheInternal(_current.Id), _current.FrameNum,
+                            _spatial.Angle, _spatial.DirectionVec, _spatial.BodyDirectionVec,
+                            _current.OriginatingCommand.DesiredVelocityFloat,
+                            _current.OriginatingCommand.TouchInfo.DesiredDirection,
+                            _current.OriginatingCommand.TouchInfo.DesiredPower,
+                            _decayingPositionOffset.Length(),
+                            BluntMath.AtoF(_current.Anim.GetVariable("touch_maxpowerfactor")),
+                            _statPhysicalShotPower, _statTechnicalVolley, _statTechnicalShot,
+                            _rng, out float xRot, out float yRot, out float zRot,
+                            _current.OriginatingCommand.TouchInfo.AutoDirectionBias);  // :568-571
+
+                        touchVec = touchVec * (1.0f - bumpyRideBias)
+                            + currentBallVec * bumpyRideBias;                          // :573
+
+                        _ball.Touch(touchVec);                                         // :576
+                        _ball.SetRotation(xRot, yRot, zRot, 0.7f * (1.0f - bumpyRideBias)); // :577
+                        // :578 TriggerBallTouchSound — звук не переносим
+
+                        RegisterTouch(TouchVectors.GetTouchTypeForBodyPart(
+                            _current.Anim.GetVariable("touch_bodypart")));             // :580
+                        // :581 MatchData::AddShot — матч-слой
+                    }
+
+                    else if (_current.FunctionType == AnimCollection.FnInterfere)      // :584
+                    {
+                        Vector3 touchVec = TrapVectorFromContext(nextBodyAngle,
+                            out float xRot, out float yRot);                           // :587
+                        touchVec = touchVec * 0.5f
+                            + BluntMath.GetNormalized(
+                                BluntMath.Get2D(_ball.Predict(0)) - _spatial.Position,
+                                Vector3.Zero) * 4.0f
+                            + new Vector3(0, 0, _rng.Uniform(0.5f, 1.5f));             // :588 (was 1..6)
+
+                        touchVec = touchVec * (1.0f - bumpyRideBias)
+                            + currentBallVec * bumpyRideBias;                          // :590
+
+                        _ball.Touch(touchVec);                                         // :593
+                        // :594 — КВИРК оригинала: SetRotation зовётся с ТРЕМЯ аргументами —
+                        // 0.3·(1−bias) уходит в Z-ВРАЩЕНИЕ, а bias остаётся дефолтным 1.0
+                        // (ball.hpp:64). Вероятно, задумывался bias — НЕ чиним.
+                        _ball.SetRotation(xRot, yRot, 0.3f * (1.0f - bumpyRideBias), 1.0f);
+                        // не совсем «случайное», но результирующее направление таково — вратари
+                        // могут ловить такие мячи (комментарий оригинала :595)
+                        RegisterTouch(TouchTypeAccidental);                            // :595
+                    }
+
+                    else if (_current.FunctionType == AnimCollection.FnDeflect)        // :598
+                    {
+                        bool canRetain = true; // :599 — сможем ли зафиксировать мяч?
+                        if (_current.Anim.GetVariable("outgoing_retain_state") == "")
+                            canRetain = false; // :600 — не тот клип, безнадёжно!
+                        if (_isBallRetainer)
+                            canRetain = false; // :601 ШОВ GetBallRetainer() != 0 (в лабе — только сам)
+                        // ЛАБ-ПАРАМЕТР (решение плана): вратарский контур не в фазе 4
+                        if (!_labAllowDeflectRetain) canRetain = false;
+
+                        float veloDifficulty = BluntMath.NormalizedClamp(
+                            (_ball.GetMovement() - _spatial.Movement).Length(), 0.0f, 40.0f); // :603
+                        // :604-611 ШОВ lastTouchPlayer соперника (см. OppLastTouchBias):
+                        // pow(0, 0.6) == 0 — совпадает с отсутствием lastTouchPlayer
+                        float reactionDifficulty = Mathf.Pow(
+                            OppLastTouchBias(1200 - (int)(_statPhysicalReaction * 400)), 0.6f);
+                        if ((1.0f - veloDifficulty) * (1.0f - reactionDifficulty) < 0.3f)
+                            canRetain = false;                                         // :612 — слишком трудно!
+
+                        if (canRetain)                                                 // :615
+                        {
+                            _isBallRetainer = true; // :616 ШОВ match->SetBallRetainer(CastPlayer())
+                        }
+                        else
+                        {
+                            Vector3 currentBallMovement = BluntMath.Get2D(_ball.GetMovement()); // :618
+                            Vector3 playerMovement = _spatial.Movement;                // :619
+                            Vector3 touchVec = BluntMath.GetNormalized(
+                                -currentBallMovement * 0.1f + playerMovement * 2.0f
+                                + new Vector3(-_teamSide, 0, 0) * 4.0f
+                                + new Vector3(0, _rng.Uniform(-1f, 1f), 0), Vector3.Zero)
+                                * (currentBallMovement.Length() * 0.3f
+                                   + playerMovement.Length() * 2.5f);                  // :620
+                            touchVec.Z += 1.2f;                                        // :621
+
+                            touchVec = touchVec * (1.0f - bumpyRideBias)
+                                + currentBallVec * bumpyRideBias;                      // :623
+
+                            _ball.Touch(touchVec);                                     // :626
+                            _ball.SetRotation(0, 0, 0, 0.2f * (1.0f - bumpyRideBias)); // :627
+                        }
+                        RegisterTouch(TouchTypeAccidental);                            // :629
+                    }
+
+                    else if (_current.FunctionType == AnimCollection.FnSliding)        // :632
+                    {
+                        Vector3 touchVec = BluntMath.GetRotated2D(
+                            BluntMath.GetVectorFromString(
+                                _current.Anim.GetVariable("balldirection")),
+                            _spatial.Angle);                                           // :633
+                        touchVec = touchVec * 6.0f + _ball.GetMovement() * -0.28f;     // :634
+                        touchVec += new Vector3(0, 0, 6);                              // :635
+
+                        touchVec = touchVec * (1.0f - bumpyRideBias)
+                            + currentBallVec * bumpyRideBias;                          // :637
+
+                        _ball.Touch(touchVec);                                         // :640
+                        // подкат мяч не подкручивает — SetRotation в ветке нет (:632-643)
+                        RegisterTouch(TouchTypeAccidental);                            // :642
+                    }
+                }
+            }
+
+            // :648-665 superglue ретейнера (мяч «приклеен» к части тела retain-клипа) — ШОВ:
+            // требует позиций узлов скелета (nodeMap), которых в ядре нет; вратарский контур —
+            // вне фазы 4. Deflect-ветка может выставить ретейнера (в лабе выключено параметром),
+            // но приклейка мяча к телу останется матч/сцен-слою.
         }
 
         // ---- Мосты для GDScript-тестов ----

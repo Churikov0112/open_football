@@ -31,6 +31,11 @@ namespace Gpf
         public const int StrictTrue = 1;
         public const int StrictDynamic = 2;
 
+        // e_PlayerCommandModifier (gamedefines.hpp:138-141) — битовая маска поля Modifier;
+        // потребитель — touch-ветки тика (knock-on-множитель 1.35, humanoid.cpp:373-375 и др.).
+        public const int ModifierNone = 0;    // :139
+        public const int ModifierKnockOn = 1; // :140
+
         public int DesiredFunctionType = AnimCollection.FnMovement;  // ctor :185
         public bool UseDesiredMovement = false;                      // ctor :186
         public Vector3 DesiredDirection = Vector3.Zero;              // :204

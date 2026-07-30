@@ -162,6 +162,7 @@ namespace Gpf
             _current.PositionOffset = Vector3.Zero;         // :971
             _current.OriginatingCommand = new PlayerCommand();
             _interruptAnim = InterruptNone;                 // :1006
+            _decayingPositionOffset = Vector3.Zero;         // :1009 (задача 7)
             // ОТКЛОНЕНИЕ ОТСУТСТВУЕТ: reQueueDelayFrames в ResetPosition оригинала НЕ сбрасывается
             // (только в конструкторе, :49) — не сбрасываем и мы.
             // previousAnim (:973-994) — усечённая копия, см. PreviousAnimState
@@ -233,6 +234,13 @@ namespace Gpf
             // (поле — Humanoid.cs; потребители — GetLastTouchBias humanoid.cpp:2204 и маска
             // частоты ReQueue :166-178)
             _actualTimeMs += 10;
+            // распад позиционного офсета толкучки (humanoid.cpp:97-99); в лабе офсет копится
+            // только коллизиями игроков (не портированы) и остаётся нулём, но контур живёт —
+            // потребители: touch-векторы и SetTouchContext (задача 7)
+            _decayingPositionOffset *= 0.95f;                                  // humanoid.cpp:98
+            if (_decayingPositionOffset.Length() < 0.005f)
+                _decayingPositionOffset = Vector3.Zero;                        // humanoid.cpp:99
+            // :101 decayingDifficultyFactor — система сложности, вне скоупа фазы
             CalculateSpatialState();                        // :120
             _spatial.PositionOffsetMovement = Vector3.Zero; // :121
             _current.FrameNum++;                            // :123
@@ -405,8 +413,12 @@ namespace Gpf
             if (_startPos.Z != 0f)
                 GD.PushError("Gpf.HumanoidBase: BWAAAAAH FLYING PLAYERS!! height: " + _startPos.Z);
 
-            // :342-646 — исполнение касания/коллизии мяча (задача 7); :648-665 — superglue
-            // ретейнера (задача 7).
+            // исполнение касания (:342-646): триггер и controlled-коллизия, touch-ветки по
+            // типам клипа — Humanoid.cs (задача 7); superglue ретейнера (:648-665) — ШОВ,
+            // см. комментарий в конце ExecuteTouchTick. Межтельные коллизии мяча
+            // (match->CheckBallCollisions) живут в Match::Process — их зовёт лаб-оркестратор
+            // (Gpf.BallBodyCollider, задача 8), не тик гуманоида.
+            ExecuteTouchTick();
 
             // action smuggle (:668-695)
             // :670-672 — комментарий оригинала: стартуем с +1, чтобы влиять и на первый кадр;
