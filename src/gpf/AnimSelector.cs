@@ -27,6 +27,7 @@ namespace Gpf
         private int _predDesiredFootId;
         private Vector3 _predRelIncomingBodyDirection;
         private int _predIncomingVelocityId;
+        private Vector3 _predRelDesiredTripDirection;
         private Vector3 _spatialPosition;
         private float _spatialAngle;
 
@@ -212,18 +213,103 @@ namespace Gpf
             return rating1 < rating2;
         }
 
+        private bool CompareTripDirectionSimilarity(int a1, int a2) // :1972-1976
+        {
+            float r1 = -BluntMath.GetVectorFromString(_anims.GetAnim(a1).GetVariable("bumpdirection"))
+                .Dot(_predRelDesiredTripDirection);
+            float r2 = -BluntMath.GetVectorFromString(_anims.GetAnim(a2).GetVariable("bumpdirection"))
+                .Dot(_predRelDesiredTripDirection);
+            return r1 < r2;
+        }
+
+        private bool CompareBaseanimSimilarity(int a1, int a2) // :1988-1994
+        {
+            bool isBase1 = _anims.GetAnim(a1).GetVariable("baseanim") == "true";
+            bool isBase2 = _anims.GetAnim(a2).GetVariable("baseanim") == "true";
+            if (isBase1 && !isBase2) return true;
+            return false;
+        }
+
+        private bool CompareCatchOrDeflect(int a1, int a2) // :1996-2002
+        {
+            bool catch1 = _anims.GetAnim(a1).GetVariable("outgoing_retain_state") != "";
+            bool catch2 = _anims.GetAnim(a2).GetVariable("outgoing_retain_state") != "";
+            if (catch1 && !catch2) return true;
+            return false;
+        }
+
+        // ---- Установка предикатов + сорты (humanoidbase.cpp:1775-2012) ----
+        // В C++ предикаты — mutable-поля объекта, сорт зовётся boost::bind'ом на метод. У нас
+        // предикаты живут в селекторе, а цепочку сортов гоняет HumanoidBase (Humanoid.cs) —
+        // отсюда парные Set*/SortBy*-обёртки. Все сорты — StableSort (std::stable_sort).
+
+        // spatialState-зависимость CompareBodyDirectionSimilarity (:1908-1910)
+        internal void SetSpatialForPredicates(Vector3 position, float angle)
+        {
+            _spatialPosition = position;
+            _spatialAngle = angle;
+        }
+
+        internal void SetMovementSimilarityPredicate(Vector3 relDesiredDirection, int desiredVelocityId,
+                                                     float spatialFloatVelocity) // :1818-1824
+        {
+            _predRelDesiredDirection = relDesiredDirection;
+            _predDesiredVelocityId = desiredVelocityId;
+            _predCorneringBias = CalculateBiasForFastCornering(
+                new Vector3(0, -1.0f * spatialFloatVelocity, 0),
+                relDesiredDirection * Velo.EnumToFloatVelocity(desiredVelocityId), 1.0f, 0.9f); // :1823
+        }
+
+        internal void SetBodyDirectionSimilarityPredicate(Vector3 lookAt) // :1902-1904
+            => _predLookAt = lookAt;
+
+        internal void SetFootSimilarityPredicate(int footId) // :1775-1777
+            => _predDesiredFootId = footId;
+
+        internal void SetIncomingVelocitySimilarityPredicate(int velocityId) // :1789-1791
+            => _predIncomingVelocityId = velocityId;
+
+        internal void SetIncomingBodyDirectionSimilarityPredicate(Vector3 relIncomingBodyDirection) // :1889-1891
+            => _predRelIncomingBodyDirection = relIncomingBodyDirection;
+
+        internal void SetTripDirectionSimilarityPredicate(Vector3 relDesiredTripDirection) // :1968-1970
+            => _predRelDesiredTripDirection = relDesiredTripDirection;
+
+        internal void SetNumericVariableSimilarityPredicate(string varName, float desiredValue) // :2004-2007
+        {
+            _predNumericVariableName = varName;
+            _predNumericVariableValue = desiredValue;
+        }
+
+        internal void SortByNumericVariable(List<int> dataSet) => StableSort(dataSet, CompareNumericVariable);
+        internal void SortByFootSimilarity(List<int> dataSet) => StableSort(dataSet, CompareFootSimilarity);
+        internal void SortByIncomingBodyDirectionSimilarity(List<int> dataSet)
+            => StableSort(dataSet, CompareIncomingBodyDirectionSimilarity);
+        internal void SortByIncomingVelocitySimilarity(List<int> dataSet)
+            => StableSort(dataSet, CompareIncomingVelocitySimilarity);
+        internal void SortByTripDirectionSimilarity(List<int> dataSet)
+            => StableSort(dataSet, CompareTripDirectionSimilarity);
+        internal void SortByBaseanimSimilarity(List<int> dataSet) => StableSort(dataSet, CompareBaseanimSimilarity);
+        internal void SortByCatchOrDeflect(List<int> dataSet) => StableSort(dataSet, CompareCatchOrDeflect);
+
         // ---- _KeepBest* (humanoidbase.cpp:1103-1229) ----
 
-        // :1103-1171 (movement-путь: baseanim-сортировки нет)
-        private void KeepBestDirectionAnims(List<int> dataSet, bool strict = true, float allowedAngle = 0f,
-                                            int allowedVelocitySteps = 0, int forcedQuadrantId = -1)
+        // :1103-1171 — ПОЛНАЯ сигнатура оригинала (дефолты humanoidbase.hpp: strict=true,
+        // allowedAngle=0, allowedVelocitySteps=0, forcedQuadrantID=-1). command нужен ради
+        // strict-ветки baseanim-сорта (:1117-1126): она работает только для НЕ-movement типов.
+        internal void KeepBestDirectionAnims(List<int> dataSet, PlayerCommand command, bool strict = true,
+                                             float allowedAngle = 0f, int allowedVelocitySteps = 0,
+                                             int forcedQuadrantId = -1)
         {
-            if (dataSet.Count == 0) return;
-            int bestQuadrantId = forcedQuadrantId;
+            if (dataSet.Count == 0) return;                       // :1105 assert(size != 0)
+            int bestQuadrantId = forcedQuadrantId;                // :1107
             if (bestQuadrantId == -1)
             {
-                StableSort(dataSet, CompareMovementSimilarity);
-                bestQuadrantId = BluntMath.AtoI(_anims.GetAnim(dataSet[0]).GetVariable("quadrant_id"));
+                StableSort(dataSet, CompareMovementSimilarity);   // :1113
+                // «лучший клип должен быть baseanim, остальные сравниваем с ним» (:1116-1126)
+                if (strict && command.DesiredFunctionType != AnimCollection.FnMovement)
+                    StableSort(dataSet, CompareBaseanimSimilarity);
+                bestQuadrantId = BluntMath.AtoI(_anims.GetAnim(dataSet[0]).GetVariable("quadrant_id")); // :1130
             }
             var bestQuadrant = _anims.GetQuadrant(bestQuadrantId);
             for (int k = dataSet.Count - 1; k >= 1; k--) // erase со 2-го элемента (:1134-1135)
@@ -245,12 +331,16 @@ namespace Gpf
             }
         }
 
-        // :1174-1229 (movement-путь)
-        private void KeepBestBodyDirectionAnims(List<int> dataSet, bool strict = true, float allowedAngle = 0f)
+        // :1174-1229 — ПОЛНАЯ сигнатура оригинала (дефолты: strict=true, allowedAngle=0).
+        internal void KeepBestBodyDirectionAnims(List<int> dataSet, PlayerCommand command, bool strict = true,
+                                                 float allowedAngle = 0f)
         {
-            if (dataSet.Count == 0) return;
-            StableSort(dataSet, CompareBodyDirectionSimilarity);
-            Animation bestAnim = _anims.GetAnim(dataSet[0]);
+            if (dataSet.Count == 0) return;                       // :1179 assert(size != 0)
+            StableSort(dataSet, CompareBodyDirectionSimilarity);  // :1184
+            // «лучший клип должен быть baseanim» (:1187-1197) — только для не-movement типов
+            if (strict && command.DesiredFunctionType != AnimCollection.FnMovement)
+                StableSort(dataSet, CompareBaseanimSimilarity);
+            Animation bestAnim = _anims.GetAnim(dataSet[0]);      // :1199
             float bestLookAngle = ForceIntoAllowedBodyDirectionAngle(bestAnim.GetOutgoingBodyAngle())
                                 + ForceIntoPreferredDirectionAngle(bestAnim.GetOutgoingAngle());
             float adaptedAllowedAngle = strict ? 0.06f * Mathf.Pi : allowedAngle; // :1214-1217
@@ -263,7 +353,11 @@ namespace Gpf
             }
         }
 
-        // ---- SelectAnim movement-путь (humanoidbase.cpp:1374-1496) ----
+        // ---- SelectAnim movement-путь БАЗЫ (humanoidbase.cpp:1374-1496) ----
+        // ФАЗА 4, задача 3: игроки на этот путь больше не ходят — HumanoidBase.SelectNextMovementAnim
+        // перешёл на цепочку НАСЛЕДНИКА (Humanoid.cs: BuildCrudeDataSet/SortDataSet,
+        // humanoid.cpp:1244-1637). Метод оставлен как порт базовой ветки (её гоняют судьи в
+        // оригинале) и опора check_gpf_selector.gd.
 
         internal List<int> SelectMovementInternal(Vector3 position, float angle, int enumVelocityId,
             float floatVelocity, Vector3 relBodyDirectionVec, int footId, Vector3 desiredDirectionWorld,
@@ -304,8 +398,11 @@ namespace Gpf
                 relDesiredDirection * Velo.EnumToFloatVelocity(_predDesiredVelocityId), 1.0f, 0.9f); // :1823
             _predLookAt = desiredLookAt;
 
-            KeepBestDirectionAnims(dataSet); // :1435
-            if (useDesiredLookAt) KeepBestBodyDirectionAnims(dataSet); // :1436
+            // движенческая команда-заглушка: в базовой ветке KeepBest* смотрит на команду только
+            // ради baseanim-сорта, который для movement выключен (:1117-1126, :1187-1197)
+            var movementCommand = new PlayerCommand { DesiredFunctionType = AnimCollection.FnMovement };
+            KeepBestDirectionAnims(dataSet, movementCommand); // :1435
+            if (useDesiredLookAt) KeepBestBodyDirectionAnims(dataSet, movementCommand); // :1436
 
             _predNumericVariableName = "idlelevel"; // :1449-1450
             _predNumericVariableValue = 1;

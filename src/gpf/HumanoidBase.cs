@@ -201,11 +201,26 @@ namespace Gpf
             // :1377 — при Switch условие «localInterruptAnim != ReQueue» всегда истинно
             CalculateFactualSpatialState();
 
-            // запрос + сортировки (:1383-1496) — внутри селектора
-            var dataSet = _selector.SelectMovementInternal(_spatial.Position, _spatial.Angle,
-                _spatial.EnumVelocity, _spatial.FloatVelocity, _spatial.RelBodyDirectionVec,
-                _spatial.Foot, desiredDirectionWorld, desiredVelocityFloat,
-                useDesiredLookAt, desiredLookAt);
+            // ФАЗА 4, задача 3: отбор клипа переехал на цепочку НАСЛЕДНИКА (Humanoid.cs:
+            // BuildCrudeDataSet humanoid.cpp:1244-1365 + SortDataSet :1369-1637) — игроки в
+            // оригинале исполняют Humanoid::SelectAnim, а не HumanoidBase::SelectAnim. Это
+            // закрывает открытый вопрос фазы 3 (там движение-ветка шла по базе,
+            // AnimSelector.SelectMovementInternal — он остался как порт базовой ветки судей).
+            var command = new PlayerCommand
+            {
+                DesiredFunctionType = AnimCollection.FnMovement,
+                UseDesiredMovement = true,   // движенческая команда контроллера
+                DesiredDirection = desiredDirectionWorld,
+                DesiredVelocityFloat = desiredVelocityFloat,
+                UseDesiredLookAt = useDesiredLookAt,
+                DesiredLookAt = desiredLookAt,
+            };
+            var dataSet = BuildCrudeDataSet(command);                          // humanoid.cpp:1356-1365
+            if (dataSet.Count == 0) return false;                              // :1364
+            if (!SortDataSet(dataSet, command)) return false;                  // :1535 «too wrong»
+            // :1657-1660 — если после фильтров ничего не осталось, движение идёт idle-клипом
+            if (dataSet.Count == 0 && command.DesiredFunctionType == AnimCollection.FnMovement)
+                dataSet.Add(_anims.GetIdleMovementAnimID());
             if (dataSet.Count == 0) return false;                              // :1510-1514
 
             // desiredBodyDirectionRel — формула НАСЛЕДНИКА Humanoid::SelectAnim
