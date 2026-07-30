@@ -78,9 +78,10 @@ func _initialize() -> void:
 	h2.ResetSituation(Vector3.ZERO, 0.0)
 	h2.SetBall(ball)
 	# 5.0 — walkVelocity (gamedefines.hpp:20): const-поля C#-класса через мост не читаются
-	# (см. Velo.cs), поэтому литерал. Tick — четырёхаргументный, как в фазе 3.
+	# (см. Velo.cs), поэтому литерал. Tick — пятиаргументный с задачи 5 (третий — wantBall);
+	# мост требует полный список.
 	for i in 200:
-		h2.Tick(Vector3(0, -1, 0), 5.0, false, Vector3.ZERO)
+		h2.Tick(Vector3(0, -1, 0), 5.0, false, false, Vector3.ZERO)
 	if h2.GetSpatialFloatVelocity() < 1.8:
 		print("CHECK FAIL: движение сломано отбором наследника: v = ",
 			h2.GetSpatialFloatVelocity()); ok = false

@@ -5,10 +5,17 @@ extends SceneTree
 func vec_eq(a: Vector3, b: Vector3, eps := 1.0e-4) -> bool:
 	return absf(a.x - b.x) < eps and absf(a.y - b.y) < eps and absf(a.z - b.z) < eps
 
+# Фаза 4, задача 5: движ-смаггл включён (CalculateMovementSmuggle, humanoid.cpp:2326-2408).
+# Мяч кладём в 5 м ПОЗАДИ старта (игрок бежит от него): нет владения (суррогат <1.6 м) и мяч
+# статичен → гейт :2366 даёт нулевой смаггл — инварианты «smuggle-нули» фазы 3 сохранены.
+# Tick — 5-аргументный (появился wantBall), мост требует полный список.
+var _far_ball = null
+
 func make_humanoid(HB, c, sel):
 	var h = HB.new()
 	h.Setup(c, sel)
 	h.ResetSituation(Vector3.ZERO, 0.0)
+	h.SetBall(_far_ball)
 	return h
 
 func _initialize() -> void:
@@ -31,6 +38,8 @@ func _initialize() -> void:
 	c.Load("res://assets/gpf/animations", skel)
 	var sel = AS.new()
 	sel.Setup(c)
+	_far_ball = load("res://src/gpf/Ball.cs").new()
+	_far_ball.ResetSituation(Vector3(0, 5, 0))  # 5 м позади, игрок бежит в -y (см. шапку)
 	var fwd := Vector3(0, -1, 0)
 
 	# --- 0. Жёсткие ассерты первого тика: значения из сырого кэша idle-клипа ---
@@ -44,7 +53,7 @@ func _initialize() -> void:
 	# до первого Tick noPos = false — дефолт конструктора AnimApplyBuffer (humanoidbase.hpp:139)
 	if h0.GetApplyNoPos():
 		print("CHECK FAIL: noPos == true сразу после ResetSituation (hpp:139 даёт false)"); ok = false
-	h0.Tick(fwd, 0.0, false, Vector3.ZERO)
+	h0.Tick(fwd, 0.0, false, false, Vector3.ZERO)
 	if h0.GetCurrentAnimId() != idle_id:
 		print("CHECK FAIL: после Reset текущий клип ", h0.GetCurrentAnimId(), " != idle ", idle_id); ok = false
 	var cache0: Vector3 = idle_cache[0]
@@ -65,7 +74,7 @@ func _initialize() -> void:
 	# --- 1. Стоим по idle-команде: не уезжаем, скорость idle ---
 	var h = make_humanoid(HB, c, sel)
 	for i in 200:
-		h.Tick(fwd, 0.0, true, h.GetSpatialPosition() + fwd * 10.0)
+		h.Tick(fwd, 0.0, false, true, h.GetSpatialPosition() + fwd * 10.0)
 	if h.GetSpatialEnumVelocity() != 0:
 		print("CHECK FAIL: idle-команда разогнала до ", h.GetSpatialEnumVelocity()); ok = false
 	if h.GetSpatialPosition().length() > 0.5:
@@ -76,8 +85,8 @@ func _initialize() -> void:
 	# прогрев 2 тика: на самом первом тике previousPosition2D — точка ResetSituation, а позиция —
 	# кадр 0 сырого кэша idle-клипа; их дельта не обязана быть нулевой (движение-инвариант
 	# осмыслен со второго тика)
-	h.Tick(fwd, 8.0, true, h.GetSpatialPosition() + fwd * 10.0)
-	h.Tick(fwd, 8.0, true, h.GetSpatialPosition() + fwd * 10.0)
+	h.Tick(fwd, 8.0, false, true, h.GetSpatialPosition() + fwd * 10.0)
+	h.Tick(fwd, 8.0, false, true, h.GetSpatialPosition() + fwd * 10.0)
 	var allowed := [Vector3(0, -1, 0)]
 	for a in [-0.25, 0.25, -0.75, 0.75]:
 		allowed.append(Vector3(0, -1, 0).rotated(Vector3(0, 0, 1), a * PI))
@@ -86,7 +95,7 @@ func _initialize() -> void:
 	# 6 клипов: разгон при физике медленнее lite — актуальная скорость может отставать от бакета клипа
 	while transitions < 6 and t < 4000:
 		var before: Vector3 = h.GetSpatialPosition()
-		var switched: bool = h.Tick(fwd, 8.0, true, h.GetSpatialPosition() + fwd * 10.0)
+		var switched: bool = h.Tick(fwd, 8.0, false, true, h.GetSpatialPosition() + fwd * 10.0)
 		if switched: transitions += 1
 		t += 1
 		# движение == дельта позиций ×100 (:1642; smuggle-нули)
@@ -119,8 +128,8 @@ func _initialize() -> void:
 	var h1 = make_humanoid(HB, c, sel)
 	var h2 = make_humanoid(HB, c, sel)
 	for i in 500:
-		h1.Tick(fwd, 8.0, true, h1.GetSpatialPosition() + fwd * 10.0)
-		h2.Tick(fwd, 8.0, true, h2.GetSpatialPosition() + fwd * 10.0)
+		h1.Tick(fwd, 8.0, false, true, h1.GetSpatialPosition() + fwd * 10.0)
+		h2.Tick(fwd, 8.0, false, true, h2.GetSpatialPosition() + fwd * 10.0)
 	if h1.GetSpatialPosition() != h2.GetSpatialPosition() or h1.GetSpatialAngle() != h2.GetSpatialAngle():
 		print("CHECK FAIL: недетерминизм прогона"); ok = false
 
@@ -139,7 +148,7 @@ func _initialize() -> void:
 	var switches_seen := 0
 	var tt := 0
 	while switches_seen < 4 and tt < 2000 and ok:
-		var sw: bool = h5.Tick(dir_right, 8.0, true, h5.GetSpatialPosition() + dir_right * 10.0)
+		var sw: bool = h5.Tick(dir_right, 8.0, false, true, h5.GetSpatialPosition() + dir_right * 10.0)
 		tt += 1
 		if not sw: continue
 		switches_seen += 1
@@ -163,7 +172,7 @@ func _initialize() -> void:
 				break
 			if k >= 17:
 				break
-			var sw2: bool = h5.Tick(dir_right, 8.0, true, h5.GetSpatialPosition() + dir_right * 10.0)
+			var sw2: bool = h5.Tick(dir_right, 8.0, false, true, h5.GetSpatialPosition() + dir_right * 10.0)
 			tt += 1
 			if sw2:
 				switches_seen += 1

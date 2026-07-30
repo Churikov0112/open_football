@@ -105,18 +105,22 @@ namespace Gpf.Lab
         {
             if (_humanoid.GetCurrentAnimId() < 0) return; // _Ready ещё не отработал
 
-            // desiredLookAt — точка в 10 м по команде, как GetBasicMovementCommand (player.cpp:1771)
+            // desiredLookAt — точка в 10 м по команде, как GetBasicMovementCommand (player.cpp:1771).
+            // wantBall = false: ходунку мяч не нужен; лаб-ввод «хочу мяч» появится с клавишами
+            // задачи 8.
             bool switched = _humanoid.Tick(_desiredDirection,
                 Gpf.Velo.EnumToFloatVelocity(_desiredVelocityId),
-                true, _humanoid.GetSpatialPosition() + _desiredDirection * 10f);
+                false, true, _humanoid.GetSpatialPosition() + _desiredDirection * 10f);
             if (switched) _transitions++;
 
             var anim = _collection.GetAnim(_humanoid.GetCurrentAnimId());
-            // Применение ровно из apply-буфера тика (humanoidbase.cpp:700-711), не из spatial:
+            // Применение ровно из apply-буфера тика (humanoid.cpp:763-780), не из spatial:
             // позиция и доворот идут ЦЕЛИКОМ через basePos/baseRotZ, корень клипа при noPos
             // занулён по X/Y (animation.cpp:410-415) — иначе варп сложился бы с сырым корнем дважды.
+            // smooth/smoothFactor — из apply-буфера (humanoid.cpp:276-284), timeDiff = 10 мс.
             _applier.Apply(_skeleton, anim, _humanoid.GetApplyFrameNum(), 0f,
-                _humanoid.GetApplyNoPos(), _humanoid.GetApplyOrientation(), _humanoid.GetApplyPosition());
+                _humanoid.GetApplyNoPos(), _humanoid.GetApplyOrientation(), _humanoid.GetApplyPosition(),
+                _humanoid.GetApplySmooth(), _humanoid.GetSmoothFactor(), 10);
         }
 
         public override void _PhysicsProcess(double delta)

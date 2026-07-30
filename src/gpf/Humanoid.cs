@@ -10,17 +10,18 @@ namespace Gpf
     // гоняют только судьи — значит ветки наследника и есть «настоящий» путь (главный урок фазы 3).
     // Ссылки вида `:NNNN` в этом файле — humanoid.cpp, если явно не указан другой файл.
     //
-    // Здесь: GetHasteFactor (:1143-1157), голова SelectAnim — сборка CrudeSelectionQuery
-    // (:1244-1365), хвост SelectAnim — KeepBest*-ветки по типам и сорт-цепочка (:1369-1637),
+    // Здесь: GetHasteFactor (:1143-1157), SelectAnim целиком (:1159-1820) — голова-сборка
+    // CrudeSelectionQuery (:1244-1365), KeepBest*-ветки по типам и сорт-цепочка (:1369-1637),
+    // ветки Movement/BallControl и «make it so»-заполнение Anim (:1648-1786, задача 5),
     // NeedTouch (:1822-1857), плюс _HighOrBouncyBall (humanoidbase.cpp:1089-1100) — он нужен
     // trap-ветке и до фазы 4 в порт не попадал. С задачи 4 — сердце smuggle-механики:
     // GetFrontOfFootOffsetRel (humanoid_utils.cpp:103-115), GetLastTouchBias
     // (playerbase.cpp:141-146), GetBodyBallDistanceAdvantage (:1859-1997) и
-    // GetBestCheatableAnimID (:1999-2323).
+    // GetBestCheatableAnimID (:1999-2323); с задачи 5 — CalculateMovementSmuggle (:2326-2408).
     //
-    // НЕ портированы (по скоупу фазы): оптимизации-ранние-выходы SelectAnim (:1163-1187),
-    // ветка e_InterruptAnim_ReQueue (:1191-1240 — задача 6), исполнение выбора и «make it so»
-    // хвоста SelectAnim (:1648-1820 — задачи 5, 7).
+    // НЕ портированы (по скоупу фазы): оптимизации-ранние-выходы SelectAnim (:1163-1189),
+    // ветка e_InterruptAnim_ReQueue (:1191-1240 и quadrant-reject :1727-1742 — задача 6),
+    // action-ветки Trap/Interfere/Deflect/пасов/удара/Sliding (:1687-1722 — задачи 7-8).
     public partial class HumanoidBase
     {
         // ---- Константы наследника (humanoid.cpp:40-65) ----
@@ -93,6 +94,30 @@ namespace Gpf
         // ШОВ player->GetStat("technical_ballcontrol") (:2206); дефолт 0.6 — как статы
         // PhysicsVector (humanoidbase.cpp:2021-2024) в лабе.
         private float _statTechnicalBallControl = 0.6f;
+
+        // ШОВ team->GetDesignatedTeamPossessionPlayer() == player &&
+        // match->GetDesignatedPossessionPlayer() == player (:2330): команд/матча в лабе нет —
+        // одинокий игрок с мячом и есть «designated», дефолт true.
+        private bool _designatedPossession = true;
+        // ШОВ CastPlayer()->GetTimeNeededToGetToBall_ms() (:2340): считает AI (AIfunctions);
+        // в лабе — сеттер, дефолт 0 («уже у мяча»).
+        private int _timeNeededToGetToBallMs = 0;
+        // ШОВ CastPlayer()->GetDesiredTimeToBall_ms() (:2341): задаёт тактика команды; дефолт 0.
+        private int _desiredTimeToBallMs = 0;
+
+        public void SetDesignatedPossession(bool designated) => _designatedPossession = designated;
+        public void SetTimeNeededToGetToBall(int ms) => _timeNeededToGetToBallMs = ms;
+        public void SetDesiredTimeToBall(int ms) => _desiredTimeToBallMs = ms;
+
+        // ШОВ CastPlayer()->HasPossession() (:2358): настоящий предикат живёт в
+        // Match::CalculatePossession (придёт с матчем, задача 9+). Лаб-суррогат: мяч ближе
+        // 1.6 м по земле и ниже 1 м — «мяч у ног».
+        private bool HasPossession()
+        {
+            Vector3 ballNow = _ball.Predict(0);
+            return (BluntMath.Get2D(ballNow) - _spatial.Position).Length() < 1.6f
+                && ballNow.Z < 1.0f;
+        }
 
         public void SetBall(Ball ball) => _ball = ball;
         public void SetRng(GpfRng rng) => _rng = rng;
@@ -459,6 +484,229 @@ namespace Gpf
                 _selector.SortByCatchOrDeflect(dataSet);                           // :1635
 
             return true;
+        }
+
+        // ---- Humanoid::SelectAnim (:1159-1820) — единый выбор клипа наследника ----
+        // Голова (crude query) — BuildCrudeDataSet, сорт-цепочка — SortDataSet; здесь — каркас,
+        // ветки по типам команд и заполнение Anim («make it so», :1747-1786).
+        // ПО СКОУПУ ФАЗЫ не портированы: оптимизации-ранние-выходы (:1163-1189), ReQueue-гейты
+        // (:1192-1234) и quadrant-reject (:1727-1742) — задача 6; ветки Trap/Interfere/Deflect
+        // (:1687-1692), пасов/удара (:1693-1709) и Sliding (:1710-1722) — задачи 7-8 (лаб-очередь
+        // команд таких типов не порождает).
+        internal bool SelectAnim(PlayerCommand command, int localInterruptAnim, bool preferPassAndShot)
+        {
+            // :1160 assert(desiredDirection.z == 0) — не переносим
+
+            if (localInterruptAnim != HumanoidBase.InterruptReQueue || _current.FrameNum > 12)
+                CalculateFactualSpatialState();                                // :1236
+
+            // :1239 assert(desiredLookAt.z == 0) — не переносим
+
+            var dataSet = BuildCrudeDataSet(command);                          // :1244-1357
+            if (dataSet.Count == 0) return false;                              // :1364
+            if (!SortDataSet(dataSet, command)) return false;                  // :1369-1637, false == :1535
+
+            int selectedAnimID = -1;                                           // :1648
+            var positionsTmp = new List<Vector3>();                            // :1649
+            int touchFrameTmp = -1;                                            // :1650
+            float radiusOffsetTmp = 0.0f;                                      // :1651
+            Vector3 touchPosTmp = Vector3.Zero;                                // :1652
+            Vector3 fullActionSmuggleTmp = Vector3.Zero;                       // :1653
+            Vector3 actionSmuggleTmp = Vector3.Zero;                           // :1654
+            float rotationSmuggleTmp = 0f;                                     // :1655
+
+            if (dataSet.Count == 0 && command.DesiredFunctionType == AnimCollection.FnMovement)
+            {
+                // :1657-1660 — движение доигрывается idle-клипом; >= 0 — страховка порта на
+                // пустой коллекции (как в BuildCrudeDataSet)
+                if (_anims.GetIdleMovementAnimID() >= 0)
+                    dataSet.Add(_anims.GetIdleMovementAnimID());               // :1659
+            }
+            // страховка порта: KeepBest*-фильтры могли опустошить action-отбор; в C++ дальше
+            // NeedTouch(*dataSet.begin()) / dataSet[0] в GetBestCheatableAnimID — UB на пустом
+            if (dataSet.Count == 0) return false;
+
+            // desiredBodyDirectionRel — todo-«hax» оригинала (:1664-1665), bug-for-bug:
+            // упреждение движения на 0.1 с, нормализация ДО GetRotated2D
+            Vector3 desiredBodyDirectionRel = new Vector3(0, -1, 0);           // :1664
+            if (command.UseDesiredLookAt)
+                desiredBodyDirectionRel = BluntMath.GetRotated2D(
+                    BluntMath.GetNormalized(
+                        command.DesiredLookAt - (_spatial.Position + _spatial.Movement * 0.1f),
+                        new Vector3(0, -1, 0)),
+                    -_spatial.Angle);                                          // :1665
+
+            if (command.DesiredFunctionType == AnimCollection.FnMovement ||
+                command.DesiredFunctionType == AnimCollection.FnTrip ||
+                command.DesiredFunctionType == AnimCollection.FnSpecial)       // :1667-1669
+            {
+                selectedAnimID = dataSet[0];                                   // :1671
+                Animation nextAnim = _anims.GetAnim(selectedAnimID);           // :1672
+                Vector3 desiredMovement = command.DesiredDirection * command.DesiredVelocityFloat; // :1673
+                // :1674-1678 debug print + assert(desiredMovement.z == 0) — не переносим
+                // ШОВ: CalculatePhysicsVector — член humanoid'а в C++; наш PhysicsVector —
+                // отдельный объект, передаём то же состояние
+                _physics.SetSpatialState(_spatial.Position, _spatial.Angle, _spatial.DirectionVec,
+                    _spatial.FloatVelocity, _spatial.Movement);
+                _physics.Calculate(nextAnim, _anims.GetPositionCacheInternal(selectedAnimID),
+                    command.UseDesiredMovement, desiredMovement, command.UseDesiredLookAt,
+                    desiredBodyDirectionRel, positionsTmp, out rotationSmuggleTmp); // :1679
+            }
+            else if (command.DesiredFunctionType == AnimCollection.FnBallControl) // :1681
+            {
+                if (NeedTouch(dataSet[0], command))                            // :1682 — гейт тач-попытки
+                {
+                    float hasteFactor = GetHasteFactor(false);                 // :1683
+                    selectedAnimID = GetBestCheatableAnimID(dataSet, command.UseDesiredMovement,
+                        command.DesiredDirection, command.DesiredVelocityFloat,
+                        command.UseDesiredLookAt, desiredBodyDirectionRel, positionsTmp,
+                        ref touchFrameTmp, ref radiusOffsetTmp, ref touchPosTmp,
+                        ref fullActionSmuggleTmp, ref actionSmuggleTmp, ref rotationSmuggleTmp,
+                        hasteFactor, localInterruptAnim, preferPassAndShot);   // :1684
+                }
+            }
+            // :1687-1722 Trap/Interfere/Deflect, пасы/удар, Sliding — задачи 7-8 (см. шапку метода)
+
+            // :1727-1742 «не реквеить в тот же квадрант» — задача 6 (ReQueue)
+
+            // make it so (:1745-1786)
+            if (selectedAnimID != -1)                                          // :1747
+            {
+                // :1759 *previousAnim = *currentAnim — усечённая копия (см. PreviousAnimState)
+                _previous.FunctionType = _current.FunctionType;
+                _previous.FrameNum = _current.FrameNum;
+
+                _current.Anim = _anims.GetAnim(selectedAnimID);                // :1761
+                _current.Id = selectedAnimID;                                  // :1762
+                _current.FunctionType = command.DesiredFunctionType;           // :1763
+                _current.FrameNum = 0;                                         // :1764
+                _current.TouchFrame = touchFrameTmp;                           // :1765
+                _current.OriginatingInterrupt = localInterruptAnim;            // :1766
+                _current.RadiusOffset = radiusOffsetTmp;                       // :1767
+                _current.TouchPos = touchPosTmp;                               // :1768
+                // :1769 — кап смягчения тела: для НЕ-movement клипов вдвое меньше (× 0.5)
+                float rotationSmuggleCap = BodyRotationSmoothingMaxAngle
+                    * (_current.FunctionType == AnimCollection.FnMovement ? 1.0f : 0.5f);
+                _current.RotationSmuggleBegin = Mathf.Clamp(
+                    BluntMath.ModulateIntoRange(-Mathf.Pi, Mathf.Pi,
+                        _spatial.RelBodyAngleNonquantized - _current.Anim.GetIncomingBodyAngle())
+                    * BodyRotationSmoothingFactor,
+                    -rotationSmuggleCap, rotationSmuggleCap);                  // :1769
+                _current.RotationSmuggleEnd = rotationSmuggleTmp;              // :1770
+                _current.RotationSmuggleOffset = 0;                            // :1771
+                _current.FullActionSmuggle = fullActionSmuggleTmp;             // :1772
+                _current.ActionSmuggle = actionSmuggleTmp;                     // :1773
+                _current.ActionSmuggleOffset = Vector3.Zero;                   // :1774
+                _current.ActionSmuggleSustain = Vector3.Zero;                  // :1775 calculated below (сустейн :1799-1814 — закомментирован в оригинале)
+                _current.ActionSmuggleSustainOffset = Vector3.Zero;            // :1776
+                // :1777 — «needs to be reset here, else the previous calc is used in upcoming
+                // 'calculatemovementsmuggle'» — ДВОЙНОЕ присваивание movementSmuggle
+                // (:1777 и :1785) переносится как есть
+                _current.MovementSmuggle = Vector3.Zero;                       // :1777
+                _current.MovementSmuggleOffset = Vector3.Zero;                 // :1778
+                _current.IncomingMovement = _spatial.Movement;                 // :1779
+                _current.OutgoingMovement = CalculateOutgoingMovement(positionsTmp); // :1780
+                _current.Positions.Clear();                                    // :1781
+                _current.Positions.AddRange(positionsTmp);                     // :1782
+                _current.PositionOffset = Vector3.Zero;                        // :1783
+                _current.OriginatingCommand = command;                         // :1784
+                _current.MovementSmuggle = CalculateMovementSmuggle(
+                    command.DesiredDirection, command.DesiredVelocityFloat);   // :1785
+                _current.MovementSmuggleOffset = Vector3.Zero;                 // :1786
+
+                // :1788-1797 debug-пилоны и :1799-1814 actionSmuggleSustain — закомментированы
+                // в оригинале, не переносим
+
+                return true;                                                   // :1816
+            }
+
+            return false;                                                      // :1819
+        }
+
+        // ---- CalculateMovementSmuggle (:2326-2408) ----
+        // «Дотянуть» движ-клип к мячу, пока игрок — designated possession. Параметры
+        // desiredDirection/desiredVelocityFloat в теле оригинала НЕ используются — переносятся
+        // и не читаются, как есть.
+        internal Vector3 CalculateMovementSmuggle(Vector3 desiredDirection, float desiredVelocityFloat)
+        {
+            _ = desiredDirection; _ = desiredVelocityFloat; // не используются (см. выше)
+
+            if (!EnableMovementSmuggle) return Vector3.Zero;                   // :2328
+
+            // гейты :2330-2332 дословно; швы: _designatedPossession (:2330),
+            // match->GetBallRetainer() != 0 → _isBallRetainer (в лабе ретейнер — только сам)
+            if (!_designatedPossession ||                                      // :2330
+                _current.TouchFrame != -1 ||
+                (_current.FunctionType == AnimCollection.FnTrip
+                    && _current.Anim.GetVariable("triptype") != "1") ||
+                _current.Anim.GetVariable("incoming_special_state") != "" ||
+                _current.Anim.GetVariable("outgoing_special_state") != "" ||   // :2331
+                !_isInPlay || _isInSetPiece || _isBallRetainer)                // :2332
+                return Vector3.Zero;
+
+            Vector3 toDesired;                                                 // :2335
+
+            // various stuff needed by all (:2338-2345)
+            int timeToBallMs = _timeNeededToGetToBallMs;                       // :2340 (ШОВ)
+            if (_desiredTimeToBallMs > timeToBallMs) timeToBallMs = _desiredTimeToBallMs; // :2341-2343
+            int animTimeMs = _current.Anim.GetFrameCount() * 10;               // :2344
+            int futureTimeMs = Mathf.Max(animTimeMs + GpfPitch.DefaultTouchOffsetMs, timeToBallMs); // :2345
+
+            Vector3 predictedOutgoingMovement = CalculateOutgoingMovement(_current.Positions); // :2348
+            CalculatePredictedSituation(out Vector3 predictedPos, out float predictedAngle); // :2349-2351
+            // :2352 — ШОВ MentalImage (см. GetHasteFactor): GetBallPrediction → _ball.Predict
+            Vector3 ballPos = _ball.Predict(futureTimeMs);                     // :2352
+            float ballHeight = ballPos.Z;                                      // :2353
+            Vector3 ffo = BluntMath.GetRotated2D(
+                GetFrontOfFootOffsetRel(predictedOutgoingMovement.Length(),
+                    _current.Anim.GetOutgoingBodyAngle(), ballHeight),
+                predictedAngle);                                               // :2354
+            Vector3 desiredBallPos = predictedPos + ffo;                       // :2355
+
+            if (!HasPossession())                                              // :2358 (ШОВ-суррогат)
+            {
+                // macro effect: линия движения мяча; тянемся от желаемой точки к ней (:2360-2361)
+                Vector3 v0 = BluntMath.Get2D(_ball.Predict(0));                // :2364
+                Vector3 v1 = BluntMath.Get2D(_ball.Predict(futureTimeMs));     // :2365
+                if ((v1 - v0).Length() < 0.5f) return Vector3.Zero;            // :2366 — мяч медленный/близкий
+
+                float u = BluntMath.LineClosestToPoint(v0, v1, desiredBallPos); // :2369 (без клампа, как GetClosestToPoint)
+                Vector3 closestBallPos = v0 + (v1 - v0) * u;                   // :2370
+
+                toDesired = closestBallPos - desiredBallPos;                   // :2372
+            }
+            else // if HasPossession (:2374)
+            {
+                toDesired = BluntMath.Get2D(ballPos) - desiredBallPos;         // :2376
+            }
+
+            // мяч «дальше», чем успеем? — отложить эффект до следующего клипа (:2381)
+            int maxEffectTimeTresholdMs = 250 + GpfPitch.DefaultTouchOffsetMs; // :2381
+            if (Velo.FloatToEnumVelocity(_current.Anim.GetOutgoingVelocity()) == Velo.IdVelIdle)
+                maxEffectTimeTresholdMs = 2000; // :2382 — no danger of overrunning
+            float maxEffectVelocity = Velo.DribbleWalkSwitch;                  // :2383
+            float maxSmuggleMps = 1.6f;                                        // :2384
+
+            if (futureTimeMs - (animTimeMs + GpfPitch.DefaultTouchOffsetMs) > maxEffectTimeTresholdMs)
+                return Vector3.Zero;                                           // :2386
+
+            Vector3 toDesiredMovement = toDesired / (animTimeMs * 0.001f);     // :2388
+            Vector3 resultingMovement = predictedOutgoingMovement + toDesiredMovement; // :2389
+            float predictedVelocity = predictedOutgoingMovement.Length();      // :2390
+            float resultingVelocity = resultingMovement.Length();              // :2391
+            if (resultingVelocity > predictedVelocity && resultingVelocity > maxEffectVelocity)
+                return Vector3.Zero;                                           // :2392
+
+            toDesired = BluntMath.NormalizeMax(toDesired,
+                maxSmuggleMps * (_current.Anim.GetEffectiveFrameCount() * 0.01f)); // :2394
+
+            // remove part of the smuggle (:2398-2399)
+            float removeDistance = 0.06f;                                      // :2398
+            toDesired = BluntMath.GetNormalized(toDesired, Vector3.Zero)
+                * Mathf.Max(0.0f, toDesired.Length() - removeDistance);        // :2399
+
+            // :2401-2406 debug-пилоны — не переносим
+            return toDesired;                                                  // :2407
         }
 
         // ---- NeedTouch (:1822-1857) ----
