@@ -25,7 +25,7 @@ func _initialize() -> void:
 	get_root().add_child(lab)
 	# В режиме SceneTree-скрипта (`-s`) _Ready C#-ноды не вызывается синхронно на add_child, а
 	# откладывается до первого кадра главного цикла. Пропускаем кадры, пока _Ready не построит
-	# коллекцию и не выставит стартовый клип (_currentAnim >= 0) — иначе StepOneFrame рано выходит.
+	# коллекцию и не выставит стартовый клип (GetCurrentAnimId() >= 0) — иначе StepOneFrame рано выходит.
 	# Это правка тест-харнеса под жизненный цикл движка, не подгонка поведения палочника.
 	var ready_guard := 0
 	while lab.GetCurrentAnimIndex() < 0 and ready_guard < 60:
@@ -75,6 +75,8 @@ func _initialize() -> void:
 	while lab.GetTransitionCount() < transitions_before + 3 and guard < 5000:
 		lab.StepOneFrame()
 		guard += 1
+	if guard >= 5000:
+		print("CHECK FAIL: поворот — 3 смены клипа не случились за 5000 кадров"); ok = false
 	var dturn: float = lab.GetStateAngle() - angle_before
 	# ModulateIntoRange вручную, углы могли перескочить через -pi
 	while dturn > PI: dturn -= TAU
@@ -89,6 +91,8 @@ func _initialize() -> void:
 	while lab.GetTransitionCount() < transitions_before + 5 and guard < 8000:
 		lab.StepOneFrame()
 		guard += 1
+	if guard >= 8000:
+		print("CHECK FAIL: стоп — 5 смен клипа не случились за 8000 кадров"); ok = false
 	if lab.GetStateVelocityId() > 1:
 		print("CHECK FAIL: после стоп-команды скорость → ", lab.GetStateVelocityId()); ok = false
 
