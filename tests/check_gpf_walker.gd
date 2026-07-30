@@ -1,6 +1,18 @@
 extends SceneTree
 # Walker: разгон из idle до спринта по команде «вперёд», поворот по команде «вправо».
-# Детерминизм: сцена шагается вручную StepOneFrame, физ-тики не нужны.
+# Фаза 3: лаба крутит настоящий Gpf.HumanoidBase (варпнутые траектории CalculatePhysicsVector),
+# а не lite-дескрипторы клипа — поэтому скорость непрерывна, и разгон идёт по физике, а не
+# скачками по бакетам. Детерминизм: сцена шагается вручную StepOneFrame, физ-тики не нужны.
+
+# Бакеты скоростей (gamedefines.hpp:18-21): lite отдавал ровно их (Velo.RangeVelocity),
+# физика — произвольные промежуточные значения.
+const BUCKETS := [0.0, 3.5, 5.0, 8.0]
+
+func is_bucket(v: float) -> bool:
+	for b in BUCKETS:
+		if absf(v - b) < 1.0e-3:
+			return true
+	return false
 
 func _initialize() -> void:
 	var ok := true
@@ -22,14 +34,29 @@ func _initialize() -> void:
 	if lab.GetCurrentAnimIndex() < 0:
 		print("CHECK FAIL: _Ready сцены не отработал за 60 кадров"); ok = false
 
-	# Команда: вперёд, спринт. Идём до 4 смен клипа (idle→dribble→walk→sprint максимум по +1 за клип).
+	# Страховка от зависания `-s` на SCRIPT ERROR: у lite-лабы фазы 2 геттера нет — выходим чисто.
+	if not lab.has_method("GetStateFloatVelocity"):
+		print("CHECK FAIL: у лабы нет GetStateFloatVelocity (интеграция на HumanoidBase не собрана)")
+		print("CHECK FAIL")
+		lab.queue_free()
+		quit(1)
+		return
+
+	# Команда: вперёд, спринт. Идём до 4 смен клипа.
 	lab.SetCommand(Vector3(0, -1, 0), 3)
 	var guard := 0
+	var offbucket := 0
 	while lab.GetTransitionCount() < 4 and guard < 5000:
 		lab.StepOneFrame()
 		guard += 1
+		if not is_bucket(lab.GetStateFloatVelocity()):
+			offbucket += 1
 	if guard >= 5000:
 		print("CHECK FAIL: 4 смены клипа не случились за 5000 кадров"); ok = false
+	# Непрерывность скорости: физика (Movement.length(), humanoidbase.cpp:1670) даёт промежуточные
+	# значения; lite брал GetOutgoingVelocity через RangeVelocity, т.е. ровно бакет.
+	if offbucket < 20:
+		print("CHECK FAIL: скорость разгона квантована по бакетам (кадров вне бакета: ", offbucket, ")"); ok = false
 	if lab.GetStateVelocityId() < 2:
 		print("CHECK FAIL: после 4 клипов скорость всё ещё ", lab.GetStateVelocityId()); ok = false
 	# Двигаемся вперёд: |угол| мал, позиция ушла в -Y

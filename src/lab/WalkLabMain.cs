@@ -2,12 +2,15 @@ using Godot;
 
 namespace Gpf.Lab
 {
-    // Лаб-сцена фазы 2: палочник бегает по командам (направление/скорость), клипы выбирает
-    // AnimSelector. Интеграция состояния на смене клипа — УПРОЩЕНИЕ фазы 2 (lite), реальный
-    // CalculateFactualSpatialState (humanoidbase.cpp:1650-1720) приедет с варпингом в фазе 3.
+    // Лаб-сцена: палочник бегает по командам (направление/скорость) на НАСТОЯЩЕЙ интеграции ядра —
+    // Gpf.HumanoidBase (варпнутые траектории CalculatePhysicsVector + CalculateSpatialState,
+    // humanoidbase.cpp:569-714, 1622-1737). Lite-интеграция фазы 2 (позиция/угол/скорость прямо из
+    // дескрипторов клипа на его границе) удалена: состояние, выбор клипа и apply-буфер целиком
+    // за HumanoidBase, лаба — только ввод, отрисовка и HUD.
     public partial class WalkLabMain : Node3D
     {
         private readonly Gpf.AnimationApplier _applier = new();
+        private readonly Gpf.HumanoidBase _humanoid = new();
         private Gpf.AnimCollection _collection = null!;
         private Gpf.AnimSelector _selector = null!;
         private Skeleton3D _skeleton = null!;
@@ -16,26 +19,20 @@ namespace Gpf.Lab
         private MeshInstance3D _commandArrow = null!;
         private Camera3D _camera = null!;
 
-        // spatial state lite («их» пространство)
-        private Vector3 _position;
-        private float _angle;
-        private int _velocityId;
-        private float _floatVelocity;
-        private Vector3 _relBodyDir = new Vector3(0, -1, 0);
-        private int _footId = 1;
-
-        // команда
+        // команда («их» пространство: вперёд (0,-1,0))
         private Vector3 _desiredDirection = new Vector3(0, -1, 0);
         private int _desiredVelocityId;
 
-        private int _currentAnim = -1;
-        private int _frame;
-        private double _timeMs;
+        // Пресеты статов для сравнения на глаз (клавиша A). Дефолт PhysicsVector — 0.6
+        // (humanoidbase.cpp:2021-2024), с него и стартуем.
+        private static readonly float[] StatsPresets = { 0.3f, 0.6f, 0.9f };
+        private int _statsPresetIndex = 1;
+
         private int _transitions;
 
         public override void _Ready()
         {
-            Engine.PhysicsTicksPerSecond = 100; // дисциплина ядра, только в лабе
+            Engine.PhysicsTicksPerSecond = 100; // дисциплина ядра (тик = 10 мс), только в лабе
 
             var builder = new Gpf.SkeletonBuilder();
             _gpfSpace = builder.BuildAxisWrapper();
@@ -55,8 +52,9 @@ namespace Gpf.Lab
             _selector = new Gpf.AnimSelector();
             _selector.Setup(_collection);
 
-            _currentAnim = _collection.GetIdleMovementAnimID();
-            _frame = 0;
+            _humanoid.Setup(_collection, _selector);
+            _humanoid.SetStatsPreset(StatsPresets[_statsPresetIndex]);
+            _humanoid.ResetSituation(Vector3.Zero, 0f); // idle-клип, кадр 0
         }
 
         private void SetupEnvironment()
@@ -87,7 +85,7 @@ namespace Gpf.Lab
             canvas.AddChild(_label);
         }
 
-        // --- тестовый/входной API ---
+        // --- тестовый/входной API (сигнатуры фазы 2 сохранены, внутри — делегирование HumanoidBase) ---
         public void SetCommand(Vector3 desiredDirectionTheirSpace, int desiredVelocityId)
         {
             if (desiredDirectionTheirSpace.Length() > 0.01f)
@@ -95,43 +93,30 @@ namespace Gpf.Lab
             _desiredVelocityId = Mathf.Clamp(desiredVelocityId, 0, 3);
         }
 
-        public int GetCurrentAnimIndex() => _currentAnim;
+        public int GetCurrentAnimIndex() => _humanoid.GetCurrentAnimId();
         public int GetTransitionCount() => _transitions;
-        public int GetStateVelocityId() => _velocityId;
-        public float GetStateAngle() => _angle;
-        public Vector3 GetStatePosition() => _position;
+        public int GetStateVelocityId() => _humanoid.GetSpatialEnumVelocity();
+        public float GetStateFloatVelocity() => _humanoid.GetSpatialFloatVelocity();
+        public float GetStateAngle() => _humanoid.GetSpatialAngle();
+        public Vector3 GetStatePosition() => _humanoid.GetSpatialPosition();
 
         // Один детерминированный шаг 10 мс (== кадр клипа при 100 Гц).
         public void StepOneFrame()
         {
-            if (_currentAnim < 0) return;
-            var anim = _collection.GetAnim(_currentAnim);
+            if (_humanoid.GetCurrentAnimId() < 0) return; // _Ready ещё не отработал
 
-            _applier.Apply(_skeleton, anim, _frame, 0f, false, _angle, _position);
-            _frame++;
+            // desiredLookAt — точка в 10 м по команде, как GetBasicMovementCommand (player.cpp:1771)
+            bool switched = _humanoid.Tick(_desiredDirection,
+                Gpf.Velo.EnumToFloatVelocity(_desiredVelocityId),
+                true, _humanoid.GetSpatialPosition() + _desiredDirection * 10f);
+            if (switched) _transitions++;
 
-            if (_frame >= anim.GetFrameCount() - 1)
-                AdvanceToNextAnim(anim);
-        }
-
-        private void AdvanceToNextAnim(Gpf.Animation finished)
-        {
-            // интеграция lite (см. шапку класса)
-            _position += Gpf.BluntMath.GetRotated2D(finished.GetTranslation(), _angle);
-            _angle = Gpf.BluntMath.ModulateIntoRange(-Mathf.Pi, Mathf.Pi, _angle + finished.GetOutgoingAngle());
-            _velocityId = Gpf.Velo.FloatToEnumVelocity(finished.GetOutgoingVelocity());
-            _floatVelocity = Gpf.Velo.RangeVelocity(finished.GetOutgoingVelocity());
-            _relBodyDir = _selector.ForceIntoAllowedBodyDirectionVec(
-                Gpf.BluntMath.GetRotated2D(new Vector3(0, -1, 0), finished.GetOutgoingBodyAngle()));
-            _footId = finished.GetOutgoingFootId();
-
-            int next = _selector.SelectMovementAnim(
-                _position, _angle, _velocityId, _floatVelocity, _relBodyDir, _footId,
-                _desiredDirection, Gpf.Velo.EnumToFloatVelocity(_desiredVelocityId),
-                true, _position + _desiredDirection * 10f);
-            _currentAnim = next >= 0 ? next : _collection.GetIdleMovementAnimID();
-            _frame = 0;
-            _transitions++;
+            var anim = _collection.GetAnim(_humanoid.GetCurrentAnimId());
+            // Применение ровно из apply-буфера тика (humanoidbase.cpp:700-711), не из spatial:
+            // позиция и доворот идут ЦЕЛИКОМ через basePos/baseRotZ, корень клипа при noPos
+            // занулён по X/Y (animation.cpp:410-415) — иначе варп сложился бы с сырым корнем дважды.
+            _applier.Apply(_skeleton, anim, _humanoid.GetApplyFrameNum(), 0f,
+                _humanoid.GetApplyNoPos(), _humanoid.GetApplyOrientation(), _humanoid.GetApplyPosition());
         }
 
         public override void _PhysicsProcess(double delta)
@@ -158,28 +143,33 @@ namespace Gpf.Lab
 
         public override void _Process(double delta)
         {
-            if (_currentAnim < 0) return;
-            var anim = _collection.GetAnim(_currentAnim);
+            int animId = _humanoid.GetCurrentAnimId();
+            if (animId < 0) return;
+            var anim = _collection.GetAnim(animId);
+            Vector3 position = _humanoid.GetSpatialPosition();
 
             // стрелка команды и камера — в «их» пространстве, конверсию делает GpfSpace
-            _commandArrow.Position = _position + new Vector3(0, 0, 2.2f);
-            _commandArrow.LookAt(_gpfSpace.ToGlobal(_position + new Vector3(0, 0, 2.2f) + _desiredDirection), Vector3.Up);
+            _commandArrow.Position = position + new Vector3(0, 0, 2.2f);
+            _commandArrow.LookAt(_gpfSpace.ToGlobal(position + new Vector3(0, 0, 2.2f) + _desiredDirection), Vector3.Up);
 
-            Vector3 camTargetTheirs = _position + new Vector3(0, 0, 1f);
+            Vector3 camTargetTheirs = position + new Vector3(0, 0, 1f);
             Vector3 camTarget = _gpfSpace.ToGlobal(camTargetTheirs);
             _camera.Position = camTarget + new Vector3(0, 6f, 7f);
             _camera.LookAt(camTarget);
 
             _label.Text = $"{anim.GetName()}\n"
-                + $"quadrant: {anim.GetVariable("quadrant_id")}   frame: {_frame}/{anim.GetFrameCount()}\n"
-                + $"state: v={_velocityId} angle={Mathf.RadToDeg(_angle):F0}°   "
-                + $"cmd: v={_desiredVelocityId} dir=({_desiredDirection.X:F1},{_desiredDirection.Y:F1})\n"
+                + $"quadrant: {anim.GetVariable("quadrant_id")}   frame: {_humanoid.GetApplyFrameNum()}/{anim.GetFrameCount()}\n"
+                + $"state: v={_humanoid.GetSpatialEnumVelocity()} ({_humanoid.GetSpatialFloatVelocity():F2} м/с) "
+                + $"angle={Mathf.RadToDeg(_humanoid.GetSpatialAngle()):F0}°   "
+                + $"cmd: v={_desiredVelocityId} dir=({_desiredDirection.X:F1},{_desiredDirection.Y:F1})   "
+                + $"stats: {StatsPresets[_statsPresetIndex]:F1}\n"
                 + "стрелки (две сразу — диагональ 45°/135°) — направление;  "
-                + "0/1/2/3 — стойка/дриблинг/бег/спринт (медленной ходьбы в датасете нет)";
+                + "0/1/2/3 — стойка/дриблинг/бег/спринт (медленной ходьбы в датасете нет);  "
+                + "A — пресет статов 0.3/0.6/0.9";
         }
 
         // Направление — опросом зажатых стрелок в PollDirectionInput (даёт диагонали).
-        // Здесь только дискретный выбор скорости: 0/1/2/3 = стойка/дриблинг/бег/спринт.
+        // Здесь дискретный выбор скорости 0/1/2/3 = стойка/дриблинг/бег/спринт и пресет статов.
         public override void _UnhandledKeyInput(InputEvent ev)
         {
             if (ev is not InputEventKey k || !k.Pressed || k.Echo) return;
@@ -189,6 +179,11 @@ namespace Gpf.Lab
                 case Key.Key1: SetCommand(_desiredDirection, 1); break;
                 case Key.Key2: SetCommand(_desiredDirection, 2); break;
                 case Key.Key3: SetCommand(_desiredDirection, 3); break;
+                case Key.A:
+                    // статы влияют на разгон/поворот через CalculatePhysicsVector — смена на лету
+                    _statsPresetIndex = (_statsPresetIndex + 1) % StatsPresets.Length;
+                    _humanoid.SetStatsPreset(StatsPresets[_statsPresetIndex]);
+                    break;
             }
         }
     }
