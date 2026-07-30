@@ -13,12 +13,12 @@ namespace Gpf
         public float InputPower = 0.0f;                 // ctor :148
         public float AutoDirectionBias = 0.0f;          // ctor :149
         public float AutoPowerBias = 0.0f;              // ctor :150
-        public Vector3 DesiredDirection = Vector3.Zero; // :161 — inputDirection после пас-функции
+        public Vector3 DesiredDirection = Vector3.Zero; // :162 — inputDirection после пас-функции
         public float DesiredPower = 0.0f;               // ctor :153
     }
 
     // Порт struct PlayerCommand (gamedefines.hpp:175-229). Все дефолты — из конструктора
-    // оригинала (:186-200), дословно. Обычный C#-класс (не RefCounted): внутренняя структура
+    // оригинала (:185-198), дословно. Обычный C#-класс (не RefCounted): внутренняя структура
     // ядра, мостовые обёртки собирают её сами.
     public class PlayerCommand
     {
@@ -27,35 +27,35 @@ namespace Gpf
         public const int StrictTrue = 1;
         public const int StrictDynamic = 2;
 
-        public int DesiredFunctionType = AnimCollection.FnMovement;  // ctor :187
-        public bool UseDesiredMovement = false;                      // ctor :188
+        public int DesiredFunctionType = AnimCollection.FnMovement;  // ctor :185
+        public bool UseDesiredMovement = false;                      // ctor :186
         public Vector3 DesiredDirection = Vector3.Zero;              // :204
-        public int StrictMovement = StrictDynamic;                   // ctor :190
-        public float DesiredVelocityFloat = Velo.Idle;               // ctor :189 (idleVelocity)
+        public int StrictMovement = StrictDynamic;                   // ctor :188
+        public float DesiredVelocityFloat = Velo.Idle;               // ctor :187 (idleVelocity)
 
-        public bool UseDesiredLookAt = false;                        // ctor :191
+        public bool UseDesiredLookAt = false;                        // ctor :189
         public Vector3 DesiredLookAt = Vector3.Zero;                 // :210 — абсолютная точка на поле
 
-        // :212 useTouchInfo — конструктор оригинала (:186-200) его НЕ инициализирует
+        // :212 useTouchInfo — конструктор оригинала (:185-198) его НЕ инициализирует
         // (неопределённое значение в C++); в C# дефолт false — фиксируем расхождение bug-for-bug:
         // «неинициализированный bool» воспроизвести нельзя, false — единственный детерминированный
         // выбор и совпадает с де-факто использованием (команды выставляют его явно).
         public bool UseTouchInfo = false;
         public TouchInfo TouchInfo = new TouchInfo();                // :213
 
-        public bool OnlyDeflectAnimsThatPickupBall = false;          // ctor :194
+        public bool OnlyDeflectAnimsThatPickupBall = false;          // ctor :192
 
-        public bool UseTripType = false;                             // ctor :192
-        public int TripType = 1;                                     // ctor :195 — только для trip-клипов
+        public bool UseTripType = false;                             // ctor :190
+        public int TripType = 1;                                     // ctor :193 — только для trip-клипов
 
-        public bool UseDesiredTripDirection = false;                 // ctor :193
-        public Vector3 DesiredTripDirection = Vector3.Zero;          // :222
+        public bool UseDesiredTripDirection = false;                 // ctor :191
+        public Vector3 DesiredTripDirection = Vector3.Zero;          // :221
 
-        public bool UseSpecialVar1 = false;                          // ctor :196
-        public int SpecialVar1 = 0;                                  // ctor :197
-        public bool UseSpecialVar2 = false;                          // ctor :198
-        public int SpecialVar2 = 0;                                  // ctor :199
+        public bool UseSpecialVar1 = false;                          // ctor :194
+        public int SpecialVar1 = 0;                                  // ctor :195
+        public bool UseSpecialVar2 = false;                          // ctor :196
+        public int SpecialVar2 = 0;                                  // ctor :197
 
-        public int Modifier = 0;                                     // ctor :200
+        public int Modifier = 0;                                     // ctor :198
     }
 }

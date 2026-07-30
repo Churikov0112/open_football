@@ -8,14 +8,17 @@ namespace Gpf
     // (:1374-1601), CalculateOutgoingMovement (:1617-1620), CalculateSpatialState (:1622-1726),
     // CalculateFactualSpatialState (:1728-1737). Один тик = 10 мс = один кадр анимации.
     // ВАЖНО: игроки инстанцируются как Humanoid (player.cpp:88; голый HumanoidBase — судьи),
-    // поэтому по НАСЛЕДНИКУ портированы ровно два места: лерп rotationSmuggleOffset с
-    // 16-кадровым капом (humanoid.cpp:722-742) и «hax»-формула desiredBodyDirectionRel
-    // (humanoid.cpp:1664-1665). ОТБОР клипов при этом — по базе humanoidbase.cpp:1374-1496
-    // (AnimSelector, фаза 2), хотя Humanoid::SelectAnim переопределяет и его (ForceLinearity-флаги
-    // :1396-1397 у наследника false; bySide при useDesiredLookAt humanoid.cpp:1306-1311;
-    // двухнаборная lenient/strict цепочка :1386-1447) — расхождение с путём игроков
-    // задокументировано в docs/wiki/открытые-вопросы.md (фаза 3, задача 6). Порядок тика и
-    // startPos/startAngle наследника совпадают с базой (humanoid.cpp:120-138, :270-271).
+    // поэтому по НАСЛЕДНИКУ портированы: лерп rotationSmuggleOffset с 16-кадровым капом
+    // (humanoid.cpp:722-742), «hax»-формула desiredBodyDirectionRel (humanoid.cpp:1664-1665) и,
+    // с фазы 4 задачи 3, сам ОТБОР клипов движения — через цепочку Humanoid::SelectAnim
+    // (голова BuildCrudeDataSet humanoid.cpp:1244-1365, движенческая strict-ветка :1441-1455,
+    // общая сорт-цепочка :1556-1637; порт — src/gpf/Humanoid.cs, метод SelectNextMovementAnim
+    // здесь лишь собирает PlayerCommand и делегирует). Это закрывает бывший открытый вопрос
+    // фазы 3: движение раньше по ошибке шло по базовому AnimSelector (humanoidbase.cpp,
+    // фаза 2) — расхождение с путём игроков было задокументировано в
+    // docs/wiki/открытые-вопросы.md. AnimSelector.SelectMovementInternal остался портом базовой
+    // ветки для судей (голый HumanoidBase), которые SelectAnim наследника не вызывают. Порядок
+    // тика и startPos/startAngle наследника совпадают с базой (humanoid.cpp:120-138, :270-271).
     // Smuggle-поля (Action*/Movement*-офсеты и *Movement в SpatialState) до фазы 4 — нули,
     // но участвуют в формулах дословно.
     public partial class HumanoidBase : RefCounted

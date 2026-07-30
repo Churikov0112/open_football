@@ -42,7 +42,7 @@ namespace Gpf
         private float _teamPossessionAmountStub = 1.0f;
         // Лаб-контекст (потребители — задачи 4-5: GetBodyBallDistanceAdvantage и смагглы).
         private float _closestOpponentDistance = 1000.0f;
-        private float _playerHeight = 1.92f;
+        private float _playerHeight = 1.92f; // defaultPlayerHeight, gamedefines.hpp:66
 
         public void SetBall(Ball ball) => _ball = ball;
         public void SetRng(GpfRng rng) => _rng = rng;
