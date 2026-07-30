@@ -89,6 +89,9 @@ PAGES = {
     "CrudeSelectionQuery.cs":  "порт-gameplayfootball",
     "AnimSelector.cs":         "порт-gameplayfootball",
     "WalkLabMain.cs":          "порт-gameplayfootball",
+    "SpatialState.cs":         "порт-gameplayfootball",
+    "PhysicsVector.cs":        "порт-gameplayfootball",
+    "HumanoidBase.cs":         "порт-gameplayfootball",
 }
 
 def main():
