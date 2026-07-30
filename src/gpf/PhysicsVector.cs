@@ -9,7 +9,7 @@ namespace Gpf
     public partial class PhysicsVector : RefCounted
     {
         // humanoid_utils.cpp:68-100. Движение (м/с) в кадре frameNum по кэшу позиций корня.
-        // Множитель 100.0f (:80,:84,:90) — дельта за кадр при 100 Гц анимации → м/с.
+        // Множитель 100.0f (:80,:84,:91) — дельта за кадр при 100 Гц анимации → м/с.
         // smoothFrames по умолчанию 0 — как в humanoid_utils.hpp:25.
         internal static Vector3 CalculateMovementAtFrame(List<Vector3> positions, int frameNum, int smoothFrames = 0)
         {
@@ -27,7 +27,7 @@ namespace Gpf
             int count = 0;
             for (int frame = frameNum - smoothFrames; frame <= frameNum + smoothFrames; frame++)
             {
-                // :89 — в оригинале было `frame > 1`, автор пометил как баг и исправил на `frame > 0`
+                // :90 — в оригинале было `frame > 1`, автор пометил как баг и исправил на `frame > 0`
                 if (frame > 0 && frame < positions.Count)
                 {
                     totalMovement += BluntMath.Get2D(positions[frame] - positions[frame - 1]) * 100.0f;

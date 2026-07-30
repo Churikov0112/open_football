@@ -229,6 +229,11 @@ namespace Gpf
             _physics.SetSpatialState(_spatial.Position, _spatial.Angle, _spatial.DirectionVec,
                 _spatial.FloatVelocity, _spatial.Movement);
             var positionsTmp = new List<Vector3>();
+            // Жёсткий `true` вместо `useDesiredMovement`: в оригинале это `command.useDesiredMovement`
+            // (humanoid.cpp:1679) — true для movement-команд, false для action-команд (пас/удар/...),
+            // которые задаёт `EliZaController` (elizacontroller.cpp:142,963). Movement-путь порта видит
+            // только движение, поэтому здесь всегда true; в фазе 4 (когда появятся action-команды)
+            // обязан стать параметром, а не константой.
             _physics.Calculate(nextAnim, _anims.GetPositionCacheInternal(selectedAnimID),
                 true, desiredMovement, useDesiredLookAt, desiredBodyDirectionRel,
                 positionsTmp, out float rotationSmuggleTmp);                   // :1531

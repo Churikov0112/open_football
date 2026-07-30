@@ -25,7 +25,7 @@ func _initialize() -> void:
 	get_root().add_child(lab)
 	# В режиме SceneTree-скрипта (`-s`) _Ready C#-ноды не вызывается синхронно на add_child, а
 	# откладывается до первого кадра главного цикла. Пропускаем кадры, пока _Ready не построит
-	# коллекцию и не выставит стартовый клип (GetCurrentAnimId() >= 0) — иначе StepOneFrame рано выходит.
+	# коллекцию и не выставит стартовый клип (GetCurrentAnimIndex() >= 0) — иначе StepOneFrame рано выходит.
 	# Это правка тест-харнеса под жизненный цикл движка, не подгонка поведения палочника.
 	var ready_guard := 0
 	while lab.GetCurrentAnimIndex() < 0 and ready_guard < 60:
