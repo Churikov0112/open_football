@@ -717,7 +717,10 @@ namespace Gpf
                 int frameCount = anim.GetEffectiveFrameCount();                // :2053
 
                 int totalTouches = anim.GetTouchCount();                       // :2057 footballExtension->GetTouchCount()
-                var touchIDs = new int[totalTouches];                          // :2058
+                // :2058 — vector<int> touchIDs(totalTouches). Запас +1: при totalTouches == 0
+                // цикл :2065 всё равно пишет touchIDs[0] (в C++ это UB-запись за границу
+                // вектора); тач-перебор ниже при этом не выполняется, поведение не меняется.
+                var touchIDs = new int[totalTouches + 1];
                 int count = 0;                                                 // :2059
 
                 int defaultTouchFrame = BluntMath.AtoI(anim.GetVariable("touchframe")); // :2061
