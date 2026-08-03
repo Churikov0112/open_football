@@ -696,6 +696,7 @@ namespace Gpf
         public bool GetApplySmooth() => _applySmooth;
         public float GetSmoothFactor() => _applySmoothFactor;
         // ---- Мост-геттеры smuggle-контура (задача 5) ----
+        public Vector3 GetFullActionSmuggle() => _current.FullActionSmuggle;
         public Vector3 GetActionSmuggle() => _current.ActionSmuggle;
         public Vector3 GetActionSmuggleOffset() => _current.ActionSmuggleOffset;
         public Vector3 GetMovementSmuggle() => _current.MovementSmuggle;

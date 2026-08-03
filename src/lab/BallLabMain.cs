@@ -190,8 +190,13 @@ namespace Gpf.Lab
                 // печать диагностическая, решение принял сам тик.
                 bool reached = _lastTouchBallDistance < 0.4f;
                 if (reached) _touches++;
-                GD.Print($"[BALL LAB] кадр касания ({_lastTouchWhat}): нога-мяч "
-                    + $"{_lastTouchBallDistance:F3} м — {(reached ? $"дотянулись, касание #{_touches}" : "МИМО")} "
+                // ВНИМАНИЕ: это НЕ «нога-мяч». Меряется |ball − touchPos|, а touchPos сам получен
+                // как ball.Predict(touchFrame·10) — то есть «мяч пришёл туда, где его предсказали»
+                // (гейт :398/:422), и в стабильном ведении величина всегда ~0. Дистанцию от мяча до
+                // костей ноги эта строка не видит: у утилитарного скелета нет ступни, а точка
+                // касания клипа лежит в ~0.2 м от голеностопа (данные .anim).
+                GD.Print($"[BALL LAB] кадр касания ({_lastTouchWhat}): мяч↔расчётная точка "
+                    + $"{_lastTouchBallDistance:F3} м — {(reached ? $"в допуске, касание #{_touches}" : "МИМО")} "
                     + "(порог 0.400 м, humanoid.cpp:396)");
             }
 

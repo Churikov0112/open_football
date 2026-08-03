@@ -1522,8 +1522,16 @@ namespace Gpf
                     smuggleDistance *= 1.0f - adaptedCheatDiscardDistanceMultiplier; // :2265
 
                     // :2267 — std::min с maxSmuggleDiscardDistance ПОРТИРУЕТСЯ КАК ЕСТЬ: при
-                    // |full| < 0.2 даёт ОТРИЦАТЕЛЬНУЮ дистанцию (смаггл разворачивается ОТ мяча) —
-                    // подозрение на баг оригинала, НЕ чинить (global-constraints)
+                    // |full| < 0.2 даёт ОТРИЦАТЕЛЬНУЮ дистанцию, и присваивание ниже (:2281)
+                    // разворачивает смаггл ОТ мяча.
+                    // СВЕРЕНО С ОРИГИНАЛОМ 2026-08-03 (vi3itor/GameplayFootball,
+                    // src/onthepitch/player/humanoid/humanoid.cpp:2267 — дословно
+                    // `smuggleDistance = std::min(smuggleDistance,
+                    //  actionSmuggle_ret.GetLength() - maxSmuggleDiscardDistance);`, тот же блок
+                    // побайтово совпадает и в upstream BazkieBumpercar:2221). Это баг САМОГО
+                    // оригинала, а не порта: строка воспроизведена верно. Замер в ball_lab —
+                    // применённый смаггл смотрит ОТ мяча на каждом касании стабильного ведения
+                    // (|full| = 0.06..0.18 < 0.2). НЕ чинить (global-constraints, bug-for-bug).
                     smuggleDistance = Mathf.Min(smuggleDistance,
                         actionSmuggleRet.Length() - MaxSmuggleDiscardDistance);
 
