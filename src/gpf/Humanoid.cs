@@ -600,9 +600,9 @@ namespace Gpf
         // ---- Humanoid::SelectAnim (:1159-1820) — единый выбор клипа наследника ----
         // Голова (crude query) — BuildCrudeDataSet, сорт-цепочка — SortDataSet; здесь — каркас,
         // ветки по типам команд и заполнение Anim («make it so», :1747-1786).
-        // ПО СКОУПУ ФАЗЫ не портированы: оптимизации-ранние-выходы (:1163-1189); ветки
-        // Trap/Interfere/Deflect (:1687-1692), пасов/удара (:1693-1709) и Sliding (:1710-1722) —
-        // задачи 7-8 (лаб-очередь команд таких типов не порождает).
+        // С задачи 7 портировано всё: оптимизации-ранние-выходы (:1163-1189), ветки
+        // Trap/Interfere/Deflect (:1687-1692), пасов/удара (:1693-1709) и Sliding (:1710-1722).
+        // Не портированы только FnHeader и FnCatch — придут с вратарским контуром.
         internal bool SelectAnim(PlayerCommand command, int localInterruptAnim, bool preferPassAndShot)
         {
             // :1160 assert(desiredDirection.z == 0) — не переносим

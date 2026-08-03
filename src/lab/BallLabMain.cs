@@ -58,7 +58,8 @@ namespace Gpf.Lab
 
         public override void _Ready()
         {
-            Engine.PhysicsTicksPerSecond = 100; // дисциплина ядра (тик = 10 мс), только в лабе
+            Engine.PhysicsTicksPerSecond = 100; // дисциплина ядра (тик = 10 мс); с фазы 4 то же стоит
+            // глобально в project.godot — здесь оставлено, чтобы лаба не зависела от настроек проекта
 
             var builder = new Gpf.SkeletonBuilder();
             _gpfSpace = builder.BuildAxisWrapper();

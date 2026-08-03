@@ -20,7 +20,8 @@ namespace Gpf.Lab
 
         public override void _Ready()
         {
-            // Дисциплина ядра — фикс-тик 100 Гц (только в лабе; матч живёт на дефолтных 60).
+            // Дисциплина ядра — фикс-тик 100 Гц. С фазы 4 то же значение стоит глобально в
+            // project.godot (включая матч); здесь оставлено ради независимости лабы от настроек.
             Engine.PhysicsTicksPerSecond = 100;
 
             var builder = new Gpf.SkeletonBuilder();
