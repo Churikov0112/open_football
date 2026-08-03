@@ -51,8 +51,9 @@ const LINE_THICKNESS := 0.12       # ширина линий разметки
 
 const BALL_RADIUS := 0.11
 const BALL_MASS := 0.43
-const BALL_DRAG := 0.985
-const BALL_AIR_RESISTANCE := 0.999
+# Драг мяча живёт НЕ здесь: это `@export drag_factor`/`air_resistance` у `ball_controller.gd`, который
+# приводит их к фикс-тику через TickScale. Дубли `BALL_DRAG`/`BALL_AIR_RESISTANCE` удалены 2026-08-03 —
+# их не читал никто, и тюнинг через них молча не работал.
 const SHOT_POWER := 18.0
 const PASS_POWER := 12.0
 const SHOT_Y_UP := 0.3           # подъём мяча при ударе
