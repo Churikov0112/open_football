@@ -239,7 +239,7 @@ func _fire(ratio: float) -> void:
 		var flight_t: float = (2.0 * vy / g) if g > 0.01 else 0.0
 		var flat := Vector2(land.x - from.x, land.z - from.z)
 		var dt := 1.0 / float(Engine.physics_ticks_per_second)
-		var hspeed := KeeperLogic.drag_horizontal_speed(flat.length(), flight_t, _ball.drag_factor, dt)
+		var hspeed := KeeperLogic.drag_horizontal_speed(flat.length(), flight_t, _ball.drag_per_tick, dt)
 		var hdir := Vector3(flat.x, 0.0, flat.y).normalized() if flat.length() > 0.001 else _forward
 		_pending_launch = hdir * hspeed + Vector3.UP * vy
 	else:

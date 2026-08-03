@@ -2,6 +2,16 @@ extends RigidBody3D
 
 @export var drag_factor: float = 0.985
 @export var air_resistance: float = 0.999
+# Драг применяется раз за физкадр, а числа выше затюнены при 60 Гц — на фикс-тике матча (100 Гц)
+# их надо привести к реальному шагу, иначе за секунду мяч теряет вдвое больше (см. шапку
+# football_constants.gd). Считается один раз: тик в рантайме не меняется. Прогнозы полёта
+# (KeeperLogic, контроллеры стандартов) обязаны брать ИМЕННО эти поля, не сырые export'ы.
+var drag_per_tick: float = 0.985
+var air_per_tick: float = 0.999
+var _roll_drag_per_tick: float = 0.97
+var _magnus_decay_per_tick: float = 0.998
+var _control_lerp_per_tick: float = 0.4   # то же для сглаживания удержания: инвариант — доля,
+										  # «доезжаемая» за секунду (1 - остаток^тики)
 
 @export var dribble_forward_distance: float = 0.5
 @export var dribble_height: float = 0.08
@@ -38,6 +48,11 @@ var _pass_from_team: StringName = &""        # команда намеренно
 
 func _ready() -> void:
 	_football_texture()
+	drag_per_tick = TickScale.factor(drag_factor)
+	air_per_tick = TickScale.factor(air_resistance)
+	_roll_drag_per_tick = TickScale.factor(FootballConstants.DRIBBLE_ROLL_DRAG)
+	_magnus_decay_per_tick = TickScale.factor(FootballConstants.MAGNUS_DECAY)
+	_control_lerp_per_tick = TickScale.lerp_weight(FootballConstants.DRIBBLE_CONTROL_LERP)
 	var phys_mat := PhysicsMaterial.new()
 	phys_mat.friction = 0.4
 	phys_mat.bounce = 0.0   # отскок делаем ВРУЧНУЮ в _integrate_forces (см. _prev_vy/BALL_BOUNCE),
@@ -397,8 +412,8 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 
 		if _dribble_chasing:
 			# Мяч вырвался — свободно катится с трением, игрок догоняет (match_manager ведёт к мячу).
-			vel.x *= FootballConstants.DRIBBLE_ROLL_DRAG
-			vel.z *= FootballConstants.DRIBBLE_ROLL_DRAG
+			vel.x *= _roll_drag_per_tick
+			vel.z *= _roll_drag_per_tick
 		else:
 			# Под контролем: удерживаем мяч в точке впереди. Lead растёт со скоростью — плотно
 			# на медленном (мяч у ног, не пробежать мимо), далеко на бегу. Скорость мяча =
@@ -431,10 +446,10 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 			to_front.y = 0.0
 			var desired := player_vel + to_front * FootballConstants.DRIBBLE_CONTROL_GAIN
 			var flat_vel := Vector3(vel.x, 0.0, vel.z)
-			var blended := flat_vel.lerp(desired, FootballConstants.DRIBBLE_CONTROL_LERP)
+			var blended := flat_vel.lerp(desired, _control_lerp_per_tick)
 			vel.x = blended.x
 			vel.z = blended.z
-		vel.y *= air_resistance
+		vel.y *= air_per_tick
 	else:
 		if state == BallState.FLIGHT:
 			# Magnus: боковой (через left = vel×UP) + подъёмный импульс, с затуханием — дуга
@@ -446,7 +461,7 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 			if (airborne or _flat_flight) and _curl.length_squared() > 0.0001 and horiz.length() > 0.5:
 				var left := horiz.normalized().cross(Vector3.UP)
 				vel += (left * _curl.z + Vector3.UP * _curl.y) * state_body.step * FootballConstants.MAGNUS_FORCE
-				_curl *= FootballConstants.MAGNUS_DECAY
+				_curl *= _magnus_decay_per_tick
 			# Полёт закончился, когда мяч почти остановился — снова OPEN, коллизия с игроками
 			# выключается (чтобы капсула подбирающего не сбивала/подкидывала мяч). Порог низкий,
 			# чтобы быстрый летящий мяч блокировался стенкой, а не выпадал из FLIGHT рано.
@@ -474,9 +489,9 @@ func _integrate_forces(state_body: PhysicsDirectBodyState3D) -> void:
 				vel.y = descent * FootballConstants.BALL_BOUNCE
 				vel.x *= FootballConstants.BALL_BOUNCE_FRICTION
 				vel.z *= FootballConstants.BALL_BOUNCE_FRICTION
-		vel.x *= drag_factor
-		vel.z *= drag_factor
-		vel.y *= air_resistance
+		vel.x *= drag_per_tick
+		vel.z *= drag_per_tick
+		vel.y *= air_per_tick
 
 	_prev_vy = vel.y
 	state_body.linear_velocity = vel

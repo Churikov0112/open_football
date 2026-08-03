@@ -286,10 +286,11 @@ func _position(delta: float) -> void:
 	if (ball.global_position.z - goal_line_z) * into < 0.2:
 		_reacting = false
 		return
-	# Драги — с настоящего мяча (drag_factor/air_resistance за физкадр): без них прогноз
+	# Драги — с настоящего мяча (drag_per_tick/air_per_tick — множители за физкадр, уже приведённые
+	# к фикс-тику, см. ball_controller): без них прогноз
 	# завышает высоту на 0.3–0.5 м и верховые удары в створ уходят в «пропуск над перекладиной».
 	var intercept := KeeperLogic.shot_intercept(ball.global_position, ball.linear_velocity, goal_line_z, _ball_gravity(),
-		ball.drag_factor, ball.air_resistance, 1.0 / float(Engine.physics_ticks_per_second))
+		ball.drag_per_tick, ball.air_per_tick, 1.0 / float(Engine.physics_ticks_per_second))
 	# Реагируем на удары в створ И на мимо-удары в пределах ENGAGE_MARGIN (2м) за штангой/перекладиной.
 	var engage_w := FootballConstants.GOAL_WIDTH * 0.5 + FootballConstants.KEEPER_ENGAGE_MARGIN
 	var ont := KeeperLogic.is_on_target(intercept, engage_w, FootballConstants.GOAL_HEIGHT + FootballConstants.KEEPER_ENGAGE_MARGIN)
@@ -455,7 +456,7 @@ func begin_penalty_dive(zone: int, launch_vel: Vector3 = Vector3.ZERO) -> void:
 	# точку своей (угаданной) стороны → нырок мимо → гол (угадка стороны сейв НЕ гарантирует).
 	var vel := launch_vel if launch_vel.length_squared() > 0.01 else ball.linear_velocity
 	var predicted := KeeperLogic.shot_intercept(ball.global_position, vel, goal_line_z,
-		_ball_gravity(), ball.drag_factor, ball.air_resistance, 1.0 / float(Engine.physics_ticks_per_second))
+		_ball_gravity(), ball.drag_per_tick, ball.air_per_tick, 1.0 / float(Engine.physics_ticks_per_second))
 	var guess_sign := signf(target.x)   # -1 левая зона, +1 правая
 	if guess_sign != 0.0 and signf(predicted.x) == guess_sign:
 		target.x = clampf(predicted.x, -FootballConstants.GOAL_WIDTH * 0.5, FootballConstants.GOAL_WIDTH * 0.5)
@@ -563,8 +564,10 @@ func _begin_save(dec: Dictionary, ball_speed: float, ttoi: float, no_error: bool
 func _dive(delta: float) -> void:
 	# Только горизонталь (вертикаль — в клипе). Тело держится на уровне газона.
 	_body.move_and_collide(_dive_vel * delta)
-	_dive_vel.x *= FootballConstants.KEEPER_DIVE_DECAY
-	_dive_vel.z *= FootballConstants.KEEPER_DIVE_DECAY
+	# Затухание затюнено при 60 Гц и применяется за физкадр → приводим к фикс-тику матча.
+	var dive_decay := TickScale.factor(FootballConstants.KEEPER_DIVE_DECAY)
+	_dive_vel.x *= dive_decay
+	_dive_vel.z *= dive_decay
 	_body.global_position.y = _ground_y   # капсула не покидает газон — прыжок делает анимация
 	# Геометрический контакт: мяч дотянулся до вратаря → ловим (по _current_action) или отбиваем.
 	if ball.is_flight() and _catch_radius_hit():
@@ -863,11 +866,11 @@ func _do_hand_release() -> void:
 			var flight_t := 2.0 * vy / g
 			var dir := Vector3(flat_to.x - from.x, 0.0, flat_to.z - from.z)
 			dir = dir.normalized() if dir.length() > 0.01 else Vector3(0, 0, signf(-goal_line_z))
-			var hspeed := KeeperLogic.drag_horizontal_speed(dist, flight_t, ball.drag_factor, dt)
+			var hspeed := KeeperLogic.drag_horizontal_speed(dist, flight_t, ball.drag_per_tick, dt)
 			ball.launch(dir * hspeed + Vector3.UP * vy)
 		else:
 			# Раскат низом: мяч с руки на газон, катится к цели (flat), скорость из драга.
-			var speed := KeeperLogic.roll_speed(maxf(dist, 1.0), ball.drag_factor, dt)
+			var speed := KeeperLogic.roll_speed(maxf(dist, 1.0), ball.drag_per_tick, dt)
 			var dir := Vector3(flat_to.x - from.x, 0.0, flat_to.z - from.z)
 			dir = dir.normalized() if dir.length() > 0.01 else Vector3(0, 0, signf(-goal_line_z))
 			var bp := ball.global_position
@@ -1120,7 +1123,7 @@ func _do_overhand_throw() -> void:
 		var flight_t := 2.0 * vy / g
 		# Горизонталь с поправкой на драг мяча, чтобы навес реально долетел до дистанции.
 		var dt := 1.0 / float(Engine.physics_ticks_per_second)
-		var hspeed := KeeperLogic.drag_horizontal_speed(FootballConstants.KEEPER_THROW_DISTANCE, flight_t, ball.drag_factor, dt)
+		var hspeed := KeeperLogic.drag_horizontal_speed(FootballConstants.KEEPER_THROW_DISTANCE, flight_t, ball.drag_per_tick, dt)
 		var vel := Vector3(0.0, 0.0, into) * hspeed + Vector3.UP * vy
 		ball.launch(vel)   # дуга (flat=false) — навес
 	var m := _motor()
@@ -1307,7 +1310,7 @@ func _do_pass_roll() -> void:
 		var into := signf(-goal_line_z)   # от ворот в поле (к центру)
 		var dir := Vector3(0.0, 0.0, into)
 		var dt := 1.0 / float(Engine.physics_ticks_per_second)
-		var speed := KeeperLogic.roll_speed(FootballConstants.KEEPER_PASS_DISTANCE, ball.drag_factor, dt)
+		var speed := KeeperLogic.roll_speed(FootballConstants.KEEPER_PASS_DISTANCE, ball.drag_per_tick, dt)
 		var bp := ball.global_position
 		ball.global_position = Vector3(bp.x, FootballConstants.BALL_RADIUS + 0.02, bp.z)  # был на руке → на газон
 		ball.launch(dir * speed, true)

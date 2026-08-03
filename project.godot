@@ -81,6 +81,10 @@ pause={
 
 devices/pointing/emulate_touch_from_mouse=false
 
+[physics]
+
+common/physics_ticks_per_second=100
+
 [rendering]
 
 renderer/rendering_method="mobile"

@@ -17,8 +17,9 @@ func _tick() -> void:
 		_mm.ball.global_position = _k.global_position + Vector3(0, 1.0, 0)
 		_mm.ball.catch(_k, _b.hold_point); _b._enter_hands()
 		return
-	# 6 сек * 60 фпс = 360 физкадров; ждём с запасом.
-	if _f == 5 + 360 + 40:
+	# 6 сек = 360 физкадров при 60 Гц; ждём с запасом. Матч на фикс-тике 100 Гц → бюджет в кадрах
+	# пересчитывается TickScale.frames, иначе ждали бы 4 с и вратарь ещё держал бы мяч.
+	if _f == 5 + TickScale.frames(360 + 40):
 		if _b.is_hands_active():
 			print("CHECK FAIL: через 6с всё ещё HANDS"); quit(1); return
 		if _mm.ball.dribbler == _k or _mm.ball.is_caught():

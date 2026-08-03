@@ -43,7 +43,9 @@ func _tick() -> void:
 		if absf(_k.global_position.z - _out_z) > 4.0:
 			print("CHECK FAIL: вратарь телепортировался (z=", _k.global_position.z, " out_z=", _out_z, ")"); quit(1); return
 		return
-	if _f == 220 and _dropped:
+	# Дедлайн возврата отмерен при 60 Гц (~3.7 с на 20 м) → пересчёт под фикс-тик 100 Гц, иначе
+	# вратарь физически не успевает добежать в отведённые кадры.
+	if _f == TickScale.frames(220) and _dropped:
 		if _mm.ball.is_caught():
 			print("CHECK FAIL: вратарь схватил мяч руками в возврате"); quit(1); return
 		if _b._state != _b.State.POSITION:

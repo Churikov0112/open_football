@@ -548,7 +548,10 @@ func _confirm_goal(side: String) -> void:
 	# на радиус (past ≈ -BALL_RADIUS). «Отбит» = центр отошёл в поле ещё на GOAL_CONFIRM_RETREAT дальше.
 	var retreat_thresh := -FootballConstants.BALL_RADIUS - FootballConstants.GOAL_CONFIRM_RETREAT
 	var scored := false
-	for _i in range(FootballConstants.GOAL_CONFIRM_MAX_FRAMES):
+	# Предохранитель задан в СЕКУНДАХ: матч на фикс-тике 100 Гц, счётчик кадров дал бы разное окно
+	# при смене тика (та же причина, что у TickScale — см. шапку football_constants.gd).
+	var max_frames := int(FootballConstants.GOAL_CONFIRM_MAX_SEC * float(Engine.physics_ticks_per_second))
+	for _i in range(max_frames):
 		await get_tree().physics_frame
 		if _celebrating or not is_instance_valid(ball):
 			break

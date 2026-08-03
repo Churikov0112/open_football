@@ -302,7 +302,7 @@ func _on_kicker_contact(_action: String) -> void:
 		var vy: float = lob.y
 		var flight_t: float = (2.0 * vy / g) if g > 0.01 else 0.0
 		var dt := 1.0 / float(Engine.physics_ticks_per_second)
-		var hspeed := KeeperLogic.drag_horizontal_speed(land_dist2, flight_t, _ball.drag_factor, dt)
+		var hspeed := KeeperLogic.drag_horizontal_speed(land_dist2, flight_t, _ball.drag_per_tick, dt)
 		var vel := land_dir * hspeed + Vector3.UP * vy
 		var curl := FreeKickLogic.curl_from_stick(_curl_accum, FootballConstants.CORNER_CURL_SCALE, FootballConstants.CORNER_CURL_MAX)
 		if curl.length_squared() > 0.0001 and _ball.has_method(&"launch_curl"):
