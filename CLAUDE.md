@@ -67,9 +67,16 @@ FIFA, **Windows-only**. Идёт порт ядра GameplayFootball на C# (р�
 
 - `docs/wiki/` — **текущее состояние**, страница на подсистему, перекрёстные `[[ссылки]]`, каталог в
   `docs/wiki/index.md`. Ты её поддерживаешь.
+- `docs/wiki/глоссарий.md` — **имена предметной области** и запрещённые синонимы. Термин берётся
+  отсюда для заголовков задач, имён тестов и формулировок гипотез; разрешил новый термин —
+  допиши сюда. `CONTEXT.md` в корне — только указатель на эту страницу.
 - `log.md` (корень) — **append-only хронология** (метод Карпатого): вехи, крупные фичи, отвергнутые
-  подходы, решения. Записи `## [YYYY-MM-DD] тип | описание`, только в конец, старое не редактируется.
+  подходы, решения. Записи `## [YYYY-MM-DD] тип | описание` (парсится: `grep "^## \[" log.md | tail -5`),
+  только в конец, старое не редактируется. Завершая сессию, допиши запись `session` и обнови
+  `открытые-вопросы.md` — незакрытые хвосты живут там, а не в датированном файле.
 - `docs/superpowers/specs/`, `docs/superpowers/plans/` — **датированные первоисточники, не редактировать**.
+  Сюда же (`docs/reports/`) кладётся handoff-пакет, когда работа продолжается в свежей сессии: он
+  одноразовый и устаревает по природе, поэтому живёт среди снимков, а не в вики.
 
 **Правило: после существенной правки обнови нужную страницу вики — не создавай новый датированный
 документ.** Когда закончил задачу:
@@ -87,6 +94,98 @@ FIFA, **Windows-only**. Идёт порт ядра GameplayFootball на C# (р�
 Три хука (`.claude/hooks/`, на Python — `python3` тут сломанный алиас Microsoft Store, вызывается
 `python`; проводка в `.claude/settings.json`) подпирают это механически: session-start оглавление вики,
 per-edit подсказка «читай эту страницу первой», stop-check «код менялся — вики нет».
+
+## Workflow
+
+- Where a task matches an installed skill, use that skill — but only when it's genuinely appropriate to the task, not by default. Don't force-fit a skill onto work it wasn't meant for.
+- Long-running processes (long builds, model training, long test runs, migrations) must not block the main conversation: launch them via a background agent (Agent tool, `run_in_background: true`) rather than a blocking Bash call, have the agent log progress periodically rather than only at the end, and continue other work or respond to the user while it runs.
+
+Скиллы проекта (`.claude/skills/`):
+- `wiki-lint` — когда просят «проверь вики»/«wiki lint»/«проверь константы», а также перед крупной
+  задачей, опирающейся на документацию: битые `[[ссылки]]`, сироты, расхождения с
+  `football_constants.gd`, противоречия между страницами.
+- `handoff` — user-invoked (`disable-model-invocation`), сам не вызывается: когда человек просит
+  собрать пакет для продолжения в свежей сессии.
+
+Задачи ведутся цепочкой скиллов: локальный markdown-трекер в `.scratch/`, конфигурация в
+`docs/agents/`. Звенья цепочки набирает человек — это user-invoked скиллы, агент их не вызывает.
+Задача дозрела до звена — назови команду и дождись её; звено, пройденное по памяти вместо скилла,
+даёт похожий на вид документ без правил, ради которых оно существует. Вся цепочка целиком — в
+скилле `ask-matt`, читается по месту.
+
+## Agent skills
+
+### Issue tracker
+
+Задачи и спеки — markdown-файлами в `.scratch/<feature>/` внутри репозитория; GitHub Issues не
+используются, `gh` CLI не установлен. См. `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Пять канонических ролей строками `Status:` в файле тикета, имена совпадают с каноническими
+(`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`).
+См. `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: словарь — `docs/wiki/глоссарий.md` (корневой `CONTEXT.md` — указатель на него),
+живое состояние подсистем — `docs/wiki/`, решения — `docs/adr/` по мере появления.
+См. `docs/agents/domain.md`.
+
+## 1. Think Before Coding
+Don't assume. Don't hide confusion. Surface tradeoffs.
+
+Before implementing:
+
+State your assumptions explicitly. If uncertain, ask.
+If multiple interpretations exist, present them - don't pick silently.
+If a simpler approach exists, say so. Push back when warranted.
+If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+Minimum code that solves the problem. Nothing speculative.
+
+No features beyond what was asked.
+No abstractions for single-use code.
+No "flexibility" or "configurability" that wasn't requested.
+No error handling for impossible scenarios.
+If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+Touch only what you must. Clean up only your own mess.
+
+When editing existing code:
+
+Don't "improve" adjacent code, comments, or formatting.
+Don't refactor things that aren't broken.
+Match existing style, even if you'd do it differently.
+If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+
+Remove imports/variables/functions that YOUR changes made unused.
+Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+Define success criteria. Loop until verified.
+
+Transform tasks into verifiable goals:
+
+"Add validation" → "Write tests for invalid inputs, then make them pass"
+"Fix the bug" → "Write a test that reproduces it, then make it pass"
+"Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
 ## Выбор модели Claude
 

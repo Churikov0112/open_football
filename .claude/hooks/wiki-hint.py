@@ -76,6 +76,7 @@ PAGES = {
     # --- камера / константы ---
     "match_camera.gd":        "поле-и-камера",
     "football_constants.gd":  "константы",
+    "tick_scale.gd":          "константы конвенции",
     # --- порт GameplayFootball (C#) ---
     "Animation.cs":         "порт-gameplayfootball",
     "QuatUtil.cs":          "порт-gameplayfootball",
@@ -92,6 +93,13 @@ PAGES = {
     "SpatialState.cs":         "порт-gameplayfootball",
     "PhysicsVector.cs":        "порт-gameplayfootball",
     "HumanoidBase.cs":         "порт-gameplayfootball",
+    "Humanoid.cs":             "порт-gameplayfootball",
+    "PlayerCommand.cs":        "порт-gameplayfootball",
+    "TouchVectors.cs":         "порт-gameplayfootball",
+    "Ball.cs":                 "порт-gameplayfootball",
+    "GpfPitch.cs":             "порт-gameplayfootball",
+    "GpfRng.cs":               "порт-gameplayfootball",
+    "BallLabMain.cs":          "порт-gameplayfootball",
 }
 
 def main():
@@ -103,6 +111,22 @@ def main():
     if not f:
         return
     base = os.path.basename(f.replace("\\", "/"))
+
+    # CONTEXT.md в корне — только указатель; словарь живёт страницей вики.
+    if base == "CONTEXT.md":
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": (
+                    "CONTEXT.md — указатель, терминов в нём нет. Глоссарий проекта — "
+                    "docs/wiki/глоссарий.md: читай и дописывай новые термины туда "
+                    "(формат `**Термин**:` + определение + `_Avoid_:`), иначе словарь "
+                    "расщепится надвое."
+                ),
+            },
+        }, ensure_ascii=False))
+        return
+
     pages = PAGES.get(base)
     if not pages:
         return

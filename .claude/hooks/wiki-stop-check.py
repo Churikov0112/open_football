@@ -9,7 +9,7 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 # код, который вики реально описывает (служебные .uid/.import/.godot не считаем)
-CODE_RE = re.compile(r"^(scripts/.*\.gd|tests/check_.*\.gd|tools/.*\.(py|gd))$")
+CODE_RE = re.compile(r"^(scripts/.*\.gd|src/.*\.cs|tests/check_.*\.gd|tools/.*\.(py|gd))$")
 
 def _changed_paths(root, base):
     changed = set()
