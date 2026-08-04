@@ -25,10 +25,21 @@ cd "C:/Users/User/Desktop/projects/GameplayFootball/build/Release" && ./gameplay
 | Ключ | Значение сейчас |
 |---|---|
 | `oracle_scenario` | `C:/Users/User/Desktop/projects/OpenFootball/tests/scenarios/walk_line.txt` |
-| `oracle_trace` | `C:/Users/User/Desktop/projects/OpenFootball/out/ref.csv` (потребляет тикет 02) |
-| `oracle_manifest` | `C:/Users/User/Desktop/projects/OpenFootball/out/ref_manifest.csv` (потребляет тикет 02) |
+| `oracle_trace` | `C:/Users/User/Desktop/projects/OpenFootball/out/ref.csv` |
+| `oracle_manifest` | `C:/Users/User/Desktop/projects/OpenFootball/out/ref_manifest.csv` |
+
+Второй конфиг, `rng_probe.config` (тоже версионирован в `data/`), гоняет сценарий с касаниями мяча и
+пишет в `out/rng_ref.csv` — им проверяется только повторяемость эталона, с портом он не сравнивается:
+
+```bash
+cd "C:/Users/User/Desktop/projects/GameplayFootball/build/Release" && ./gameplayfootball.exe rng_probe.config
+```
+
+Каталог `out/` в репозитории порта должен существовать: писатель файлы создаёт, каталоги — нет.
+Содержимое `out/` не версионируется.
 
 Сценарии лежат в репозитории **порта** (`tests/scenarios/`), эталон получает путь ключом конфига.
+Пример обоих выходных файлов с разбором — [trace-example.md](./trace-example.md).
 
 **Вывод идёт в `build/Release/log.txt`**, не в консоль: exe собран с подсистемой WIN32 (`CMakeLists.txt`,
 `add_executable(... WIN32 ...)`), так что `printf` некуда девать. Строки оракула ищутся так:

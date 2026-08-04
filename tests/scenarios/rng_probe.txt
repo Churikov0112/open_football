@@ -1,0 +1,23 @@
+# rng_probe: игрок идёт к мячу и раз за разом бьёт по нему.
+#
+# Единственный сценарий фазы 5, который намеренно трогает мяч. С портом он НЕ сравнивается:
+# потоки случайных чисел у сторон разные по построению (у эталона из генератора тянут 22 игрока,
+# судья и TeamAI, у порта — один гуманоид). Им проверяется ровно одно — повторяемость эталона
+# на пути, который реально дёргает RNG: касание мяча ведёт в GetDifficultyFactors
+# (humanoid_utils.cpp:146), а тот вызывает random().
+#
+# Без этого шага приёмка walk_line зелена вхолостую: тот сценарий выбран так, чтобы RNG не касаться.
+seed 20260731
+ticks 900
+0    dir -0.985,-0.173,0   buttons Sprint
+150  buttons Sprint|ShortPass
+170  buttons Sprint
+250  dir 1,0,0
+300  buttons Sprint|ShortPass
+320  buttons Sprint
+450  dir 0,1,0
+500  buttons Sprint|ShortPass
+520  buttons Sprint
+650  dir -1,0,0
+700  buttons Sprint|ShortPass
+720  buttons Sprint
