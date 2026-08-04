@@ -94,11 +94,21 @@ cd "C:/Users/User/Desktop/projects/GameplayFootball/build/Release" && ./gameplay
 Коды возврата: `0` — совпали; `1` — разошлись по составу или по порядку; `2` — не хватает аргументов
 или файл не читается. Вердикт на реальной паре — [manifest-verdict.md](./manifest-verdict.md).
 
-Приёмка самого инструмента:
+Дифф трасс по дискретным полям — первый разошедшийся тик. Ту же проверку манифестов он делает своей
+первой стадией, логика общая и живёт в `tools/oracle_manifest.gd`:
+
+```bash
+"C:/Users/User/Desktop/Godot_v4.7.1-stable_mono_win64/Godot_v4.7.1-stable_mono_win64_console.exe" --path "C:/Users/User/Desktop/projects/OpenFootball" --headless -s res://tools/trace_diff.gd -- out/ref.csv out/port.csv out/ref_manifest.csv out/port_manifest.csv tools/trace_whitelist.txt
+```
+
+Аргументы после `--`: трасса эталона, трасса порта, манифест эталона, манифест порта, белый список.
+Коды возврата: `0` — дискретные поля совпали; `1` — расхождение, расхождение манифестов либо переезд
+контроля; `2` — не хватает аргументов, файл не читается или трасса сломана.
+
+Приёмка обоих инструментов (манифесты и трассы, синтетика в самом тесте):
 
 ```bash
 "C:/Users/User/Desktop/Godot_v4.7.1-stable_mono_win64/Godot_v4.7.1-stable_mono_win64_console.exe" --path "C:/Users/User/Desktop/projects/OpenFootball" --headless -s res://tests/check_trace_diff.gd
 ```
 
-Дифф трасс — тикеты 05–06; ту же проверку манифестов он делает своей первой стадией, логика общая и
-живёт в `tools/oracle_manifest.gd`.
+Непрерывный слой (позиции, углы, смаггл, начало роста) — тикет 06, дописывается в те же файлы.

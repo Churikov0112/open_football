@@ -112,6 +112,12 @@ PAGES = {
     "GpfPitch.cs":             "порт-gameplayfootball",
     "GpfRng.cs":               "порт-gameplayfootball",
     "BallLabMain.cs":          "порт-gameplayfootball",
+    # --- оракул: манифесты, трассы, дифф ---
+    "oracle_manifest.gd":      "порт-gameplayfootball расхождения-с-оригиналом",
+    "oracle_trace.gd":         "порт-gameplayfootball расхождения-с-оригиналом",
+    "manifest_diff.gd":        "порт-gameplayfootball",
+    "trace_diff.gd":           "порт-gameplayfootball",
+    "run_scenario.gd":         "порт-gameplayfootball",
 }
 
 def main():

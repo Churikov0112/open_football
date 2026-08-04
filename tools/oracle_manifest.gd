@@ -47,6 +47,25 @@ static func load_manifest(path: String) -> Dictionary:
 	return {"ok": true, "error": "", "clips": clips}
 
 
+# Имена, у которых пара anim_name + foot встречается больше одного раза: по этой паре такие клипы
+# неразличимы. Дифф трасс сравнивает строки с такими именами по anim_id, а не по имени.
+static func duplicate_names(clips: Array[String]) -> Array[String]:
+	var seen := {}
+	var dups := {}
+	for clip in clips:
+		var f := clip.split("|")
+		var key: String = f[0] + "|" + f[2]
+		if seen.has(key):
+			dups[f[0]] = true
+		else:
+			seen[key] = true
+	var out: Array[String] = []
+	for name in dups:
+		out.append(name)
+	out.sort()
+	return out
+
+
 # Дубли пары anim_name + foot. Имена автогенов не уникальны (формула грубо квантована), и пара с
 # ногой — то, чем коллизия разрешается; неразрешённые дифф трасс потом обрабатывает особо.
 static func count_name_foot_duplicates(clips: Array[String]) -> int:
@@ -84,6 +103,8 @@ static func compare(reference_path: String, port_path: String) -> Dictionary:
 		"size_port": port_clips.size(),
 		"dup_ref": count_name_foot_duplicates(ref_clips),
 		"dup_port": count_name_foot_duplicates(port_clips),
+		# Имена неразрешённых коллизий берёт дифф трасс: строки с ними он сравнивает по anim_id.
+		"dup_names": duplicate_names(ref_clips),
 		"only_ref": [],
 		"only_port": [],
 		"first_index": -1,
