@@ -84,4 +84,21 @@ cd "C:/Users/User/Desktop/projects/GameplayFootball/build/Release" && ./gameplay
 
 ## Дифф
 
-Тикеты 04–06.
+Манифесты коллекции — первый вопрос оракула; пока они не сошлись, построчный дифф трасс не имеет
+смысла.
+
+```bash
+"C:/Users/User/Desktop/Godot_v4.7.1-stable_mono_win64/Godot_v4.7.1-stable_mono_win64_console.exe" --path "C:/Users/User/Desktop/projects/OpenFootball" --headless -s res://tools/manifest_diff.gd -- out/ref_manifest.csv out/port_manifest.csv
+```
+
+Коды возврата: `0` — совпали; `1` — разошлись по составу или по порядку; `2` — не хватает аргументов
+или файл не читается. Вердикт на реальной паре — [manifest-verdict.md](./manifest-verdict.md).
+
+Приёмка самого инструмента:
+
+```bash
+"C:/Users/User/Desktop/Godot_v4.7.1-stable_mono_win64/Godot_v4.7.1-stable_mono_win64_console.exe" --path "C:/Users/User/Desktop/projects/OpenFootball" --headless -s res://tests/check_trace_diff.gd
+```
+
+Дифф трасс — тикеты 05–06; ту же проверку манифестов он делает своей первой стадией, логика общая и
+живёт в `tools/oracle_manifest.gd`.
