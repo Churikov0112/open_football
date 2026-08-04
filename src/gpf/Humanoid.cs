@@ -450,9 +450,9 @@ namespace Gpf
                 // :1363 — движение доигрывается idle-клипом. Страховка порта (как в фазе 3):
                 // на пустой коллекции GetIdleMovementAnimID() == -1, и класть -1 в отбор нельзя;
                 // в оригинале такого состояния не бывает (клипы всегда загружены).
-                if (command.DesiredFunctionType == AnimCollection.FnMovement       // :1360
-                    && _anims.GetIdleMovementAnimID() >= 0)
-                    dataSet.Add(_anims.GetIdleMovementAnimID());
+                int idleId = command.DesiredFunctionType == AnimCollection.FnMovement // :1360
+                    ? GetIdleMovementAnimID() : -1;
+                if (idleId >= 0) dataSet.Add(idleId);
                 // :1364 — иначе SelectAnim возвращает false; у нас это пустой список
             }
             return dataSet;
@@ -768,8 +768,8 @@ namespace Gpf
             {
                 // :1657-1660 — движение доигрывается idle-клипом; >= 0 — страховка порта на
                 // пустой коллекции (как в BuildCrudeDataSet)
-                if (_anims.GetIdleMovementAnimID() >= 0)
-                    dataSet.Add(_anims.GetIdleMovementAnimID());               // :1659
+                int idleId = GetIdleMovementAnimID();
+                if (idleId >= 0) dataSet.Add(idleId);                          // :1659
             }
             // страховка порта: KeepBest*-фильтры могли опустошить action-отбор; в C++ дальше
             // NeedTouch(*dataSet.begin()) / dataSet[0] в GetBestCheatableAnimID — UB на пустом

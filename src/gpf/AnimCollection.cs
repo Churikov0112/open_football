@@ -25,7 +25,6 @@ namespace Gpf
         private readonly List<Animation> _animations = new();
         private readonly List<Quadrant> _quadrants = new();
         private readonly AnimationApplier _applier = new();
-        private int _idleMovementAnimId = -1;
 
         // animcollection.cpp:57-58
         private const float MaxIncomingBallDirectionDeviation = 0.25f * Mathf.Pi;
@@ -66,7 +65,6 @@ namespace Gpf
         public int GetQuadrantVelocityId(int id) => _quadrants[id].VelocityId;
         public Vector3 GetQuadrantPosition(int id) => _quadrants[id].Position;
         internal Quadrant GetQuadrant(int id) => _quadrants[id];
-        public int GetIdleMovementAnimID() => _idleMovementAnimId;
 
         // Кэш позиций корня per-клип — порт Match::Match (match.cpp:86-105): позиция player-трека
         // на каждом кадре, Z занулён. Оригинал держит его в Match (map Animation* → vector<Vector3>);
@@ -101,7 +99,6 @@ namespace Gpf
         public void Load(string animationsRoot, Skeleton3D utilitySkeleton)
         {
             _animations.Clear();
-            _idleMovementAnimId = -1;
 
             var files = new List<string>();
             ScanAnimFiles(animationsRoot, files);
@@ -127,15 +124,9 @@ namespace Gpf
                 }
             }
 
-            for (int i = 0; i < _animations.Count; i++)
-            {
-                var a = _animations[i];
-                if (a.GetAnimType() == "movement" && a.GetIncomingVelocity() < 1.8f && a.GetOutgoingVelocity() < 1.8f)
-                {
-                    _idleMovementAnimId = i; // фолбэк humanoidbase.cpp:1416
-                    break;
-                }
-            }
+            // Idle-клипа движения здесь НЕТ намеренно: он не свойство коллекции. Отбор живёт в
+            // HumanoidBase.GetIdleMovementAnimID (humanoidbase.cpp:875-926) и зависит от spatialState
+            // игрока, поэтому кэшировать его при загрузке нельзя — см. [[порт-gameplayfootball]].
 
             // Кэш позиций корня строится ПОСЛЕДНИМ — коллекция уже окончательна (автогены, зеркала,
             // файловые клипы все в _animations), поэтому кэш параллелен ей по индексам. В оригинале

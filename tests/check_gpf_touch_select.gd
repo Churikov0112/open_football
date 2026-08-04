@@ -64,7 +64,7 @@ func _initialize() -> void:
 	# ---------- 5. NeedTouch: стоячий мяч + idle-желание → false; быстрый мяч → true ----------
 	# (:1824-1830: idle-клип, desiredVelocity < 1.8, |ballMovement| <= 2 — не трогаем каждый кадр)
 	ball.SetPosition(Vector3(0, -0.5, 0.11))
-	var idle_id: int = c.GetIdleMovementAnimID()
+	var idle_id: int = h.GetIdleMovementAnimID()  # отбор живёт на гуманоиде (humanoidbase.cpp:875-926)
 	if h.NeedTouchBridge(idle_id, 0.0):
 		print("CHECK FAIL: NeedTouch true на стоячем мяче и idle-желании"); ok = false
 	ball.SetMomentum(Vector3(0, -8, 0))

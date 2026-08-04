@@ -515,7 +515,7 @@ namespace Gpf.Lab
             }
 
             bool havePlayer = false, haveBall = false;
-            Vector3 position = Vector3.Zero, ballPosition = Vector3.Zero;
+            Vector3 position = Vector3.Zero, ballPosition = Vector3.Zero, ballMomentum = Vector3.Zero;
             float angle = 0f;
 
             while (!file.EofReached() && !(havePlayer && haveBall))
@@ -525,6 +525,7 @@ namespace Gpf.Lab
                 if (f[0] == "B" && f[1] == "0" && !haveBall)
                 {
                     ballPosition = new Vector3(ParseFloat(f[2]), ParseFloat(f[3]), ParseFloat(f[4]));
+                    ballMomentum = new Vector3(ParseFloat(f[5]), ParseFloat(f[6]), ParseFloat(f[7]));
                     haveBall = true;
                 }
                 else if (f[0] == "P" && f[1] == "0" && f.Length >= 23 && f[3] == "1" && !havePlayer)
@@ -544,9 +545,19 @@ namespace Gpf.Lab
 
             // Существующий вход ядра: поднимает игрока на idleMovementAnimId с кадра 0.
             _humanoid.ResetSituation(position, angle);
-            // Мяч — из B-строки того же тика, с нулевым моментом. ResetSituation сам добавляет
-            // радиус по Z (ball.cpp:606), а в трассе лежит уже центр мяча.
-            if (haveBall) _ball.ResetSituation(ballPosition - new Vector3(0, 0, BallRadius));
+            // Мяч — из B-строки того же тика. ResetSituation сам добавляет радиус по Z
+            // (ball.cpp:606), а в трассе лежит уже центр мяча.
+            //
+            // МОМЕНТ МЯЧА ОБЯЗАТЕЛЕН, хотя сценарий фазы 5 мяча не касается: сорт-цепочка отбора
+            // читает Ball::Predict(200) (humanoid.cpp:1565-1566) и по порогу 16 м выбирает
+            // desiredIdleLevel. С нулевым моментом порт видел 15.985 м вместо 16.48 и брал уровень 0
+            // вместо 1 — то есть другой idle-клип на нулевом же тике. Спека закладывала нулевой
+            // момент, и это оказалось неверно.
+            if (haveBall)
+            {
+                _ball.ResetSituation(ballPosition - new Vector3(0, 0, BallRadius));
+                _ball.SetMomentum(ballMomentum);
+            }
             return true;
         }
 
@@ -569,7 +580,7 @@ namespace Gpf.Lab
                     var anim = _collection.GetAnim(_humanoid.GetCurrentAnimId());
                     OracleError = $"условие нулевого тика не наступило за {MaxWaitTicks} тиков; "
                         + $"последнее состояние: клип '{anim.GetName()}' "
-                        + $"(id {_humanoid.GetCurrentAnimId()}, idle id {_collection.GetIdleMovementAnimID()}), "
+                        + $"(id {_humanoid.GetCurrentAnimId()}, idle id {_humanoid.GetIdleMovementAnimID()}), "
                         + $"кадр {_humanoid.GetCurrentFrameNum()}, "
                         + $"до мяча {(_ball.Predict(0) - _humanoid.GetSpatialPosition()).Length():F3} м";
                     return false;
@@ -593,7 +604,7 @@ namespace Gpf.Lab
         // Правило нулевого тика на нашей стороне: состояние В КОНЦЕ тика даёт idleMovementAnimId с
         // кадром 0. Условия «мяч в игре, не стандарт» у лабы нет — она всегда в игре.
         private bool IsOracleZeroTick() =>
-            _humanoid.GetCurrentAnimId() == _collection.GetIdleMovementAnimID()
+            _humanoid.GetCurrentAnimId() == _humanoid.GetIdleMovementAnimID()
             && _humanoid.GetCurrentFrameNum() == 0;
 
         private void OracleStep(int inputTick)

@@ -114,6 +114,12 @@ namespace Gpf
             _selector = selector;
         }
 
+        // Порт HumanoidBase::GetIdleMovementAnimID (humanoidbase.cpp:875-926). Живёт на гуманоиде, а
+        // не на коллекции: сорт-цепочка отбора читает spatialState, поэтому «idle-клип» — функция позы
+        // игрока, а не константа библиотеки. Тело — в AnimSelector, где живут предикаты и StableSort.
+        public int GetIdleMovementAnimID() =>
+            _selector.GetIdleMovementAnimID(_spatial.Position, _spatial.Angle, _spatial.FloatVelocity);
+
         // Все 6 статов = preset (лаба; дефолты PhysicsVector — 0.6 по humanoidbase.cpp:2021-2024)
         public void SetStatsPreset(float preset) =>
             _physics.SetStats(preset, preset, preset, preset, preset, preset);
@@ -136,7 +142,7 @@ namespace Gpf
                 DirectionVec = BluntMath.GetRotated2D(new Vector3(0, -1, 0), angle), // :939
             };
 
-            _current.Id = _anims.GetIdleMovementAnimID();   // :949-950
+            _current.Id = GetIdleMovementAnimID();          // :949-950
             _current.Anim = _anims.GetAnim(_current.Id);    // :951
             _current.Positions.Clear();                     // :952
             // :953 — КОПИЯ кэша (в C++ vector копируется по значению; ссылку отдавать нельзя —

@@ -116,11 +116,8 @@ func _initialize() -> void:
 	if i045 >= 0 and col.GetQuadrantID(col.GetAnim(i045), Vector3(0, -5, 0), 0.0) != 12:
 		print("CHECK FAIL: GetQuadrantID (0,-5,0) → ", col.GetQuadrantID(col.GetAnim(i045), Vector3(0, -5, 0), 0.0)); ok = false
 
-	# GetIdleMovementAnimID указывает на idle-движение
-	var idle_id: int = col.GetIdleMovementAnimID()
-	if idle_id < 0 or col.GetAnim(idle_id).GetAnimType() != "movement" \
-		or col.GetAnim(idle_id).GetIncomingVelocity() >= 1.8 or col.GetAnim(idle_id).GetOutgoingVelocity() >= 1.8:
-		print("CHECK FAIL: GetIdleMovementAnimID → ", idle_id); ok = false
+	# GetIdleMovementAnimID отсюда УЕХАЛ на гуманоида (humanoidbase.cpp:875-926): idle-клип — функция
+	# spatialState игрока, а не свойство коллекции. Проверка живёт в check_gpf_humanoid_state.gd.
 
 	skel.queue_free()
 	print("CHECK PASS" if ok else "CHECK FAIL")

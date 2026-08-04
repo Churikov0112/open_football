@@ -89,7 +89,14 @@ func _initialize() -> void:
 		print("CHECK FAIL: rotationOffset ", rot1, " != формула ", expected_rot); ok = false
 
 	# ---------- 2. Idle-клип: желание «стоять» → idle-выход, rotationOffset по формуле ----------
-	var idle_id: int = c.GetIdleMovementAnimID()
+	# Тесту нужен ЛЮБОЙ idle-клип движения, а не тот, который выберет отбор: гуманоида здесь нет,
+	# а GetIdleMovementAnimID уехал на него (humanoidbase.cpp:875-926, читает spatialState).
+	var idle_id: int = -1
+	for i in range(c.GetAnimationCount()):
+		var a = c.GetAnim(i)
+		if a.GetAnimType() == "movement" and a.GetIncomingVelocity() < 1.8 and a.GetOutgoingVelocity() < 1.8:
+			idle_id = i
+			break
 	if idle_id < 0:
 		print("CHECK FAIL: idle-клип не найден")
 		print("CHECK FAIL")

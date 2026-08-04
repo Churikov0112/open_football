@@ -48,7 +48,12 @@ func _initialize() -> void:
 	# затем frameNum++ (:588) и apply (:700-705) → frameNum 1, позиция startPos + positions[1],
 	# ориентация startAngle + нулевой rotationSmuggle (:965-967), noPos = true.
 	var h0 = make_humanoid(HB, c, sel)
-	var idle_id: int = c.GetIdleMovementAnimID()
+	# Idle-клип спрашиваем У ГУМАНОИДА: отбор читает его spatialState (humanoidbase.cpp:875-926),
+	# поэтому свойством коллекции он не является.
+	var idle_id: int = h0.GetIdleMovementAnimID()
+	if idle_id < 0 or c.GetAnim(idle_id).GetAnimType() != "movement" \
+		or c.GetAnim(idle_id).GetIncomingVelocity() >= 1.8 or c.GetAnim(idle_id).GetOutgoingVelocity() >= 1.8:
+		print("CHECK FAIL: GetIdleMovementAnimID → ", idle_id); ok = false
 	var idle_cache: Array = AC.BuildPositionCache(c.GetAnim(idle_id))
 	# до первого Tick noPos = false — дефолт конструктора AnimApplyBuffer (humanoidbase.hpp:139)
 	if h0.GetApplyNoPos():

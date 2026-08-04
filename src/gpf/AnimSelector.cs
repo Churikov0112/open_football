@@ -292,6 +292,57 @@ namespace Gpf
         internal void SortByBaseanimSimilarity(List<int> dataSet) => StableSort(dataSet, CompareBaseanimSimilarity);
         internal void SortByCatchOrDeflect(List<int> dataSet) => StableSort(dataSet, CompareCatchOrDeflect);
 
+        // ---- GetIdleMovementAnimID (humanoidbase.cpp:875-926) ----
+
+        // Idle-клип движения — НЕ константа коллекции, а функция текущего spatialState: последние два
+        // сорта цепочки (CompareBodyDirectionSimilarity по lookat и CompareMovementSimilarity по
+        // corneringBias) читают позицию, угол и скорость игрока. Отсюда и место функции в оригинале —
+        // `HumanoidBase`, а не `AnimCollection`.
+        //
+        // Предикаты здесь затираются, и это верно оригиналу: там они mutable-поля объекта, а вызов из
+        // фолбэка SelectAnim (:1416) точно так же затирает их до того, как SelectAnim выставит свои.
+        internal int GetIdleMovementAnimID(Vector3 spatialPosition, float spatialAngle,
+                                           float spatialFloatVelocity)
+        {
+            _spatialPosition = spatialPosition;
+            _spatialAngle = spatialAngle;
+
+            var query = new CrudeSelectionQuery                          // :876-882
+            {
+                ByFunctionType = true,
+                FunctionTypeId = AnimCollection.FnMovement,
+                ByIncomingVelocity = true,
+                IncomingVelocityId = Velo.IdVelIdle,
+                ByOutgoingVelocity = true,
+                OutgoingVelocityId = Velo.IdVelIdle,
+            };
+
+            var dataSet = new List<int>();                               // :884
+            _anims.CrudeSelectionInternal(dataSet, query);               // :885
+            // :886 оригинал на пустом отборе лишь печатает «no animations to begin with» и дальше
+            // разыменовывает begin() пустого вектора — UB. Политика порта та же, что у «RED ALERT»:
+            // не падать; вызывающие уже проверяют результат на >= 0.
+            if (dataSet.Count == 0) return -1;
+
+            SetNumericVariableSimilarityPredicate("idlelevel", 1);       // :888-889
+            StableSort(dataSet, CompareNumericVariable);                 // :893
+
+            SetIncomingBodyDirectionSimilarityPredicate(new Vector3(0, -1, 0)); // :896
+            StableSort(dataSet, CompareIncomingBodyDirectionSimilarity); // :900
+
+            SetIncomingVelocitySimilarityPredicate(Velo.IdVelIdle);      // :903
+            StableSort(dataSet, CompareIncomingVelocitySimilarity);      // :907
+
+            SetMovementSimilarityPredicate(new Vector3(0, -1, 0), Velo.IdVelIdle, spatialFloatVelocity); // :910
+            // lookat (:911) — точка в 10 м «перед» игроком по его текущему углу
+            SetBodyDirectionSimilarityPredicate(
+                spatialPosition + BluntMath.GetRotated2D(new Vector3(0, -10, 0), spatialAngle));
+            StableSort(dataSet, CompareBodyDirectionSimilarity);         // :915
+            StableSort(dataSet, CompareMovementSimilarity);              // :921
+
+            return dataSet[0];                                           // :926
+        }
+
         // ---- _KeepBest* (humanoidbase.cpp:1103-1229) ----
 
         // :1103-1171 — ПОЛНАЯ сигнатура оригинала (дефолты humanoidbase.hpp: strict=true,
@@ -385,7 +436,8 @@ namespace Gpf
             _anims.CrudeSelectionInternal(dataSet, query);
             if (dataSet.Count == 0) // :1412-1417
             {
-                if (_anims.GetIdleMovementAnimID() >= 0) dataSet.Add(_anims.GetIdleMovementAnimID());
+                int idleId = GetIdleMovementAnimID(position, angle, floatVelocity); // :1416
+                if (idleId >= 0) dataSet.Add(idleId);
                 else return dataSet;
             }
 
