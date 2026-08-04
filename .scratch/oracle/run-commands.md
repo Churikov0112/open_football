@@ -59,7 +59,28 @@ cd "C:/Users/User/Desktop/projects/GameplayFootball/build/Release" && ./gameplay
 
 ## Порт
 
-Тикет 03.
+Пути — абсолютные либо относительно корня репозитория порта. Каталог `out/` должен существовать.
+
+```bash
+"C:/Users/User/Desktop/Godot_v4.7.1-stable_mono_win64/Godot_v4.7.1-stable_mono_win64_console.exe" --path "C:/Users/User/Desktop/projects/OpenFootball" --headless -s res://tools/run_scenario.gd -- tests/scenarios/walk_line.txt out/ref.csv out/port.csv out/port_manifest.csv
+```
+
+Аргументы после `--`: сценарий, **трасса эталона**, выходная трасса, выходной манифест. Трасса
+эталона здесь вход: из её первой строки берутся стартовые позиция и угол игрока и позиция мяча.
+Отсюда жёсткий порядок цикла — сначала прогон эталона, потом прогон порта, потом дифф.
+
+Коды возврата: `0` — прогон дошёл до `ticks`; `1` — ошибка сценария, входной трассы или не наступило
+условие нулевого тика; `2` — не хватает аргументов. При ошибке причина печатается строкой
+`ORACLE FAIL: ...`.
+
+Приёмка харнесса порта — `tests/check_gpf_trace.gd`, запускается обычным способом:
+
+```bash
+"C:/Users/User/Desktop/Godot_v4.7.1-stable_mono_win64/Godot_v4.7.1-stable_mono_win64_console.exe" --path "C:/Users/User/Desktop/projects/OpenFootball" --headless -s res://tests/check_gpf_trace.gd
+```
+
+Интерактивный запуск лабы (`scenes/lab/ball_lab.tscn`) этим не затронут: оракул-режим включается
+только вызовом `SetupOracle`.
 
 ## Дифф
 

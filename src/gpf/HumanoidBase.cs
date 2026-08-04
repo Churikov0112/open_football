@@ -722,6 +722,11 @@ namespace Gpf
         public float GetSpatialFloatVelocity() => _spatial.FloatVelocity;
         public Vector3 GetSpatialMovement() => _spatial.Movement;
         public Vector3 GetRelBodyDirectionVec() => _spatial.RelBodyDirectionVec;
+        // Порт HumanoidBase::GetDirectionVec (humanoidbase.hpp:221). Нужен порту _GetHidInput:
+        // в дедзоне ввод подменяется текущим направлением лица (humancontroller.cpp:501).
+        // Вывести из GetSpatialAngle нельзя — на ходу поле присваивается как нормализованное
+        // движение (:610), а не как поворот от угла.
+        public Vector3 GetSpatialDirectionVec() => _spatial.DirectionVec;
         public int GetFoot() => _spatial.Foot;
         // Мост для тестируемости лерпа rotation smuggle (humanoid.cpp:722-742): begin/end живут
         // приватно в CurrentAnimState; тест пересчитывает формулу наследника по ним.

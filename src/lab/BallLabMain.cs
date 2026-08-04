@@ -21,9 +21,10 @@ namespace Gpf.Lab
         private const float BallRadius = 0.11f;
 
         private readonly Gpf.AnimationApplier _applier = new();
-        private readonly Gpf.HumanoidBase _humanoid = new();
-        private readonly Gpf.Ball _ball = new();
-        private readonly Gpf.GpfRng _rng = new(RngSeed);
+        // Не readonly: оракул-режим пересоздаёт ядро на каждый прогон (см. SetupOracle).
+        private Gpf.HumanoidBase _humanoid = new();
+        private Gpf.Ball _ball = new();
+        private Gpf.GpfRng _rng = new(RngSeed);
         private Gpf.AnimCollection _collection = null!;
         private Gpf.AnimSelector _selector = null!;
         private Skeleton3D _skeleton = null!;
@@ -43,6 +44,10 @@ namespace Gpf.Lab
         // команда («их» пространство: вперёд (0,-1,0))
         private Vector3 _desiredDirection = new Vector3(0, -1, 0);
         private int _desiredVelocityId = 1; // стартуем с дриблинга: мяч рядом
+        // Скорость команды как float — то, чем её видит очередь. Интерактивная лаба квантует её
+        // клавишами 0/1/2/3 через SetCommand, оракул-режим ставит напрямую из порта _GetHidInput
+        // (humancontroller.cpp:497-523), который отдаёт не номер, а величину.
+        private float _desiredVelocityFloat = Gpf.Velo.Dribble;
 
         // ---- буфер действия контроллера (humancontroller.cpp:97-197, :451-459) ----
         // actionMode: 0 — нет действия, 2 — заряжается/ждёт исполнения пас/удар.
@@ -151,6 +156,7 @@ namespace Gpf.Lab
             if (desiredDirectionTheirSpace.Length() > 0.01f)
                 _desiredDirection = Gpf.BluntMath.GetNormalized(desiredDirectionTheirSpace, new Vector3(0, -1, 0));
             _desiredVelocityId = Mathf.Clamp(desiredVelocityId, 0, 3);
+            _desiredVelocityFloat = Gpf.Velo.EnumToFloatVelocity(_desiredVelocityId);
         }
 
         // Нажатие-и-отпускание кнопки действия без клавиатуры (headless-прогон, скрипты приёмки):
@@ -233,7 +239,7 @@ namespace Gpf.Lab
         private List<Gpf.PlayerCommand> BuildCommandQueue()
         {
             var queue = new List<Gpf.PlayerCommand>();
-            float desiredVelocityFloat = Gpf.Velo.EnumToFloatVelocity(_desiredVelocityId);
+            float desiredVelocityFloat = _desiredVelocityFloat;
             Vector3 lookAt = _humanoid.GetSpatialPosition() + _desiredDirection * 10.0f;
 
             Gpf.PlayerCommand? action = BuildActionCommand();
@@ -268,8 +274,14 @@ namespace Gpf.Lab
         // = 1.0, :188). Возвращает команду или null.
         private Gpf.PlayerCommand? BuildActionCommand()
         {
-            bool passHeld = Input.IsKeyPressed(Key.W);
-            bool shotHeld = Input.IsKeyPressed(Key.S);
+            // Кнопки: клавиатура в интерактивной лабе, сценарий в оракул-режиме. Пространство одно
+            // и то же — e_ButtonFunction, поэтому участок «кнопки → очередь команд» попадает под дифф.
+            bool passHeld = _oracleMode
+                ? _oracleScenario.GetButton(_oracleInputTick, OracleScenario.BtnShortPass)
+                : Input.IsKeyPressed(Key.W);
+            bool shotHeld = _oracleMode
+                ? _oracleScenario.GetButton(_oracleInputTick, OracleScenario.BtnShot)
+                : Input.IsKeyPressed(Key.S);
 
             // сброс буфера: действие уже исполняется клипом и касание позади (:41-49)
             int fn = _humanoid.GetCurrentFunctionType();
@@ -336,7 +348,7 @@ namespace Gpf.Lab
             if (_actionButtonFunctionType == AnimCollection.FnShot)
             {
                 // :186-190. desiredVelocityFloat — «спринт/дриблинг как модификатор удара» (:185).
-                command.DesiredVelocityFloat = Gpf.Velo.EnumToFloatVelocity(_desiredVelocityId);
+                command.DesiredVelocityFloat = _desiredVelocityFloat;
                 command.TouchInfo.AutoDirectionBias = 1.0f;                   // :188 (клавиатура)
                 // ШОВ AI_GetShotDirection (:189) — AI-слой вне скоупа фазы (тот же шов, что в
                 // humanoid.cpp:550-566): направление берём как введено.
@@ -420,8 +432,214 @@ namespace Gpf.Lab
 
         public override void _PhysicsProcess(double delta)
         {
+            if (_oracleMode) return; // прогон гонит RunOracle, а не физические кадры
             PollDirectionInput();
             StepOneFrame();
+        }
+
+        // ================== оракул: сценарий на входе, трасса на выходе ==================
+        //
+        // Всё ниже включается только через SetupOracle; интерактивный запуск лабы не меняется.
+        // Писатель зовётся здесь, в оркестраторе тика, потому что оркестратор лабы — это ровно то,
+        // что в порте играет роль Match::Process, где оригинал зовёт свой дамп. На фазе 8 вызов
+        // переедет в портированный Match без правки самого писателя.
+
+        // gamedefines.hpp:31 — отклонение стика, ниже которого ввода нет.
+        private const float AnalogStickDeadzone = 0.75f;
+
+        // Предел ожидания нулевого тика — тот же, что у эталона: 3000 тиков (30 с игрового времени).
+        private const int MaxWaitTicks = 3000;
+
+        private bool _oracleMode;
+        private OracleScenario _oracleScenario = null!;
+        private Gpf.TraceWriter _oracleTrace = null!;
+        private string _oracleTracePath = "";
+        private string _oracleManifestPath = "";
+
+        // Номер сценарного тика, ввод которого действует в течение ТЕКУЩЕГО тика; −1 — ввода нет.
+        // Строка трассы пишется в конце тика, а о том, что тик нулевой, известно только в его конце,
+        // поэтому ввод строки t действует в течение тика, дающего строку t, а строка 0 пишется без
+        // ввода вовсе (игрок по построению стоит). Эталон применяет ровно то же правило.
+        private int _oracleInputTick = -1;
+
+        public string OracleError { get; private set; } = "";
+
+        // Готовит прогон: сценарий, стартовое состояние из первой строки трассы эталона, пути выхода.
+        public bool SetupOracle(string scenarioPath, string referenceTracePath,
+            string tracePath, string manifestPath)
+        {
+            _oracleScenario = new OracleScenario();
+            if (!_oracleScenario.Load(scenarioPath))
+            {
+                OracleError = _oracleScenario.Error;
+                return false;
+            }
+
+            // Прогон обязан стартовать из чистого ядра. У гуманоида копится _actualTimeMs, а от него
+            // зависит частота ReQueue (HumanoidBase.cs:290-298) — второй прогон в том же процессе
+            // иначе разъехался бы с первым. Эталон получает чистое состояние даром: там каждый
+            // прогон — свой процесс.
+            _humanoid = new Gpf.HumanoidBase();
+            _humanoid.Setup(_collection, _selector);
+            _ball = new Gpf.Ball { WoodworkEnabled = false };
+            _rng = new Gpf.GpfRng(_oracleScenario.GetSeed());
+            _humanoid.SetBall(_ball);
+            _humanoid.SetRng(_rng);
+            _humanoid.SetDesignatedPossession(true);
+            _humanoid.SetMatchContext(true, false, false, false);
+            ResetActionBuffer();
+            _lastBodyBallCollisionTimeMs = long.MinValue / 2;
+            _touches = 0;
+            _lastTouchBallDistance = -1f;
+            _lastTouchWhat = "-";
+
+            if (!LoadStartStateFromReference(referenceTracePath)) return false;
+
+            _oracleTrace = new Gpf.TraceWriter();
+            _oracleTracePath = tracePath;
+            _oracleManifestPath = manifestPath;
+            _oracleMode = true;
+            return true;
+        }
+
+        // Эталон стартует матч, порт — лабу; без явного выравнивания расхождение на первом же тике
+        // гарантировано. Поэтому трасса эталона — ВХОД прогона, а не только объект сравнения.
+        private bool LoadStartStateFromReference(string referenceTracePath)
+        {
+            using var file = Godot.FileAccess.Open(referenceTracePath, Godot.FileAccess.ModeFlags.Read);
+            if (file == null)
+            {
+                OracleError = $"{referenceTracePath}: трасса эталона не открывается "
+                    + $"({Godot.FileAccess.GetOpenError()})";
+                return false;
+            }
+
+            bool havePlayer = false, haveBall = false;
+            Vector3 position = Vector3.Zero, ballPosition = Vector3.Zero;
+            float angle = 0f;
+
+            while (!file.EofReached() && !(havePlayer && haveBall))
+            {
+                string[] f = file.GetLine().Split(',');
+                if (f.Length < 8) continue;
+                if (f[0] == "B" && f[1] == "0" && !haveBall)
+                {
+                    ballPosition = new Vector3(ParseFloat(f[2]), ParseFloat(f[3]), ParseFloat(f[4]));
+                    haveBall = true;
+                }
+                else if (f[0] == "P" && f[1] == "0" && f.Length >= 23 && f[3] == "1" && !havePlayer)
+                {
+                    position = new Vector3(ParseFloat(f[13]), ParseFloat(f[14]), ParseFloat(f[15]));
+                    angle = ParseFloat(f[16]);
+                    havePlayer = true;
+                }
+            }
+
+            if (!havePlayer)
+            {
+                OracleError = $"{referenceTracePath}: в трассе эталона нет строки тика 0 с controlled = 1 "
+                    + "— стартовать не из чего";
+                return false;
+            }
+
+            // Существующий вход ядра: поднимает игрока на idleMovementAnimId с кадра 0.
+            _humanoid.ResetSituation(position, angle);
+            // Мяч — из B-строки того же тика, с нулевым моментом. ResetSituation сам добавляет
+            // радиус по Z (ball.cpp:606), а в трассе лежит уже центр мяча.
+            if (haveBall) _ball.ResetSituation(ballPosition - new Vector3(0, 0, BallRadius));
+            return true;
+        }
+
+        private static float ParseFloat(string s) =>
+            float.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : 0f;
+
+        // Гонит прогон целиком: пред-прокрутка до нулевого тика, затем ticks строк трассы.
+        public bool RunOracle()
+        {
+            // Пред-прокрутка. Сценарий на неё не действует: о том, что тик нулевой, известно только
+            // в его конце, поэтому ввод к нему адресовать нечем.
+            int waitTicks = 0;
+            while (true)
+            {
+                OracleStep(-1);
+                if (IsOracleZeroTick()) break;
+                if (++waitTicks >= MaxWaitTicks)
+                {
+                    var anim = _collection.GetAnim(_humanoid.GetCurrentAnimId());
+                    OracleError = $"условие нулевого тика не наступило за {MaxWaitTicks} тиков; "
+                        + $"последнее состояние: клип '{anim.GetName()}' "
+                        + $"(id {_humanoid.GetCurrentAnimId()}, idle id {_collection.GetIdleMovementAnimID()}), "
+                        + $"кадр {_humanoid.GetCurrentFrameNum()}, "
+                        + $"до мяча {(_ball.Predict(0) - _humanoid.GetSpatialPosition()).Length():F3} м";
+                    return false;
+                }
+            }
+
+            if (!_oracleTrace.WriteManifest(_oracleManifestPath, _collection)) return false;
+            if (!_oracleTrace.BeginTrace(_oracleTracePath)) return false;
+            WriteOracleTick(0);
+
+            for (int tick = 1; tick < _oracleScenario.GetTicks(); tick++)
+            {
+                OracleStep(tick);
+                WriteOracleTick(tick);
+            }
+
+            _oracleTrace.End();
+            return true;
+        }
+
+        // Правило нулевого тика на нашей стороне: состояние В КОНЦЕ тика даёт idleMovementAnimId с
+        // кадром 0. Условия «мяч в игре, не стандарт» у лабы нет — она всегда в игре.
+        private bool IsOracleZeroTick() =>
+            _humanoid.GetCurrentAnimId() == _collection.GetIdleMovementAnimID()
+            && _humanoid.GetCurrentFrameNum() == 0;
+
+        private void OracleStep(int inputTick)
+        {
+            _oracleInputTick = inputTick;
+            GetHidInput(inputTick, out Vector3 direction, out float velocityFloat);
+            _desiredDirection = direction;
+            _desiredVelocityFloat = velocityFloat;
+            StepOneFrame();
+        }
+
+        // Порт HumanController::_GetHidInput (humancontroller.cpp:497-523) — недостающий кусок
+        // конверсии «кнопки → команда». Живёт в лабе, не в ядре: в порте ему пока некуда лечь,
+        // а держать сценарий в пространстве кнопок нужно ровно затем, чтобы этот участок попадал
+        // под дифф, а не оставался за приёмкой.
+        private void GetHidInput(int inputTick, out Vector3 rawInputDirection, out float rawInputVelocityFloat)
+        {
+            rawInputDirection = _oracleScenario.GetDirection(inputTick);   // :498
+
+            if (rawInputDirection.Length() < AnalogStickDeadzone)          // :500
+            {
+                rawInputDirection = _humanoid.GetSpatialDirectionVec();     // :501
+                rawInputVelocityFloat = Gpf.Velo.Idle;                      // :502
+            }
+            else
+            {
+                if (_oracleScenario.GetButton(inputTick, OracleScenario.BtnSprint))
+                    rawInputVelocityFloat = Gpf.Velo.Sprint;                                   // :504
+                else if (_oracleScenario.GetButton(inputTick, OracleScenario.BtnDribble))
+                    rawInputVelocityFloat = Gpf.Velo.Dribble;                                  // :505
+                // :506 — Switch у designated-игрока; в лабе гуманоид всегда designated, но парсер
+                // Switch запрещает, так что ветка мертва на фазе 5. Перенесена ради полноты.
+                else if (_oracleScenario.GetButton(inputTick, OracleScenario.BtnSwitch))
+                    rawInputVelocityFloat = Gpf.Velo.Idle;
+                else rawInputVelocityFloat = Gpf.Velo.Walk;                                    // :507
+                rawInputDirection = Gpf.BluntMath.GetNormalized(rawInputDirection, rawInputDirection); // :509
+            }
+
+            // :512-521 — ветка GetLastSwitchBias. На фазе 5 мертва: биас поднимает только переключение
+            // игрока, а Switch в сценариях запрещён, так что GetLastSwitchBias() тождественно 0.
+        }
+
+        private void WriteOracleTick(int tick)
+        {
+            _oracleTrace.WriteBall(tick, _ball.Predict(0), _ball.GetMovement());
+            _oracleTrace.WritePlayer(tick, _humanoid, _collection.GetAnim(_humanoid.GetCurrentAnimId()));
         }
 
         // Опрос зажатых стрелок — как в walk_lab (сумма векторов даёт диагонали).
