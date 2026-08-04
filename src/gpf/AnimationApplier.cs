@@ -3,11 +3,30 @@ using System.Collections.Generic;
 
 namespace Gpf
 {
+    // Офсет узла — порт struct BiasedOffset (animation.hpp:46-54): насколько и куда доворачивать
+    // кость поверх кадра клипа. Обычный C#-класс, через мост не ходит (как SpatialState).
+    public class BiasedOffset
+    {
+        public float Bias;                                    // :51 — 0..1
+        public Quaternion Orientation = Quaternion.Identity;  // :52
+        public bool IsRelative;                               // :53
+
+        // В C++ это struct, и `animApplyBuffer.offsets = offsets` (humanoid.cpp:780) копирует
+        // записи ПО ЗНАЧЕНИЮ. Копия обязательна: Apply мутирует Orientation через
+        // MakeSameNeighborhood (:427), и по ссылке мутация ушла бы в карту гуманоида.
+        // Та же причина, что у PlayerCommand.Clone().
+        public BiasedOffset Clone() => new BiasedOffset
+        {
+            Bias = Bias, Orientation = Orientation, IsRelative = IsRelative,
+        };
+    }
+
     // Применение кадра клипа на Skeleton3D — порт Animation::Apply (animation.cpp:370-721):
     // джойнты получают АБСОЛЮТНУЮ локальную ротацию, player — позицию корня. С фазы 4 (задача 5)
     // портирована и ветка сглаживания smooth/smoothFactor (:436-707): «предыдущая поза» читается
     // из скелета ДО записи (в C++ — из nodeMap), история движений — в _movementHistory.
-    // Не портированы: offsets (:424-433, в порте пустые), updateSpatial (:720 — Godot сам).
+    // С фазы 6 портирована и ветка офсетов (:424-433) — см. Offsets ниже.
+    // Не портирован: updateSpatial (:720 — Godot сам).
     public partial class AnimationApplier : RefCounted
     {
         // MovementHistory (animation.hpp): предыдущая поза/позиция узла для сглаживания.
@@ -21,6 +40,33 @@ namespace Gpf
             public int TimeDiffMs = 10;
         }
         private readonly Dictionary<string, MovementHistoryEntry> _movementHistory = new();
+
+        // Карта офсетов, которую читает Apply (:425). ШОВ — тот же, что у _movementHistory: в C++
+        // она приходит ПАРАМЕТРОМ Apply (animation.cpp:370) из animApplyBuffer.offsets, у нас
+        // ставится при экземпляре применителя перед вызовом. Причина не стилистическая:
+        // Dictionary<string, BiasedOffset> через мост GDScript не проходит, а Apply зовут из
+        // tests/check_gpf_apply.gd — параметром метод стал бы для GDScript невидимым. Один
+        // применитель на гуманоида, так что семантика та же.
+        // В живой игре карта ВСЕГДА пуста: Humanoid::CalculateGeomOffsets не вызывается никогда
+        // (см. HumanoidBase.CalculateGeomOffsets).
+        internal Dictionary<string, BiasedOffset>? Offsets;
+
+        // Порт HumanoidBase::SetOffset (humanoidbase.cpp:852-871) на стороне применителя: способ
+        // наполнить карту, когда гуманоида нет (лаба клипов, тесты). Четыре случая оригинала
+        // сворачиваются в два — запись (вставка либо перезапись) и удаление; наблюдаемо то же самое.
+        // Нулевой bias именно УДАЛЯЕТ запись (:869-870), а не пишет нулевое влияние.
+        public void SetOffset(string nodeName, float bias, Quaternion orientation, bool isRelative)
+        {
+            if (bias != 0f)
+            {
+                Offsets ??= new Dictionary<string, BiasedOffset>();
+                Offsets[nodeName] = new BiasedOffset
+                {
+                    Bias = bias, Orientation = orientation, IsRelative = isRelative,
+                };
+            }
+            else Offsets?.Remove(nodeName);
+        }
 
         // GDScript-мост не переносит default-аргументы C# (default_args пуст на стороне GDScript),
         // поэтому из GDScript звать с полным списком из 10 аргументов.
@@ -107,6 +153,17 @@ namespace Gpf
                     Quaternion q = anim.SampleRotation(name, frame, timeOffsetMs);
                     if (name == "body" && baseRotZ != 0f) // animation.cpp:417-422
                         q = (new Quaternion(new Vector3(0, 0, 1), baseRotZ) * q).Normalized();
+
+                    // офсет узла (:424-433). В оригинале блок стоит ДО ветвления player/не-player,
+                    // но у узла "player" ориентация никуда не пишется (:710-716) и в его треке лежит
+                    // только позиция — поэтому здесь он в не-player ветке, наблюдаемо это одно и то же.
+                    if (Offsets != null && Offsets.TryGetValue(name, out BiasedOffset? off))
+                    {
+                        off.Orientation = QuatUtil.SameNeighborhood(off.Orientation, q); // :427
+                        q = QuatUtil.GetNormalized(off.IsRelative
+                            ? QuatUtil.Lerp(q, off.Bias, off.Orientation * q)   // :429
+                            : QuatUtil.Lerp(q, off.Bias, off.Orientation));     // :431
+                    }
 
                     if (smooth)                                                 // :438, ветка :463-639
                     {

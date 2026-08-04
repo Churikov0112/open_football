@@ -218,6 +218,8 @@ namespace Gpf.Lab
 
             var anim = _collection.GetAnim(_humanoid.GetCurrentAnimId());
             // Применение ровно из apply-буфера тика (humanoid.cpp:763-780), как в walk_lab.
+            // Офсеты — из того же буфера (:780), полем применителя; карта всегда пуста.
+            _applier.Offsets = _humanoid.GetApplyOffsets();
             _applier.Apply(_skeleton, anim, _humanoid.GetApplyFrameNum(), 0f,
                 _humanoid.GetApplyNoPos(), _humanoid.GetApplyOrientation(), _humanoid.GetApplyPosition(),
                 _humanoid.GetApplySmooth(), _humanoid.GetSmoothFactor(), 10);

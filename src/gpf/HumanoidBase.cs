@@ -108,10 +108,51 @@ namespace Gpf
         private bool _applySmooth = true;         // humanoidbase.hpp:137 (дефолт конструктора)
         private float _applySmoothFactor = 0.5f;  // humanoidbase.hpp:138 (дефолт конструктора)
 
+        // Карта офсетов гуманоида (humanoidbase.hpp:339) и её снимок в apply-буфере (:161).
+        // В живой игре обе ВСЕГДА пусты — см. CalculateGeomOffsets ниже.
+        // Очисток снимка в оригинале две, портирована одна: humanoidbase.cpp:1003 (ResetPosition)
+        // — ниже; humanoidbase.cpp:218 чистит ЛОКАЛЬНЫЙ AnimApplyBuffer конструктора (:211),
+        // которым база прикладывает base.anim.util, чтобы построить nodeMap, — у нас скелет
+        // строит SkeletonBuilder, и соответствия этой точке нет.
+        private readonly Dictionary<string, BiasedOffset> _offsets = new();
+        private readonly Dictionary<string, BiasedOffset> _applyOffsets = new();
+
         public void Setup(AnimCollection anims, AnimSelector selector)
         {
             _anims = anims;
             _selector = selector;
+        }
+
+        // humanoidbase.cpp:852-871. Четыре случая оригинала (вставить / перезаписать / удалить /
+        // не делать ничего) сворачиваются в два — наблюдаемо то же самое. Нулевой bias именно
+        // УДАЛЯЕТ запись (:869-870), а не пишет нулевое влияние: на этом стоит сброс всех
+        // тринадцати офсетов в начале Humanoid::CalculateGeomOffsets (humanoid.cpp:784-796).
+        public void SetOffset(string nodeName, float bias, Quaternion orientation, bool isRelative)
+        {
+            if (bias != 0f)
+                _offsets[nodeName] = new BiasedOffset
+                {
+                    Bias = bias, Orientation = orientation, IsRelative = isRelative,
+                };
+            else _offsets.Remove(nodeName);
+        }
+
+        // ТЕЛО НЕ ПОРТИРОВАНО НАМЕРЕННО — в оригинале эта функция мертва.
+        //
+        // Единственный её вызов стоит в HumanoidBase::Process (humanoidbase.cpp:719), а игроки
+        // исполняют полный override Humanoid::Process (humanoid.cpp:92), который базу не зовёт
+        // (его единственное обращение к базе — ResetSituation). Голый HumanoidBase инстанцируется
+        // только для судей (playerofficial.cpp:30), и там тело функции целиком лежит внутри
+        // /* todo */ (humanoidbase.cpp:803-851). SetOffset во всём дереве оригинала вызывается
+        // только из этих двух тел — значит карта офсетов пуста у всех и всегда.
+        //
+        // Порт воспроизводит это буквально: метод есть, тело пустое, из Tick не зовётся — ровно
+        // как Humanoid::Process. Тело наследника (humanoid.cpp:783-1085: подгиб ног под истинную
+        // скорость, доворот корпуса и головы к мячу, руки против соперника, нога к точке касания)
+        // ждёт фазы 9 — двум его веткам нужны живой соперник и мировые позиции костей внутри ядра.
+        // Разбор — .scratch/oracle/issues/14, работа — .scratch/oracle/issues/15.
+        private void CalculateGeomOffsets()
+        {
         }
 
         // Ease-in смаггла поворота (humanoid.cpp:722-742). Вынесен из Process, потому что зовётся
@@ -230,6 +271,7 @@ namespace Gpf
             _applyNoPos = false;
             _applySmooth = false;                           // :999
             _applySmoothFactor = 0.0f;                      // :1000
+            _applyOffsets.Clear();                          // :1003 (карту гуманоида НЕ трогает)
         }
 
         // ШОВ Player::RequestCommand (:225): очереди контроллера нет — собираем её из лаб-входов
@@ -539,7 +581,14 @@ namespace Gpf
                 _applyOrientation = _startAngle;                               // :776
                 _applyNoPos = false;                                           // :777
             }
-            // :780 animApplyBuffer.offsets — offsets не портированы (пустые)
+            // :780 animApplyBuffer.offsets = offsets — снимок карты в буфер. В C++ присваивание
+            // std::map копирует записи по значению, поэтому здесь Clone(), а не ссылка: Apply
+            // мутирует Orientation офсета (animation.cpp:427), и по ссылке мутация ушла бы в
+            // карту гуманоида и пережила бы тик. Хранилище переиспользуется — при пустой карте
+            // (то есть всегда, см. CalculateGeomOffsets) это ноль аллокаций на тик.
+            _applyOffsets.Clear();
+            foreach (KeyValuePair<string, BiasedOffset> kv in _offsets)
+                _applyOffsets[kv.Key] = kv.Value.Clone();
             return switched;
         }
 
@@ -719,6 +768,10 @@ namespace Gpf
         public Vector3 GetApplyPosition() => _applyPosition;
         public float GetApplyOrientation() => _applyOrientation;
         public bool GetApplyNoPos() => _applyNoPos;
+        // Снимок карты офсетов для AnimationApplier.Offsets (humanoid.cpp:780 → animation.cpp:370).
+        // internal, а не public: Dictionary<string, BiasedOffset> через мост GDScript не проходит,
+        // а лабы живут в той же сборке.
+        internal Dictionary<string, BiasedOffset> GetApplyOffsets() => _applyOffsets;
         public bool GetApplySmooth() => _applySmooth;
         public float GetSmoothFactor() => _applySmoothFactor;
         // ---- Мост-геттеры smuggle-контура (задача 5) ----

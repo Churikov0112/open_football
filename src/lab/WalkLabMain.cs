@@ -121,6 +121,9 @@ namespace Gpf.Lab
             // позиция и доворот идут ЦЕЛИКОМ через basePos/baseRotZ, корень клипа при noPos
             // занулён по X/Y (animation.cpp:410-415) — иначе варп сложился бы с сырым корнем дважды.
             // smooth/smoothFactor — из apply-буфера (humanoid.cpp:276-284), timeDiff = 10 мс.
+            // Офсеты в C++ — девятый аргумент Apply из того же буфера (:780); у нас ставятся
+            // полем применителя (ШОВ, см. AnimationApplier.Offsets). Карта всегда пуста.
+            _applier.Offsets = _humanoid.GetApplyOffsets();
             _applier.Apply(_skeleton, anim, _humanoid.GetApplyFrameNum(), 0f,
                 _humanoid.GetApplyNoPos(), _humanoid.GetApplyOrientation(), _humanoid.GetApplyPosition(),
                 _humanoid.GetApplySmooth(), _humanoid.GetSmoothFactor(), 10);
