@@ -41,6 +41,12 @@ func _initialize() -> void:
 	_check_trace_tick_without_controlled()
 	_check_trace_ambiguous_names()
 	_check_trace_safe_area()
+	_check_trace_within_tolerance()
+	_check_trace_growth()
+	_check_trace_single_spike()
+	_check_trace_tolerance_file()
+	_check_trace_whitelist_continuous()
+	_check_trace_discrete_stays_primary()
 	_check_trace_report_fits_screen()
 
 	print("CHECK PASS" if _ok else "CHECK FAIL")
@@ -470,6 +476,137 @@ func _check_trace_safe_area() -> void:
 			% [r.touch_ticks, r.near_ticks])
 	if not Trace.report(r).contains("вышел за безопасную область"):
 		_fail("отчёт не предупреждает о выходе за безопасную область фазы 5")
+
+
+# --- непрерывный слой (тикет 06) --------------------------------------------------------------
+
+# Пороги проверяются подачей синтетических трасс, а не чтением константы из инструмента: числа ниже
+# написаны в тесте руками, зная объявленные допуски (позиция и угол — 1e-3 м/рад).
+const _TOL_POSITION := 0.001
+
+# Ряд |Δ| по колонке: значение колонки у порта = значению эталона (ноль) плюс дельта тика.
+func _drifting(tick_count: int, col: int, deltas: Dictionary) -> Array:
+	var rows := _plain(tick_count)
+	for t in tick_count:
+		rows[t][0][col] = "%.6f" % float(deltas.get(t, 0.0))
+	return rows
+
+
+# Линейный рост с тика 20: |Δ| = 0.002·(t−19). Первый тик сверх допуска — 20, и от него |Δ| не убывает
+# и к тику 30 вырастает в 11 раз, то есть правило K=10 / ×2 выполнено именно на 20.
+func _ramp(from_tick: int, step: float, tick_count: int) -> Dictionary:
+	var deltas := {}
+	for t in range(from_tick, tick_count):
+		deltas[t] = step * (t - from_tick + 1)
+	return deltas
+
+
+func _pos_x_col() -> int:
+	for c in Trace.CONTINUOUS:
+		if c.name == "pos_x":
+			return c.col
+	return -1
+
+
+func _angle_col() -> int:
+	for c in Trace.CONTINUOUS:
+		if c.name == "angle":
+			return c.col
+	return -1
+
+
+func _check_trace_within_tolerance() -> void:
+	var deltas := {}
+	for t in 60:
+		deltas[t] = _TOL_POSITION * 0.5  # вдвое меньше допуска и постоянно — это шум
+	var a := _write_trace("t_w.csv", _plain(60))
+	var b := _write_trace("t_x.csv", _drifting(60, _pos_x_col(), deltas))
+	var r := Trace.compare(a, b, _mref, _mport, "")
+	if r.verdict != "match":
+		_fail("расхождение в пределах допуска дало вердикт '%s'" % r.verdict)
+	if int(r.drift.pos_x.tick) != -1:
+		_fail("шум в пределах допуска назван ростом на тике %d" % r.drift.pos_x.tick)
+	if not Trace.report(r).contains("pos_x") or not Trace.report(r).contains("в шуме"):
+		_fail("отчёт не печатает строку про поле в шуме")
+
+
+func _check_trace_growth() -> void:
+	var a := _write_trace("t_y.csv", _plain(60))
+	var b := _write_trace("t_z.csv", _drifting(60, _pos_x_col(), _ramp(20, 0.002, 60)))
+	var r := Trace.compare(a, b, _mref, _mport, "")
+	# Дискретные поля совпали, но растущее расхождение — тоже расхождение: код возврата ненулевой.
+	if r.verdict != "drift":
+		_fail("растущее расхождение непрерывного поля дало вердикт '%s'" % r.verdict)
+	if int(r.drift.pos_x.tick) != 20:
+		_fail("начало роста названо тиком %d вместо 20" % r.drift.pos_x.tick)
+	if int(r.drift.pos_y.tick) != -1:
+		_fail("рост найден в поле, которое не расходилось")
+	var text := Trace.report(r)
+	if not text.contains("ДИСКРЕТНЫЕ ПОЛЯ СОВПАЛИ") or not text.contains("тик 20"):
+		_fail("отчёт не называет тик начала роста при совпавших дискретных полях")
+
+
+# Всплеск ровно того же размера, что пик роста, началом роста не считается.
+func _check_trace_single_spike() -> void:
+	var a := _write_trace("t_aa.csv", _plain(60))
+	var b := _write_trace("t_ab.csv", _drifting(60, _pos_x_col(), {20: 0.022}))
+	var r := Trace.compare(a, b, _mref, _mport, "")
+	if r.verdict != "match":
+		_fail("одиночный всплеск дал вердикт '%s'" % r.verdict)
+	if int(r.drift.pos_x.tick) != -1:
+		_fail("одиночный всплеск назван началом роста на тике %d" % r.drift.pos_x.tick)
+	if absf(float(r.drift.pos_x.max) - 0.022) > 1e-6:
+		_fail("наибольшее |Δ| посчитано неверно: %f" % r.drift.pos_x.max)
+
+
+# Допуски переопределяются файлом: тот же ряд при допуске 1e-2 начинает расти позже.
+func _check_trace_tolerance_file() -> void:
+	var a := _write_trace("t_ac.csv", _plain(60))
+	var b := _write_trace("t_ad.csv", _drifting(60, _pos_x_col(), _ramp(20, 0.002, 60)))
+	var file := _write_whitelist("tol.txt", "# допуск позиции поднят\nposition 1e-2\n")
+	var r := Trace.compare(a, b, _mref, _mport, "", file)
+	if int(r.drift.pos_x.tick) != 25:
+		_fail("файл допусков не подействовал: начало роста на тике %d вместо 25" % r.drift.pos_x.tick)
+
+	var broken := _write_whitelist("tol_bad.txt", "posistion 1e-2\n")
+	r = Trace.compare(a, b, _mref, _mport, "", broken)
+	if r.verdict != "error" or not str(r.error).contains("нет класса допуска"):
+		_fail("опечатка в файле допусков не дала ошибку: " + str(r.get("error", r.verdict)))
+
+
+func _check_trace_whitelist_continuous() -> void:
+	var port := _drifting(60, _pos_x_col(), _ramp(20, 0.002, 60))
+	var angle := _ramp(30, 0.002, 60)
+	for t in 60:
+		port[t][0][_angle_col()] = "%.6f" % float(angle.get(t, 0.0))
+	var a := _write_trace("t_ae.csv", _plain(60))
+	var b := _write_trace("t_af.csv", port)
+	var wl := _write_whitelist("wl_cont.txt", "pos_x|always|строка страницы\n")
+	var r := Trace.compare(a, b, _mref, _mport, wl)
+	if not bool(r.drift.pos_x.excluded):
+		_fail("белый список не подействовал на непрерывное поле")
+	if int(r.drift.angle.tick) != 30:
+		_fail("остальные непрерывные поля перестали сравниваться: angle на тике %d" % r.drift.angle.tick)
+	if not Trace.report(r).contains("исключено белым списком"):
+		_fail("отчёт не отмечает исключённое непрерывное поле")
+
+
+# Дискретный слой остаётся главным, но непрерывный считается на всей длине, а не до тика T.
+func _check_trace_discrete_stays_primary() -> void:
+	var port := _drifting(60, _pos_x_col(), _ramp(20, 0.002, 60))
+	for t in range(5, 60):
+		port[t][0][Trace.DISCRETE[4].col] = "9"
+	var a := _write_trace("t_ag.csv", _plain(60))
+	var b := _write_trace("t_ah.csv", port)
+	var r := Trace.compare(a, b, _mref, _mport, "")
+	if r.verdict != "mismatch" or r.first_tick != 5 or r.first_field != "frame_num":
+		_fail("отчёт не начинается с дискретного расхождения: %s, %s, тик %d"
+			% [r.verdict, r.first_field, r.first_tick])
+	if int(r.drift.pos_x.tick) != 20:
+		_fail("непрерывный слой посчитан не на всей длине: pos_x на тике %d вместо 20" % r.drift.pos_x.tick)
+	var text := Trace.report(r)
+	if text.find("ПЕРВОЕ РАСХОЖДЕНИЕ") > text.find("НЕПРЕРЫВНЫЕ ПОЛЯ"):
+		_fail("непрерывный блок напечатан раньше дискретного")
 
 
 func _check_trace_report_fits_screen() -> void:

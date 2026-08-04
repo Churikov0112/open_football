@@ -46,6 +46,28 @@ const DISCRETE := [
 	{"name": "quadrant_id", "col": 12},
 ]
 
+# Непрерывные поля. Сравниваются с допуском класса, потому что побитового совпадения float между
+# C++/MSVC и C#/.NET не существует: другой порядок инструкций, FMA, свои sin/cos/pow. Двухслойность —
+# следствие кросс-языкового порта, а не поблажка.
+# Полей мяча тут нет намеренно: B-строки в вердикт фазы 5 не входят — порт ставит мяч из той же строки
+# с нулевым моментом, и сравнение дало бы гарантированный «рост» по ball_mom_* на каждом прогоне.
+const CONTINUOUS := [
+	{"name": "pos_x", "col": 13, "class": "position"},
+	{"name": "pos_y", "col": 14, "class": "position"},
+	{"name": "pos_z", "col": 15, "class": "position"},
+	{"name": "angle", "col": 16, "class": "angle"},
+	{"name": "rel_body_angle", "col": 17, "class": "angle"},
+	{"name": "move_x", "col": 18, "class": "velocity"},
+	{"name": "move_y", "col": 19, "class": "velocity"},
+	{"name": "move_z", "col": 20, "class": "velocity"},
+	{"name": "action_smuggle", "col": 21, "class": "smuggle"},
+	{"name": "movement_smuggle", "col": 22, "class": "smuggle"},
+]
+
+# Дефолты; переопределяются файлом допусков (load_tolerances).
+const DEFAULT_TOLERANCES := {"position": 1e-3, "angle": 1e-3, "velocity": 1e-3, "smuggle": 1e-4}
+const DEFAULT_WINDOW := 10
+
 # Контекст вокруг первого расхождения: одиночный всплеск отличается от начала лавины только так.
 const CONTEXT := 5
 
@@ -191,6 +213,77 @@ static func load_whitelist(path: String) -> Dictionary:
 	return {"ok": true, "error": "", "rules": rules}
 
 
+# --- допуски -----------------------------------------------------------------------------------
+
+# Файл допусков: строка `<ключ> <число>`, ключ — класс непрерывного поля (position, angle, velocity,
+# smuggle) либо `window` (окно правила роста). Формат тот же, что у заголовочных директив сценария.
+# Неизвестный ключ валит парсер с указанием строки: молча проигнорированная строка дала бы отчёт,
+# посчитанный не теми порогами.
+# -> { ok, error, tolerances: Dictionary, window: int }
+static func load_tolerances(path: String) -> Dictionary:
+	var out := {"ok": true, "error": "", "tolerances": DEFAULT_TOLERANCES.duplicate(), "window": DEFAULT_WINDOW}
+	if path == "":
+		return out
+
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {"ok": false, "tolerances": {}, "window": 0,
+			"error": "%s: не открывается (%d)" % [path, FileAccess.get_open_error()]}
+
+	var text := file.get_as_text()
+	file.close()
+	var lines := text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+	for i in lines.size():
+		var line := lines[i]
+		var comment := line.find("#")
+		if comment >= 0:
+			line = line.substr(0, comment)
+		line = line.strip_edges()
+		if line.is_empty():
+			continue
+
+		var f := line.split(" ", false)
+		if f.size() != 2:
+			return {"ok": false, "tolerances": {}, "window": 0,
+				"error": "%s:%d: токенов %d вместо 2 (<ключ> <число>)" % [path, i + 1, f.size()]}
+		var key := f[0]
+		if not f[1].is_valid_float():
+			return {"ok": false, "tolerances": {}, "window": 0,
+				"error": "%s:%d: '%s' — не число" % [path, i + 1, f[1]]}
+		if key == "window":
+			out.window = int(f[1])
+		elif out.tolerances.has(key):
+			out.tolerances[key] = float(f[1])
+		else:
+			return {"ok": false, "tolerances": {}, "window": 0,
+				"error": "%s:%d: нет класса допуска '%s'" % [path, i + 1, key]}
+
+	return out
+
+
+# Начало роста — первый тик T, для которого |Δ(T)| уже больше допуска, на окне из `window`
+# последующих тиков |Δ| не убывает ни разу, а |Δ(T+window)| >= 2·|Δ(T)|. Определение операционально
+# намеренно: «на глаз» тест проверял бы собственную формулировку и ничего не гарантировал.
+#
+# Окно отсчитывается по СПАРЕННЫМ тикам, а не по номерам: у эталона законно бывают тики без
+# контролируемого, и по номерам окно рвалось бы на каждом стандарте.
+# -> тик начала роста либо -1
+static func growth_start(ticks: Array, deltas: Array, tolerance: float, window: int) -> int:
+	for i in deltas.size():
+		if deltas[i] <= tolerance:
+			continue
+		if i + window >= deltas.size():
+			break
+		var grows := true
+		for j in range(i + 1, i + window + 1):
+			if deltas[j] < deltas[j - 1]:
+				grows = false
+				break
+		if grows and deltas[i + window] >= 2.0 * deltas[i]:
+			return ticks[i]
+	return -1
+
+
 static func is_suppressed(rules: Array, column: String, tick: int) -> bool:
 	for rule in rules:
 		if rule.column != column:
@@ -214,7 +307,7 @@ static func is_suppressed(rules: Array, column: String, tick: int) -> bool:
 
 # verdict: "match" | "mismatch" | "manifest" | "control_moved" | "error"
 static func compare(ref_path: String, port_path: String, ref_manifest_path: String,
-		port_manifest_path: String, whitelist_path: String) -> Dictionary:
+		port_manifest_path: String, whitelist_path: String, tolerance_path: String = "") -> Dictionary:
 	var manifest := Manifest.compare(ref_manifest_path, port_manifest_path)
 	if manifest.verdict == "error":
 		return _error(str(manifest.error))
@@ -224,6 +317,10 @@ static func compare(ref_path: String, port_path: String, ref_manifest_path: Stri
 	var whitelist := load_whitelist(whitelist_path)
 	if not whitelist.ok:
 		return _error(str(whitelist.error))
+
+	var limits := load_tolerances(tolerance_path)
+	if not limits.ok:
+		return _error(str(limits.error))
 
 	var ref := load_trace(ref_path)
 	if not ref.ok:
@@ -253,6 +350,9 @@ static func compare(ref_path: String, port_path: String, ref_manifest_path: Stri
 		"first_field": "",
 		"context": [],
 		"moved_ids": [],
+		"window": limits.window,
+		"tolerances": limits.tolerances,
+		"drift": {},
 	}
 
 	# Контроль переезжал — строки принадлежали бы разным людям, сравнивать их бессмысленно.
@@ -268,6 +368,13 @@ static func compare(ref_path: String, port_path: String, ref_manifest_path: Stri
 	var dup_names := {}
 	for name in manifest.dup_names:
 		dup_names[name] = true
+
+	# Ряды |Δ| непрерывных полей: считаются на ВСЕЙ длине трассы, а не до тика первого расхождения
+	# дискретного поля. Дискретный слой остаётся главным в отчёте, но ошибка, не меняющая выбор клипа,
+	# видна только отсюда.
+	var series := {}
+	for c in CONTINUOUS:
+		series[c.name] = {"ticks": [], "deltas": [], "max": 0.0}
 
 	var paired: Array[int] = []
 	for tick in ref.ticks:
@@ -298,11 +405,37 @@ static func compare(ref_path: String, port_path: String, ref_manifest_path: Stri
 			if not result.field_first.has(d.name):
 				result.field_first[d.name] = {"tick": tick, "ref": a[d.col], "port": b[d.col]}
 
+		for c in CONTINUOUS:
+			var delta := absf(float(a[c.col]) - float(b[c.col]))
+			var tolerance: float = limits.tolerances[c.class]
+			if is_suppressed(whitelist.rules, c.name, tick):
+				if delta > tolerance:
+					result.suppressed[c.name] = int(result.suppressed.get(c.name, 0)) + 1
+				continue
+			var s: Dictionary = series[c.name]
+			s.ticks.append(tick)
+			s.deltas.append(delta)
+			s.max = maxf(s.max, delta)
+
 	result.paired = paired.size()
 	if paired.is_empty():
 		return _error("спарено 0 тиков: строк с controlled = 1 нет ни в одной паре тиков")
 
+	# Интересен рост, а не превышение: одиночный всплеск в пределах шума — не сигнал, а расхождение,
+	# которое растёт от тика к тику, означает разошедшуюся динамику даже при совпавших клипах.
+	var drifting := false
+	for c in CONTINUOUS:
+		var s: Dictionary = series[c.name]
+		var start := growth_start(s.ticks, s.deltas, limits.tolerances[c.class], limits.window)
+		result.drift[c.name] = {"tick": start, "max": s.max, "excluded": s.ticks.is_empty()}
+		if start >= 0:
+			drifting = true
+
 	if result.field_first.is_empty():
+		# Дискретные поля совпали — но растущее непрерывное расхождение это тоже расхождение, и код
+		# возврата обязан быть ненулевым: прогон ставится в скрипт.
+		if drifting:
+			result.verdict = "drift"
 		return result
 
 	result.verdict = "mismatch"
@@ -368,8 +501,9 @@ static func report(r: Dictionary) -> String:
 		lines.append("  Построчный дифф не запускается: строки принадлежали бы разным людям.")
 		return "\n".join(lines)
 
-	if r.verdict == "match":
+	if r.verdict == "match" or r.verdict == "drift":
 		lines.append("ДИСКРЕТНЫЕ ПОЛЯ СОВПАЛИ на %d спаренных тиках." % r.paired)
+		lines.append_array(_continuous_block(r))
 		return "\n".join(lines)
 
 	var first: Dictionary = r.field_first[r.first_field]
@@ -394,7 +528,26 @@ static func report(r: Dictionary) -> String:
 	if not same.is_empty():
 		lines.append("  совпали на всей длине:")
 		lines.append_array(_wrap(same))
+	lines.append_array(_continuous_block(r))
 	return "\n".join(lines)
+
+
+# По каждому непрерывному полю ровно одна строка — тик начала роста либо «в шуме» с наибольшим
+# наблюдённым |Δ|: «в шуме» без числа скрыло бы поле, которое допуск превышает, но не растёт.
+static func _continuous_block(r: Dictionary) -> Array[String]:
+	var out: Array[String] = ["НЕПРЕРЫВНЫЕ ПОЛЯ — начало роста (|Δ| > допуска класса, не убывает %d тиков и удваивается):"
+		% r.window]
+	for c in CONTINUOUS:
+		var d: Dictionary = r.drift[c.name]
+		var state := ""
+		if d.excluded:
+			state = "исключено белым списком"
+		elif int(d.tick) >= 0:
+			state = "%-10s (макс |Δ| %.6f)" % ["тик %d" % d.tick, d.max]
+		else:
+			state = "%-10s (макс |Δ| %.6f, допуск %s)" % ["в шуме", d.max, r.tolerances[c.class]]
+		out.append("  %-17s %s" % [c.name, state])
+	return out
 
 
 # Отчёт помещается на экран не только по числу строк, но и по ширине: девять дискретных полей в
