@@ -240,7 +240,28 @@ namespace Gpf.Lab
         {
             var queue = new List<Gpf.PlayerCommand>();
             float desiredVelocityFloat = _desiredVelocityFloat;
-            Vector3 lookAt = _humanoid.GetSpatialPosition() + _desiredDirection * 10.0f;
+
+            // Порт lookAt из PlayerController::_MovementCommand (playercontroller.cpp:418-443, :600).
+            // Взгляд — НЕ «10 м по направлению движения»: направление ввода ДОВОРАЧИВАЕТСЯ К МЯЧУ, и тем
+            // сильнее, чем медленнее игрок (desiredVeloFactor). Поле кормит KeepBestBodyDirectionAnims,
+            // то есть решает выбор клипа напрямую.
+            // ШОВ MentalImage: _mentalImage->GetBallPrediction(40) → объективный Ball.Predict(40).
+            // НЕ портировано: квантование ввода (`quantizeDirection`, gamedefines.hpp:29) и
+            // авто-магнит (autoBias) — оба требуют матч-слоя; на осевом вводе квантование no-op.
+            const int defaultLookAtTimeMs = 40;
+            Vector3 position = _humanoid.GetSpatialPosition();
+            Vector3 manualDirection = _desiredDirection;
+            float desiredVeloFactor = 1.0f - Mathf.Pow(Gpf.BluntMath.NormalizedClamp(
+                Mathf.Min(desiredVelocityFloat, _humanoid.GetSpatialFloatVelocity()),
+                Gpf.Velo.IdleDribbleSwitch, Gpf.Velo.Sprint), 0.5f) * 0.3f;
+            Vector3 focusPos = _ball.Predict(defaultLookAtTimeMs);
+            focusPos.Z = 0.0f;                                          // Get2D
+            focusPos += _humanoid.GetSpatialDirectionVec() * 0.5f;      // «смотреть вперёд, если мяч вплотную»
+            float toFocusAngle = Gpf.BluntMath.GetAngle2D(
+                Gpf.BluntMath.GetNormalized(focusPos - position, manualDirection), manualDirection);
+            Vector3 lookDirection = Gpf.BluntMath.GetRotated2D(manualDirection,
+                toFocusAngle * Mathf.Pow(desiredVeloFactor, 0.7f));
+            Vector3 lookAt = position + lookDirection * 10.0f;
 
             Gpf.PlayerCommand? action = BuildActionCommand();
             if (action != null) queue.Add(action);
