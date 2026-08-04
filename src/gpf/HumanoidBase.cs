@@ -114,6 +114,52 @@ namespace Gpf
             _selector = selector;
         }
 
+        // Ease-in смаггла поворота (humanoid.cpp:722-742). Вынесен из Process, потому что зовётся
+        // ещё и посадкой стартового состояния оракула: там begin/end приходят снаружи уже ПОСЛЕ того,
+        // как тик посчитал offset, и без пересчёта порт отставал бы от эталона на один шаг ease-in.
+        private void UpdateRotationSmuggleOffset()
+        {
+            int beginRotationFrameCount = 16; // humanoid.cpp:724 — после стольких кадров ease-in готов
+            float cappedFrameBias = Mathf.Min(1.0f, (_current.FrameNum + 1)
+                / (float)Mathf.Min(beginRotationFrameCount,
+                    _current.Anim.GetEffectiveFrameCount() + 1));              // :725
+            float beginFrameBias = cappedFrameBias;                            // :726
+            float endFrameBias = cappedFrameBias;                              // :727
+            if (_current.TouchFrame != -1) // :728 — с задачи 5 ветка ЖИВАЯ (тач-клипы)
+            {
+                // beginFrameBias идёт 0→1 за кадры 0..min(touchFrame, beginRotationFrameCount) (:729-730)
+                beginFrameBias = Mathf.Min(1.0f, (_current.FrameNum + 1)
+                    / (float)Mathf.Min(beginRotationFrameCount, _current.TouchFrame + 1));
+                if (!AllowPreTouchRotationSmuggle)                             // :731 (humanoid.cpp:64)
+                {
+                    if (_current.FrameNum > _current.TouchFrame)
+                    {
+                        // end-смаггл начинается после касания (:732-734)
+                        endFrameBias = (_current.FrameNum - _current.TouchFrame)
+                            / (float)(_current.Anim.GetEffectiveFrameCount() - _current.TouchFrame);
+                    }
+                    else
+                    {
+                        endFrameBias = 0.0f;                                   // :735-737 — до касания смаггла нет
+                    }
+                }
+            }
+            _current.RotationSmuggleOffset = _current.RotationSmuggleBegin * (1.0f - beginFrameBias)
+                + _current.RotationSmuggleEnd * endFrameBias;                  // :741-742
+        }
+
+        // Посадка rotationSmuggle текущего клипа — вход ТОЛЬКО для оракула, поведения не меняет.
+        // ResetSituation обнуляет смаггл (humanoidbase.cpp:965-966) и делает это верно оригиналу, но
+        // у эталона на нулевом тике клип выбран нормальным отбором и смаггл ненулевой. Восстановить
+        // его вычислением нельзя — он зависит от истории матча, — поэтому он приходит колонками
+        // трассы. Симметричен уже существующим GetRotationSmuggleBegin/End.
+        public void SetRotationSmuggle(float begin, float end)
+        {
+            _current.RotationSmuggleBegin = begin;
+            _current.RotationSmuggleEnd = end;
+            UpdateRotationSmuggleOffset();
+        }
+
         // Порт HumanoidBase::GetIdleMovementAnimID (humanoidbase.cpp:875-926). Живёт на гуманоиде, а
         // не на коллекции: сорт-цепочка отбора читает spatialState, поэтому «idle-клип» — функция позы
         // игрока, а не константа библиотеки. Тело — в AnimSelector, где живут предикаты и StableSort.
@@ -470,33 +516,7 @@ namespace Gpf
             // rotation smuggle — блок НАСЛЕДНИКА Humanoid::Process (humanoid.cpp:722-742), НЕ базы
             // (humanoidbase.cpp:684-695): игроки исполняют версию наследника с 16-кадровым капом
             // ease-in; базовый незакапленный лерп гоняют только судьи.
-            int beginRotationFrameCount = 16; // humanoid.cpp:724 — после стольких кадров ease-in готов
-            float cappedFrameBias = Mathf.Min(1.0f, (_current.FrameNum + 1)
-                / (float)Mathf.Min(beginRotationFrameCount,
-                    _current.Anim.GetEffectiveFrameCount() + 1));              // :725
-            float beginFrameBias = cappedFrameBias;                            // :726
-            float endFrameBias = cappedFrameBias;                              // :727
-            if (_current.TouchFrame != -1) // :728 — с задачи 5 ветка ЖИВАЯ (тач-клипы)
-            {
-                // beginFrameBias идёт 0→1 за кадры 0..min(touchFrame, beginRotationFrameCount) (:729-730)
-                beginFrameBias = Mathf.Min(1.0f, (_current.FrameNum + 1)
-                    / (float)Mathf.Min(beginRotationFrameCount, _current.TouchFrame + 1));
-                if (!AllowPreTouchRotationSmuggle)                             // :731 (humanoid.cpp:64)
-                {
-                    if (_current.FrameNum > _current.TouchFrame)
-                    {
-                        // end-смаггл начинается после касания (:732-734)
-                        endFrameBias = (_current.FrameNum - _current.TouchFrame)
-                            / (float)(_current.Anim.GetEffectiveFrameCount() - _current.TouchFrame);
-                    }
-                    else
-                    {
-                        endFrameBias = 0.0f;                                   // :735-737 — до касания смаггла нет
-                    }
-                }
-            }
-            _current.RotationSmuggleOffset = _current.RotationSmuggleBegin * (1.0f - beginFrameBias)
-                + _current.RotationSmuggleEnd * endFrameBias;                  // :741-742
+            UpdateRotationSmuggleOffset();
 
             // apply-данные — порядок слагаемых НАСЛЕДНИКА (:763-780): startPos + positions[fn]
             // + actionSmuggleOffset + actionSmuggleSustainOffset + movementSmuggleOffset (:769).

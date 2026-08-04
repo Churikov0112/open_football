@@ -56,9 +56,13 @@ func _write(name: String, text: String) -> String:
 # не наступает никогда. То же требование действует на сценарии приёмки.
 func _reference_trace() -> String:
 	var header: String = load("res://src/gpf/TraceWriter.cs").new().GetHeader()
-	var ball := "B,0,1.500000,-24.000000,0.110000,0.000000,0.000000,0.000000,,,,,,,,,,,,,,,"
+	var ball := "B,0,1.500000,-24.000000,0.110000,0.000000,0.000000,0.000000,,,,,,,,,,,,,,,,,"
+	# Хвост P-строки — rotation_smuggle_begin/end: их порт сажает в текущий клип, потому что
+	# ResetSituation смаггл обнуляет, а у эталона на нулевом тике клип выбран отбором и смаггл там
+	# ненулевой. Без них угол расходится с первого же тика при совпадающем клипе.
 	var player := "P,0,7,1,movement/idle/000,412,movement,1,0,-1,1,0,0," \
-		+ "3.000000,4.000000,0.000000,0.500000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000"
+		+ "3.000000,4.000000,0.000000,0.500000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000," \
+		+ "0.000000,0.000000"
 	return _write("ref_synth.csv", header + "\n" + ball + "\n" + player + "\n")
 
 
@@ -117,7 +121,8 @@ func _check_reference_input() -> void:
 	var header: String = load("res://src/gpf/TraceWriter.cs").new().GetHeader()
 	var no_controlled := _write("ref_nc.csv", header + "\n"
 		+ "P,0,7,0,movement/idle/000,412,movement,1,0,-1,1,0,0,"
-		+ "3.000000,4.000000,0.000000,0.500000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000\n")
+		+ "3.000000,4.000000,0.000000,0.500000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,"
+		+ "0.000000,0.000000\n")
 	if _lab.SetupOracle(sc, no_controlled, _tmp + "t.csv", _tmp + "m.csv"):
 		_fail("трасса без controlled = 1 принята")
 
@@ -151,8 +156,8 @@ func _check_trace_shape() -> void:
 
 	for i in range(1, lines.size()):
 		var f: PackedStringArray = lines[i].split(",")
-		if f.size() != 23:
-			_fail("строка %d: полей %d вместо 23" % [i, f.size()])
+		if f.size() != 25:
+			_fail("строка %d: полей %d вместо 25" % [i, f.size()])
 			return
 		var expected_kind := "B" if (i - 1) % 2 == 0 else "P"
 		if f[0] != expected_kind:

@@ -16,10 +16,10 @@ extends RefCounted
 
 const Manifest := preload("res://tools/oracle_manifest.gd")
 
-const HEADER := "kind,tick,player_id,controlled,anim_name,anim_id,anim_type,function_type,frame_num,touch_frame,foot,enum_velocity,quadrant_id,pos_x,pos_y,pos_z,angle,rel_body_angle,move_x,move_y,move_z,action_smuggle,movement_smuggle"
+const HEADER := "kind,tick,player_id,controlled,anim_name,anim_id,anim_type,function_type,frame_num,touch_frame,foot,enum_velocity,quadrant_id,pos_x,pos_y,pos_z,angle,rel_body_angle,move_x,move_y,move_z,action_smuggle,movement_smuggle,rotation_smuggle_begin,rotation_smuggle_end"
 
-# Файл прямоугольный: 23 поля в каждой строке, включая B — у неё заняты первые восемь, хвост пустой.
-const FIELD_COUNT := 23
+# Файл прямоугольный: 25 полей в каждой строке, включая B — у неё заняты первые восемь, хвост пустой.
+const FIELD_COUNT := 25
 
 const COL_KIND := 0
 const COL_TICK := 1
@@ -62,6 +62,10 @@ const CONTINUOUS := [
 	{"name": "move_z", "col": 20, "class": "velocity"},
 	{"name": "action_smuggle", "col": 21, "class": "smuggle"},
 	{"name": "movement_smuggle", "col": 22, "class": "smuggle"},
+	# Смаггл поворота — в радианах, поэтому класс угловой. На нулевом тике совпадает по построению
+	# (порт сажает его из этой же трассы), дальше считается каждой стороной самостоятельно.
+	{"name": "rotation_smuggle_begin", "col": 23, "class": "angle"},
+	{"name": "rotation_smuggle_end", "col": 24, "class": "angle"},
 ]
 
 # Дефолты; переопределяются файлом допусков (load_tolerances).
@@ -556,7 +560,7 @@ static func _continuous_block(r: Dictionary) -> Array[String]:
 			state = "%-10s (макс |Δ| %.6f)" % ["тик %d" % d.tick, d.max]
 		else:
 			state = "%-10s (макс |Δ| %.6f, допуск %s)" % ["в шуме", d.max, r.tolerances[c.class]]
-		out.append("  %-17s %s" % [c.name, state])
+		out.append("  %-22s %s" % [c.name, state])
 	return out
 
 

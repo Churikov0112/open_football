@@ -516,7 +516,7 @@ namespace Gpf.Lab
 
             bool havePlayer = false, haveBall = false;
             Vector3 position = Vector3.Zero, ballPosition = Vector3.Zero, ballMomentum = Vector3.Zero;
-            float angle = 0f;
+            float angle = 0f, rotationSmuggleBegin = 0f, rotationSmuggleEnd = 0f;
 
             while (!file.EofReached() && !(havePlayer && haveBall))
             {
@@ -528,10 +528,12 @@ namespace Gpf.Lab
                     ballMomentum = new Vector3(ParseFloat(f[5]), ParseFloat(f[6]), ParseFloat(f[7]));
                     haveBall = true;
                 }
-                else if (f[0] == "P" && f[1] == "0" && f.Length >= 23 && f[3] == "1" && !havePlayer)
+                else if (f[0] == "P" && f[1] == "0" && f.Length >= 25 && f[3] == "1" && !havePlayer)
                 {
                     position = new Vector3(ParseFloat(f[13]), ParseFloat(f[14]), ParseFloat(f[15]));
                     angle = ParseFloat(f[16]);
+                    rotationSmuggleBegin = ParseFloat(f[23]);
+                    rotationSmuggleEnd = ParseFloat(f[24]);
                     havePlayer = true;
                 }
             }
@@ -545,6 +547,10 @@ namespace Gpf.Lab
 
             // Существующий вход ядра: поднимает игрока на idleMovementAnimId с кадра 0.
             _humanoid.ResetSituation(position, angle);
+            // rotationSmuggle сажается НЕ здесь, а в конце пред-прокрутки: до нулевого тика гуманоид
+            // успевает несколько раз переизбрать клип, и каждый выбор смаггл перезаписывает.
+            _oracleRotationSmuggleBegin = rotationSmuggleBegin;
+            _oracleRotationSmuggleEnd = rotationSmuggleEnd;
             // Мяч — из B-строки того же тика. ResetSituation сам добавляет радиус по Z
             // (ball.cpp:606), а в трассе лежит уже центр мяча.
             //
@@ -561,6 +567,12 @@ namespace Gpf.Lab
             return true;
         }
 
+        // rotationSmuggle клипа эталона на нулевом тике — единственное состояние, которое порт не
+        // может вычислить сам: ResetSituation его обнуляет (humanoidbase.cpp:965-966), а у эталона
+        // клип выбран нормальным отбором и смаггл зависит от истории матча.
+        private float _oracleRotationSmuggleBegin;
+        private float _oracleRotationSmuggleEnd;
+
         private static float ParseFloat(string s) =>
             float.TryParse(s, System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : 0f;
@@ -574,7 +586,13 @@ namespace Gpf.Lab
             while (true)
             {
                 OracleStep(-1);
-                if (IsOracleZeroTick()) break;
+                if (IsOracleZeroTick())
+                {
+                    // Клип только что выбран, offset ещё 0 (:1582) — значит тик 0 от посадки не
+                    // меняется, а начиная с тика 1 ease-in идёт от эталонных begin/end.
+                    _humanoid.SetRotationSmuggle(_oracleRotationSmuggleBegin, _oracleRotationSmuggleEnd);
+                    break;
+                }
                 if (++waitTicks >= MaxWaitTicks)
                 {
                     var anim = _collection.GetAnim(_humanoid.GetCurrentAnimId());

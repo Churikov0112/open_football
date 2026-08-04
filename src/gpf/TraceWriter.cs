@@ -15,15 +15,15 @@ namespace Gpf
     public partial class TraceWriter : RefCounted
     {
         // Дословно заголовок эталона. Имена относятся к P-строке как самой длинной; у B-строки своя
-        // схема (kind, tick, затем шесть значений мяча, дальше пусто до 23 полей).
+        // схема (kind, tick, затем шесть значений мяча, дальше пусто до 25 полей).
         public const string Header =
             "kind,tick,player_id,controlled,anim_name,anim_id,anim_type,function_type,frame_num,touch_frame,"
             + "foot,enum_velocity,quadrant_id,pos_x,pos_y,pos_z,angle,rel_body_angle,move_x,move_y,move_z,"
-            + "action_smuggle,movement_smuggle";
+            + "action_smuggle,movement_smuggle,rotation_smuggle_begin,rotation_smuggle_end";
 
         public const string ManifestHeader = "index,anim_name,anim_type,foot,frame_count";
 
-        private const int FieldCount = 23;
+        private const int FieldCount = 25;
 
         // Мост для GDScript-тестов: const-поля через мост не читаются, только методы (тот же приём,
         // что у Velo.GetAnimSprint).
@@ -136,6 +136,11 @@ namespace Gpf
             fields.Add(F(movement.X)); fields.Add(F(movement.Y)); fields.Add(F(movement.Z));
             fields.Add(F(humanoid.GetActionSmuggle().Length()));
             fields.Add(F(humanoid.GetMovementSmuggle().Length()));
+            // Единственное состояние клипа, которое порт не может восстановить сам: ResetSituation
+            // его обнуляет (humanoidbase.cpp:965-966), а у эталона на нулевом тике клип выбран
+            // нормальным отбором и смаггл ненулевой. Из этих колонок порт сажает стартовое состояние.
+            fields.Add(F(humanoid.GetRotationSmuggleBegin()));
+            fields.Add(F(humanoid.GetRotationSmuggleEnd()));
 
             WriteRow(fields);
         }
