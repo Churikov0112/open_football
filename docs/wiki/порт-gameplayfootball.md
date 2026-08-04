@@ -612,11 +612,6 @@ interfere/deflect/sliding поверх того же `CrudeSelection`. Подр�
   закомментировано и в самом оригинале.
 - **Звук** (`TriggerBallTouchSound`, удар о штангу), сцена/geometry, `Ball::Put`/temporal smoothing,
   debug-клавиши и debug-принты — вне порта по построению.
-- **`Slowdown`/`SmoothPositions`** — мертвы в самом оригинале: `_PrepareAnim` считает
-  `expectedFrameCount` (`CalculateAnimDifficulty`), но вызов, который использовал бы его для растяжки
-  клипа, закомментирован в C++ (`animcollection.cpp:1186`). Порт честно повторяет это — считает и
-  выбрасывает результат (`_ = expectedFrameCount;` в `PrepareAnim`), функцию растяжки не пишет.
-  Не «недоделка порта» — оригинал сам этого не делает.
 - **Остальные пути `SelectAnim`: `FnHeader` и `FnCatch`.** `CrudeSelection` фильтровать по ним умеет
   (`CheckFunctionType` знает все 14 типов), но собственных веток в тике у них нет — придут с
   вратарским контуром и игрой на втором этаже.
