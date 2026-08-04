@@ -46,6 +46,8 @@ func _initialize() -> void:
 	_check_trace_single_spike()
 	_check_trace_tolerance_file()
 	_check_trace_whitelist_continuous()
+	_check_trace_angle_period()
+	_check_trace_angle_growth_across_pi()
 	_check_trace_discrete_stays_primary()
 	_check_trace_report_fits_screen()
 
@@ -589,6 +591,51 @@ func _check_trace_whitelist_continuous() -> void:
 		_fail("остальные непрерывные поля перестали сравниваться: angle на тике %d" % r.drift.angle.tick)
 	if not Trace.report(r).contains("исключено белым списком"):
 		_fail("отчёт не отмечает исключённое непрерывное поле")
+
+
+# Угол периодичен: значения по разные стороны от ±π — один и тот же угол, а не расхождение в 2π.
+# Числа взяты с реального прогона walk_line (тик 110), где инструмент печатал «макс |Δ| 6.283».
+func _check_trace_angle_period() -> void:
+	var ref := _plain(60)
+	var port := _plain(60)
+	for t in 60:
+		ref[t][0][_angle_col()] = "-3.141574"
+		port[t][0][_angle_col()] = "3.141593"
+	var a := _write_trace("t_ai.csv", ref)
+	var b := _write_trace("t_aj.csv", port)
+	var r := Trace.compare(a, b, _mref, _mport, "")
+	if r.verdict != "match":
+		_fail("угол по разные стороны от ±π дал вердикт '%s'" % r.verdict)
+	if float(r.drift.angle.max) > 0.001:
+		_fail("|Δ| угла посчитан вычитанием, а не по кратчайшей дуге: %f" % r.drift.angle.max)
+
+	# Классы, которые НЕ периодичны, правилом не задеты: та же пара чисел в позиции — расхождение.
+	for t in 60:
+		port[t][0][_pos_x_col()] = "3.141593"
+		ref[t][0][_pos_x_col()] = "-3.141574"
+	r = Trace.compare(_write_trace("t_ak.csv", ref), _write_trace("t_al.csv", port), _mref, _mport, "")
+	if float(r.drift.pos_x.max) < 6.0:
+		_fail("правило периода протекло в позицию: макс |Δ| %f" % r.drift.pos_x.max)
+
+
+# Настоящий рост угла, пересёкший ±π, обязан быть назван: именно этот случай вычитание проваливает —
+# на переходе |Δ| скачком падает, окно «не убывает» рвётся, и начало роста не находится вовсе.
+func _check_trace_angle_growth_across_pi() -> void:
+	var ref := _plain(60)
+	var port := _plain(60)
+	for t in 60:
+		ref[t][0][_angle_col()] = "%.6f" % 3.0
+		# Шаг 0.05 рад с тика 20: к тику 23 порт переваливает за π и записывается как −3.08…,
+		# то есть ровно так, как его пишет живой писатель трассы.
+		var delta: float = 0.0 if t < 20 else 0.05 * (t - 19)
+		port[t][0][_angle_col()] = "%.6f" % wrapf(3.0 + delta, -PI, PI)
+	var a := _write_trace("t_am.csv", ref)
+	var b := _write_trace("t_an.csv", port)
+	var r := Trace.compare(a, b, _mref, _mport, "")
+	if int(r.drift.angle.tick) != 20:
+		_fail("рост угла через ±π не назван: тик %d вместо 20" % r.drift.angle.tick)
+	if r.verdict != "drift":
+		_fail("рост угла через ±π не дал вердикт 'drift': '%s'" % r.verdict)
 
 
 # Дискретный слой остаётся главным, но непрерывный считается на всей длине, а не до тика T.

@@ -261,6 +261,16 @@ static func load_tolerances(path: String) -> Dictionary:
 	return out
 
 
+# |Δ| непрерывного поля. Угол периодичен, и сравнивать его вычитанием нельзя: −3.141574 и 3.141593 —
+# ОДИН И ТОТ ЖЕ угол, а разность даёт 6.28. Опаснее обратное: настоящий рост угла, пересёкший ±π,
+# скачком проваливается вниз, окно «не убывает» рвётся, и начало роста не называется вовсе —
+# инструмент молчит там, где обязан говорить.
+static func field_delta(a: float, b: float, field_class: String) -> float:
+	if field_class == "angle":
+		return absf(wrapf(a - b, -PI, PI))
+	return absf(a - b)
+
+
 # Начало роста — первый тик T, для которого |Δ(T)| уже больше допуска, на окне из `window`
 # последующих тиков |Δ| не убывает ни разу, а |Δ(T+window)| >= 2·|Δ(T)|. Определение операционально
 # намеренно: «на глаз» тест проверял бы собственную формулировку и ничего не гарантировал.
@@ -406,7 +416,7 @@ static func compare(ref_path: String, port_path: String, ref_manifest_path: Stri
 				result.field_first[d.name] = {"tick": tick, "ref": a[d.col], "port": b[d.col]}
 
 		for c in CONTINUOUS:
-			var delta := absf(float(a[c.col]) - float(b[c.col]))
+			var delta := field_delta(float(a[c.col]), float(b[c.col]), c.class)
 			var tolerance: float = limits.tolerances[c.class]
 			if is_suppressed(whitelist.rules, c.name, tick):
 				if delta > tolerance:
