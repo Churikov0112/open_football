@@ -8,3 +8,5 @@ assets/models/mixamo_src/
 
 # Python bytecode from .claude hooks
 .claude/hooks/__pycache__/
+tools/__pycache__/
+assets/models/gpf_src/*.blend1

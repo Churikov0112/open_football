@@ -27,6 +27,8 @@ namespace Gpf.Lab
         private Gpf.AnimCollection _collection = null!;
         private Gpf.AnimSelector _selector = null!;
         private Skeleton3D _skeleton = null!;
+        private readonly List<MeshInstance3D> _bodyParts = new();
+        private bool _flatShading;
         private Node3D _gpfSpace = null!;
         private Label _label = null!;
         private Camera3D _camera = null!;
@@ -64,8 +66,10 @@ namespace Gpf.Lab
             var builder = new Gpf.SkeletonBuilder();
             _gpfSpace = builder.BuildAxisWrapper();
             AddChild(_gpfSpace);
-            _skeleton = builder.BuildUtilitySkeleton();
-            _gpfSpace.AddChild(_skeleton);
+            // Тело важнее здесь, чем в остальных лабах: зазор нога-мяч и точку
+            // касания на палочнике не оценить — касаться нечему.
+            _skeleton = LabBody.Load(_gpfSpace, _bodyParts) ?? builder.BuildUtilitySkeleton();
+            if (_skeleton.GetParent() == null) _gpfSpace.AddChild(_skeleton);
             var stickman = new StickmanRenderer();
             _gpfSpace.AddChild(stickman);
             stickman.Setup(_skeleton);
@@ -465,7 +469,8 @@ namespace Gpf.Lab
                 + $"cmd: v={_desiredVelocityId} dir=({_desiredDirection.X:F1},{_desiredDirection.Y:F1})   "
                 + $"rng seed: {RngSeed}\n"
                 + "стрелки — направление;  0/1/2/3 — стойка/дриблинг/бег/спринт;  "
-                + "W (держать) — пас,  S (держать) — удар;  R — сброс ситуации";
+                + "W (держать) — пас,  S (держать) — удар;  R — сброс ситуации"
+                + LabBody.Hint(_bodyParts);
         }
 
         public override void _UnhandledKeyInput(InputEvent ev)
@@ -484,6 +489,13 @@ namespace Gpf.Lab
                     _touches = 0;
                     _lastTouchBallDistance = -1f;
                     _lastTouchWhat = "-";
+                    break;
+                case Key.M:
+                    foreach (var part in _bodyParts) part.Visible = !part.Visible;
+                    break;
+                case Key.T:
+                    _flatShading = !_flatShading;
+                    LabBody.SetFlat(_bodyParts, _flatShading);
                     break;
             }
         }

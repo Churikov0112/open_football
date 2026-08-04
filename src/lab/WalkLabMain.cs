@@ -14,6 +14,8 @@ namespace Gpf.Lab
         private Gpf.AnimCollection _collection = null!;
         private Gpf.AnimSelector _selector = null!;
         private Skeleton3D _skeleton = null!;
+        private readonly System.Collections.Generic.List<MeshInstance3D> _bodyParts = new();
+        private bool _flatShading;
         private Node3D _gpfSpace = null!;
         private Label _label = null!;
         private MeshInstance3D _commandArrow = null!;
@@ -38,8 +40,8 @@ namespace Gpf.Lab
             var builder = new Gpf.SkeletonBuilder();
             _gpfSpace = builder.BuildAxisWrapper();
             AddChild(_gpfSpace);
-            _skeleton = builder.BuildUtilitySkeleton();
-            _gpfSpace.AddChild(_skeleton);
+            _skeleton = LabBody.Load(_gpfSpace, _bodyParts) ?? builder.BuildUtilitySkeleton();
+            if (_skeleton.GetParent() == null) _gpfSpace.AddChild(_skeleton);
             var stickman = new StickmanRenderer();
             _gpfSpace.AddChild(stickman);
             stickman.Setup(_skeleton);
@@ -170,7 +172,8 @@ namespace Gpf.Lab
                 + $"stats: {StatsPresets[_statsPresetIndex]:F1}\n"
                 + "стрелки (две сразу — диагональ 45°/135°) — направление;  "
                 + "0/1/2/3 — стойка/дриблинг/бег/спринт (медленной ходьбы в датасете нет);  "
-                + "A — пресет статов 0.3/0.6/0.9";
+                + "A — пресет статов 0.3/0.6/0.9"
+                + LabBody.Hint(_bodyParts);
         }
 
         // Направление — опросом зажатых стрелок в PollDirectionInput (даёт диагонали).
@@ -188,6 +191,13 @@ namespace Gpf.Lab
                     // статы влияют на разгон/поворот через CalculatePhysicsVector — смена на лету
                     _statsPresetIndex = (_statsPresetIndex + 1) % StatsPresets.Length;
                     _humanoid.SetStatsPreset(StatsPresets[_statsPresetIndex]);
+                    break;
+                case Key.M:
+                    foreach (var part in _bodyParts) part.Visible = !part.Visible;
+                    break;
+                case Key.T:
+                    _flatShading = !_flatShading;
+                    LabBody.SetFlat(_bodyParts, _flatShading);
                     break;
             }
         }

@@ -13,6 +13,8 @@ namespace Gpf.Lab
         private Gpf.Animation? _anim;
         private int _clipIndex;
         private Skeleton3D _skeleton = null!;
+        private readonly List<MeshInstance3D> _bodyParts = new();
+        private bool _flatShading;
         private Node3D _gpfSpace = null!;
         private Label _label = null!;
         private double _timeMs;
@@ -27,8 +29,13 @@ namespace Gpf.Lab
             var builder = new Gpf.SkeletonBuilder();
             _gpfSpace = builder.BuildAxisWrapper();
             AddChild(_gpfSpace);
-            _skeleton = builder.BuildUtilitySkeleton();
-            _gpfSpace.AddChild(_skeleton);
+            // Тело приходит со своим Skeleton3D, сверенным с BuildUtilitySkeleton
+            // тестом check_gpf_blockout.gd; нет файла — работаем палочником, как раньше.
+            _skeleton = LabBody.Load(_gpfSpace, _bodyParts) ?? builder.BuildUtilitySkeleton();
+            if (_skeleton.GetParent() == null) _gpfSpace.AddChild(_skeleton);
+            GD.Print(_bodyParts.Count == 0
+                ? "[LAB] тело не найдено — палочник"
+                : $"[LAB] тело подключено, частей {_bodyParts.Count} (M — меш/кости, T — текстуры/заливка)");
             var stickman = new StickmanRenderer();
             _gpfSpace.AddChild(stickman);
             stickman.Setup(_skeleton);
@@ -41,6 +48,7 @@ namespace Gpf.Lab
             GD.Print($"[LAB] clips: {_clipPaths.Count}");
             if (_clipPaths.Count > 0) LoadClip(0);
         }
+
 
         private void SetupEnvironment()
         {
@@ -131,7 +139,8 @@ namespace Gpf.Lab
             _label.Text = $"{_anim.GetName()}  [{_clipIndex + 1}/{_clipPaths.Count}]\n"
                 + $"type: {_anim.GetAnimType()}   frames: {_anim.GetFrameCount()}   frame: {frame}"
                 + (touches == "" ? "" : $"   touches:{touches}") + "\n"
-                + "←/→ клип   Space пауза   R сначала";
+                + "←/→ клип   Space пауза   R сначала"
+                + LabBody.Hint(_bodyParts);
         }
 
         public override void _UnhandledKeyInput(InputEvent ev)
@@ -143,6 +152,13 @@ namespace Gpf.Lab
                 case Key.Left: LoadClip(_clipIndex - 1); break;
                 case Key.Space: _paused = !_paused; break;
                 case Key.R: _timeMs = 0; break;
+                case Key.M:
+                    foreach (var part in _bodyParts) part.Visible = !part.Visible;
+                    break;
+                case Key.T:
+                    _flatShading = !_flatShading;
+                    LabBody.SetFlat(_bodyParts, _flatShading);
+                    break;
             }
         }
     }
