@@ -121,7 +121,7 @@ namespace Gpf
                 I(humanoid.GetCurrentFunctionType()),
                 I(humanoid.GetCurrentFrameNum()),
                 I(humanoid.GetCurrentTouchFrame()),
-                I(humanoid.GetFoot()),
+                I(humanoid.GetCurrentAnimOutgoingFootId()),
                 I(humanoid.GetSpatialEnumVelocity()),
                 I(BluntMath.AtoI(anim.GetVariable("quadrant_id"))),
             };

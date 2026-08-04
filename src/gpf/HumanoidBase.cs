@@ -754,6 +754,11 @@ namespace Gpf
         // движение (:610), а не как поворот от угла.
         public Vector3 GetSpatialDirectionVec() => _spatial.DirectionVec;
         public int GetFoot() => _spatial.Foot;
+
+        // Исходящая нога ТЕКУЩЕГО КЛИПА — не то же, что _spatial.Foot: тот обновляется лишь после
+        // кадра 12 (:1633-1635) и на первых кадрах нового клипа держит ногу предыдущего. Колонка
+        // `foot` трассы объявлена как GetCurrentAnim()->anim->GetOutgoingFoot(), то есть это.
+        public int GetCurrentAnimOutgoingFootId() => _current.Anim.GetOutgoingFootId();
         // Мост для тестируемости лерпа rotation smuggle (humanoid.cpp:722-742): begin/end живут
         // приватно в CurrentAnimState; тест пересчитывает формулу наследника по ним.
         public float GetRotationSmuggleBegin() => _current.RotationSmuggleBegin;

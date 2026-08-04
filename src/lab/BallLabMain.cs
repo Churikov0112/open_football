@@ -539,15 +539,25 @@ namespace Gpf.Lab
             Vector3 position = Vector3.Zero, ballPosition = Vector3.Zero, ballMomentum = Vector3.Zero;
             float angle = 0f, rotationSmuggleBegin = 0f, rotationSmuggleEnd = 0f;
 
-            while (!file.EofReached() && !(havePlayer && haveBall))
+            // Читается ВСЯ трасса: мяч — внешний вход прогона, он кормится из B-строк на каждом тике
+            // (см. ApplyOracleBall), а не только на старте.
+            _oracleBall.Clear();
+            while (!file.EofReached())
             {
                 string[] f = file.GetLine().Split(',');
                 if (f.Length < 8) continue;
-                if (f[0] == "B" && f[1] == "0" && !haveBall)
+                if (f[0] == "B")
                 {
-                    ballPosition = new Vector3(ParseFloat(f[2]), ParseFloat(f[3]), ParseFloat(f[4]));
-                    ballMomentum = new Vector3(ParseFloat(f[5]), ParseFloat(f[6]), ParseFloat(f[7]));
-                    haveBall = true;
+                    int bTick = int.TryParse(f[1], out int bt) ? bt : -1;
+                    if (bTick >= 0)
+                        _oracleBall[bTick] = (new Vector3(ParseFloat(f[2]), ParseFloat(f[3]), ParseFloat(f[4])),
+                                              new Vector3(ParseFloat(f[5]), ParseFloat(f[6]), ParseFloat(f[7])));
+                    if (bTick == 0 && !haveBall)
+                    {
+                        ballPosition = _oracleBall[0].Position;
+                        ballMomentum = _oracleBall[0].Momentum;
+                        haveBall = true;
+                    }
                 }
                 else if (f[0] == "P" && f[1] == "0" && f.Length >= 25 && f[3] == "1" && !havePlayer)
                 {
@@ -588,6 +598,27 @@ namespace Gpf.Lab
             return true;
         }
 
+        // Мяч эталона по тикам — ВНЕШНИЙ ВХОД прогона, а не измеряемое. Сценарий фазы 5 мяча не
+        // касается, B-строки в вердикт не входят, зато мяч кормит команду движения: desiredLookAt
+        // считается от Ball.Predict(40) (playercontroller.cpp:432-443), а из lookAt строится «забор»
+        // CULL WRONG ROTATIONAL SIDE (animcollection.cpp:590-620), который решает состав отбора.
+        // Свой мяч порта расходится с эталонным на 8 м за 84 тика — у эталона его ведут 22 игрока ИИ,
+        // у порта он катится свободно, — и дальше сравнивается уже не порт, а две траектории мяча.
+        //
+        // Остаточное отступление: вращение мяча трасса не переносит (публичного геттера нет ни у одной
+        // стороны), поэтому у порта оно нулевое. На горизонте Predict(40) вклад свёрла мал.
+        private readonly System.Collections.Generic.Dictionary<int, (Vector3 Position, Vector3 Momentum)>
+            _oracleBall = new();
+
+        // Мяч ставится состоянием на КОНЕЦ предыдущего тика: команда эталона на тике N читает мяч
+        // таким, каким его оставил тик N−1, а B-строка пишется в конце тика.
+        private void ApplyOracleBall(int traceTick)
+        {
+            if (!_oracleBall.TryGetValue(traceTick, out var state)) return;
+            _ball.SetPosition(state.Position);   // обнуляет момент и вращение (ball.cpp:105-112)
+            _ball.SetMomentum(state.Momentum);   // :114-117, внутри пересчёт предсказания
+        }
+
         // rotationSmuggle клипа эталона на нулевом тике — единственное состояние, которое порт не
         // может вычислить сам: ResetSituation его обнуляет (humanoidbase.cpp:965-966), а у эталона
         // клип выбран нормальным отбором и смаггл зависит от истории матча.
@@ -606,6 +637,9 @@ namespace Gpf.Lab
             int waitTicks = 0;
             while (true)
             {
+                // Пред-прокрутка — артефакт порта: ждём фазу idle-клипа. Мяч на это время держим в
+                // состоянии тика 0, чтобы контекст отбора не менялся от собственного качения.
+                ApplyOracleBall(0);
                 OracleStep(-1);
                 if (IsOracleZeroTick())
                 {
@@ -632,6 +666,7 @@ namespace Gpf.Lab
 
             for (int tick = 1; tick < _oracleScenario.GetTicks(); tick++)
             {
+                ApplyOracleBall(tick - 1);
                 OracleStep(tick);
                 WriteOracleTick(tick);
             }
