@@ -60,6 +60,7 @@ namespace Gpf.Lab
         private Skeleton3D _skeleton = null!;
         private Node3D _gpfSpace = null!;
         private Node3D _ballNode = null!;
+        private Node3D _cameraNode = null!;
         private Camera3D _camera = null!;
         private Label _label = null!;
         private bool _flatShading;
@@ -82,6 +83,11 @@ namespace Gpf.Lab
         // Визуальная деформация сетки (тикет 06) — презентация: питается флагом касания из
         // физики, своей коллизии не имеет.
         private readonly GoalNetting _netting = new();
+
+        // Камера матча (тикет 07). Таймер гола — Match::goalScoredTimer (match.cpp:965):
+        // растёт, пока стоит флаг гола, и переключает wide → scorer через секунду.
+        private readonly IngameCamera _ingameCamera = new();
+        private long _goalScoredTimer;
 
         // Команда в «их» пространстве: вперёд (0,−1,0).
         private Vector3 _desiredDirection = new(0, -1, 0);
@@ -239,14 +245,19 @@ namespace Gpf.Lab
             return mesh;
         }
 
-        // Солнце — по формулам оригинала; камера пока ВРЕМЕННАЯ (настоящую, UpdateIngameCamera
-        // match.cpp:723, ставит тикет 07 — в тот же MatchPresentation).
+        // Солнце и камера матча — по формулам оригинала.
         private void SetupPresentation()
         {
             // Под GpfSpace: SetRandomSunParams считает позицию в «их» осях.
             var sun = new DirectionalLight3D { Name = "Sun" };
             _gpfSpace.AddChild(sun);
             MatchPresentation.SetRandomSunParams(sun, _presentationRng);
+
+            // Иерархия оригинала (match.cpp:161-164, :1221-1223): узел-держатель несёт
+            // позицию и поворот, камера-ребёнок — только поворот и объектив. Оба под
+            // GpfSpace: UpdateIngameCamera считает всё в «их» осях.
+            _cameraNode = new Node3D { Name = "CameraNode" };
+            _gpfSpace.AddChild(_cameraNode);
 
             _camera = new Camera3D
             {
@@ -261,7 +272,7 @@ namespace Gpf.Lab
                     AmbientLightEnergy = 0.6f,
                 },
             };
-            AddChild(_camera);
+            _cameraNode.AddChild(_camera);
 
             var canvas = new CanvasLayer();
             AddChild(canvas);
@@ -293,6 +304,12 @@ namespace Gpf.Lab
             CheckBallCollisions();
             _previousBallPos = _ball.Predict(0); // match.cpp:881 — до Ball::Process
             _ball.Process();
+
+            // ПОРЯДОК ОРИГИНАЛА: таймер гола тикает ДО детекта (match.cpp:965 стоит перед
+            // :970-975). Поэтому в кадре, где гол засчитан, камера видит пару
+            // (гол = true, таймер = 0) — сдвиг на тик поехал бы в момент переключения на
+            // scorer-cam и в угол её облёта.
+            if (_ballIsInGoal) _goalScoredTimer += 10; else _goalScoredTimer = 0; // :965
             CheckForGoals(); // match.cpp:970-975 — после Ball::Process
 
             var anim = _collection.GetAnim(_humanoid.GetCurrentAnimId());
@@ -308,6 +325,21 @@ namespace Gpf.Lab
             // физики мяча, UploadGoalNetting (gametask.cpp:193) заливает изменённую геометрию.
             _netting.Update(_ball.BallTouchesNet(), _ball.GetPositionBuffer());
             _netting.Upload();
+
+            UpdateCamera();
+        }
+
+        // match.cpp:1049 (UpdateIngameCamera) → :1051-1075 (наезд) → Put-фаза :1221-1240
+        // (заливка в узлы). Таймер гола к этому моменту уже оттикал (:965, в StepOneFrame).
+        // Суррогаты лабы: владеющий и забивший — единственный игрок.
+        private void UpdateCamera()
+        {
+            _ingameCamera.Update(_ball.Predict(0), _ball.GetMovement(),
+                _humanoid.GetSpatialPosition(), _humanoid.GetSpatialDirectionVec(),
+                _ballIsInGoal, _goalScoredTimer, _humanoid.GetSpatialPosition(),
+                _presentationRng);                                  // :1049
+            _ingameCamera.ApplyIntroZoom(_humanoid.GetActualTimeMs()); // :1051-1075
+            _ingameCamera.Apply(_cameraNode, _camera);                 // :1221-1240
         }
 
         // Очередь команд лаб-контроллера — порядок HumanController::_GetCommands
@@ -573,11 +605,6 @@ namespace Gpf.Lab
             var anim = _collection.GetAnim(animId);
             Vector3 position = _humanoid.GetSpatialPosition();
 
-            // ВРЕМЕННАЯ камера-догонялка (тикет 07 заменит её камерой матча оригинала).
-            Vector3 camTarget = _gpfSpace.ToGlobal(position + new Vector3(0, 0, 1f));
-            _camera.Position = camTarget + new Vector3(0, 6f, 12f);
-            _camera.LookAt(camTarget);
-
             _label.Text = $"{anim.GetName()}\n"
                 + $"игрок: ({position.X:F1}, {position.Y:F1}) v={_humanoid.GetSpatialFloatVelocity():F2} м/с\n"
                 + $"мяч: ({_ball.Predict(0).X:F1}, {_ball.Predict(0).Y:F1}, {_ball.Predict(0).Z:F2}) "
@@ -607,6 +634,10 @@ namespace Gpf.Lab
                     _ballIsInGoal = false;
                     _ball.BallIsInGoal = false;
                     _previousBallPos = _ball.Predict(0);
+                    // match.cpp:652 — ResetSituation чистит очередь позиций камеры, иначе
+                    // она «прилетает» из прошлой сцены; таймер гола гасится вместе с флагом.
+                    _ingameCamera.ResetPositions();
+                    _goalScoredTimer = 0;
                     ResetActionBuffer();
                     _touches = 0;
                     break;
