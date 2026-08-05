@@ -6,6 +6,9 @@ user.cfg
 # Raw Mixamo FBX — не распространяем (public/open-source); коммитим только собранный .glb
 assets/models/mixamo_src/
 
+# Сырьё Hunyuan 3D (23 МБ, три 4K-текстуры) — коммитим только собранный .glb
+assets/models/hunyuan_src/
+
 # Python bytecode from .claude hooks
 .claude/hooks/__pycache__/
 tools/__pycache__/

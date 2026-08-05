@@ -66,6 +66,8 @@ PAGES = {
     "merge_mixamo.py":        "презентация-и-ассеты подкат-и-падение",
     "build_gpf_blockout.py":  "презентация-и-ассеты",
     "build_gpf_makehuman.py": "презентация-и-ассеты",
+    "build_gpf_hunyuan.py":   "презентация-и-ассеты",
+    "gpf_fit_model.py":       "презентация-и-ассеты",
     "build_gpf_fullbody.py":  "презентация-и-ассеты порт-gameplayfootball",
     "build_gpf_rig.py":       "презентация-и-ассеты порт-gameplayfootball",
     "gpf_anim.py":            "презентация-и-ассеты порт-gameplayfootball",
