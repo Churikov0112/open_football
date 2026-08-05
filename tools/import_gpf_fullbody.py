@@ -24,9 +24,19 @@ import bpy
 
 
 def parse_ase(path):
-    """[{name, verts, faces, colors, cfaces}] — по одному на *GEOMOBJECT."""
+    """[{name, verts, faces, colors, cfaces, uvs, tfaces, material, normals, tm}] — на *GEOMOBJECT.
+
+    `normals`: {индекс грани: [n0, n1, n2]} в ПОРЯДКЕ ФАЙЛА, то есть по углам A/B/C грани —
+    так же читает оригинал (aseloader.cpp:250-258: SetNormal(v) по позиции строки, а не по
+    номеру вершины в ней).
+    `tm`: три строки *TM_ROW0..2 узла. Вершины оригинал считает мировыми и NODE_TM к ним НЕ
+    применяет, а вот НОРМАЛИ поворачивает этой матрицей (aseloader.cpp:227-239) — без неё
+    двусторонние панели сетки ворот получают одинаковые нормали и склеиваются при экспорте.
+    """
     objects = []
     current = None
+    in_node_tm = False
+    face = -1
 
     with io.open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -37,17 +47,29 @@ def parse_ase(path):
 
             if tag == "*GEOMOBJECT":
                 current = {"name": "", "verts": [], "faces": [], "colors": [], "cfaces": [],
-                           "uvs": [], "tfaces": [], "material": -1}
+                           "uvs": [], "tfaces": [], "material": -1, "normals": {}, "tm": []}
                 objects.append(current)
+                in_node_tm = False
             elif current is None:
                 continue
             elif tag == "*NODE_NAME" and not current["name"]:
                 current["name"] = line.split('"')[1] if '"' in line else t[1]
+            elif tag == "*NODE_TM":
+                in_node_tm = not current["tm"]
+            elif tag in ("*TM_ROW0", "*TM_ROW1", "*TM_ROW2") and in_node_tm:
+                current["tm"].append((float(t[1]), float(t[2]), float(t[3])))
+            elif tag == "*TM_ROW3":
+                in_node_tm = False
             elif tag == "*MESH_VERTEX":
                 current["verts"].append((float(t[2]), float(t[3]), float(t[4])))
             elif tag == "*MESH_FACE":
                 # *MESH_FACE 0: A: 0 B: 1 C: 2 AB: ... — индексы в токенах 3/5/7
                 current["faces"].append((int(t[3]), int(t[5]), int(t[7])))
+            elif tag == "*MESH_FACENORMAL":
+                face = int(t[1])
+                current["normals"][face] = []
+            elif tag == "*MESH_VERTEXNORMAL" and face >= 0:
+                current["normals"][face].append((float(t[2]), float(t[3]), float(t[4])))
             elif tag == "*MESH_VERTCOL":
                 current["colors"].append((float(t[2]), float(t[3]), float(t[4])))
             elif tag == "*MESH_CFACE":
@@ -60,6 +82,56 @@ def parse_ase(path):
                 current["material"] = int(t[1])
 
     return objects
+
+
+def parse_materials(path):
+    """[{name, maps: {MAP_DIFFUSE: путь, ...}, shine, shinestrength, selfillum}] по *MATERIAL_LIST.
+
+    Порядок = *MATERIAL_REF объектов. Конвейер из этого берёт только ИМЕНА (карты и скаляры
+    в рантайме читает загрузчик лабы — решение 6 спеки), но парсер отдаёт всё, что читает
+    оригинал (aseloader.cpp:47-98), чтобы у обоих потребителей был один разбор.
+    """
+    materials = []
+    current = None
+    in_map = ""
+    expected = -1
+
+    with io.open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            t = line.split()
+            if not t:
+                continue
+            tag = t[0]
+
+            if tag == "*MATERIAL_COUNT":
+                expected = int(t[1])
+            elif tag == "*MATERIAL" and len(t) > 1 and t[1].isdigit():
+                current = {"name": "", "maps": {}, "shine": 0.0,
+                           "shinestrength": 0.0, "selfillum": 0.0}
+                materials.append(current)
+                in_map = ""
+            elif current is None:
+                continue
+            elif tag == "*MATERIAL_NAME" and not current["name"]:
+                current["name"] = line.split('"')[1]
+            elif tag in ("*MAP_DIFFUSE", "*MAP_BUMP", "*MAP_SHINE", "*MAP_SELFILLUM"):
+                in_map = tag[1:]
+            elif tag == "*BITMAP" and in_map:
+                current["maps"][in_map] = line.split('"')[1]
+                in_map = ""
+            elif tag == "*MATERIAL_SHINE":
+                current["shine"] = float(t[1])
+            elif tag == "*MATERIAL_SHINESTRENGTH":
+                current["shinestrength"] = float(t[1])
+            elif tag == "*MATERIAL_SELFILLUM":
+                current["selfillum"] = float(t[1])
+            elif tag == "*GEOMOBJECT":
+                break
+
+    if expected >= 0 and len(materials) != expected:
+        raise SystemExit("%s: *MATERIAL_COUNT %d, а разобрано %d"
+                         % (path, expected, len(materials)))
+    return materials
 
 
 def decode_weights(obj):

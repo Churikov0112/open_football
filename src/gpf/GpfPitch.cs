@@ -12,6 +12,12 @@ namespace Gpf
     {
         public const float PitchHalfW = 55f;   // gamedefines.hpp:271 (только внутри боковых/лицевых линий)
         public const float PitchHalfH = 36f;   // gamedefines.hpp:272
+
+        // Рамка поля — газон целиком, вместе с «ободом» за линиями (комментарий оригинала:
+        // "including 'rim'"). По ней раскатан pitch.ase и по ней же считает генератор газона.
+        public const float PitchFullHalfW = 60f; // gamedefines.hpp:273
+        public const float PitchFullHalfH = 40f; // gamedefines.hpp:274
+
         public const float LineHalfW = 0.06f;  // gamedefines.hpp:275
 
         public const float GoalDepth = 2.55f;     // gamedefines.hpp:277
@@ -29,6 +35,8 @@ namespace Gpf
         // Мост-обёртки для GDScript-тестов (const-поля через CSharpScript не читаются).
         public static float GetPitchHalfW() => PitchHalfW;
         public static float GetPitchHalfH() => PitchHalfH;
+        public static float GetPitchFullHalfW() => PitchFullHalfW;
+        public static float GetPitchFullHalfH() => PitchFullHalfH;
         public static float GetLineHalfW() => LineHalfW;
         public static float GetGoalDepth() => GoalDepth;
         public static float GetGoalHeight() => GoalHeight;
