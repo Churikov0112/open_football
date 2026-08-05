@@ -79,6 +79,10 @@ namespace Gpf.Lab
         private bool _ballIsInGoal;
         private Vector3 _previousBallPos; // Match::previousBallPos (match.cpp:881)
 
+        // Визуальная деформация сетки (тикет 06) — презентация: питается флагом касания из
+        // физики, своей коллизии не имеет.
+        private readonly GoalNetting _netting = new();
+
         // Команда в «их» пространстве: вперёд (0,−1,0).
         private Vector3 _desiredDirection = new(0, -1, 0);
         private int _desiredVelocityId = 1;
@@ -147,7 +151,10 @@ namespace Gpf.Lab
             AddModel(StadiumGlb, StadiumAse, randomizeAdboards: true);
             Node3D? pitchNode = AddModel(PitchGlb, PitchAse);
             GeneratePitchTextures(pitchNode);
-            AddModel(GoalsGlb, GoalsAse);
+            Node3D? goalsNode = AddModel(GoalsGlb, GoalsAse);
+            // match.cpp:212-215 — сбор вершин сетки сразу после загрузки ворот (у оригинала это
+            // ДО газона, но бросков ГСЧ тут нет, порядок «щиты → газон → солнце» цел).
+            if (goalsNode != null) _netting.Prepare(goalsNode);
             _ballNode = AddModel(BallGlb, BallAse) ?? FallbackBallMesh();
         }
 
@@ -296,6 +303,11 @@ namespace Gpf.Lab
 
             _ballNode.Position = _ball.GetPositionBuffer();
             _ballNode.Quaternion = _ball.GetOrientationBuffer();
+
+            // Put-фаза оригинала: UpdateGoalNetting (match.cpp:1306) читает флаг касания из
+            // физики мяча, UploadGoalNetting (gametask.cpp:193) заливает изменённую геометрию.
+            _netting.Update(_ball.BallTouchesNet(), _ball.GetPositionBuffer());
+            _netting.Upload();
         }
 
         // Очередь команд лаб-контроллера — порядок HumanController::_GetCommands
