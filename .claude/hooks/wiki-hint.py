@@ -114,6 +114,16 @@ PAGES = {
     "GpfPitch.cs":             "порт-gameplayfootball",
     "GpfRng.cs":               "порт-gameplayfootball",
     "BallLabMain.cs":          "порт-gameplayfootball",
+    # --- фаза 7: стадион, газон, сетка, камера, звук ---
+    "StadiumLabMain.cs":       "порт-gameplayfootball презентация-и-ассеты",
+    "AseMaterials.cs":         "порт-gameplayfootball презентация-и-ассеты",
+    "ProceduralPitch.cs":      "порт-gameplayfootball поле-и-камера",
+    "Perlin.cs":               "порт-gameplayfootball",
+    "MatchPresentation.cs":    "порт-gameplayfootball",
+    "GoalNetting.cs":          "порт-gameplayfootball сетка-ворот",
+    "IngameCamera.cs":         "порт-gameplayfootball поле-и-камера",
+    "MatchAudio.cs":           "порт-gameplayfootball",
+    "build_gpf_stadium.py":    "порт-gameplayfootball презентация-и-ассеты",
     # --- оракул: писатель трассы, сценарий, манифесты, дифф ---
     "TraceWriter.cs":          "порт-gameplayfootball",
     "OracleScenario.cs":       "порт-gameplayfootball",
