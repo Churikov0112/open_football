@@ -9,9 +9,10 @@ namespace Gpf.Lab
     //
     // Оркестратор — по образцу BallLabMain: порядок одного тика повторяет Match::Process
     // (match.cpp) — очередь команд контроллера → Humanoid::Process → Match::CheckBallCollisions
-    // (:1926-2045) → Ball::Process (ball.cpp:562-585) → отрисовка. По мере тикетов фазы сюда
-    // приедут камера (07), звук (08), детект гола и жизненный цикл его флага (05), щиты и
-    // солнце (09) — всё это матч-собственность, которой нельзя течь в `Gpf.*` раньше фазы 8.
+    // (:1926-2045) → previousBallPos (:881) → Ball::Process (ball.cpp:562-585) → CheckForGoal
+    // (:970-975) → отрисовка. Здесь уже живут детект гола и жизненный цикл его флага (тикет 05),
+    // щиты и солнце (09); по мере тикетов фазы приедут камера (07) и звук (08) — всё это
+    // матч-собственность, которой нельзя течь в `Gpf.*` раньше фазы 8.
     //
     // ball_lab/walk_lab/anim_lab не трогаются: на ball_lab стоит оракул-режим, и любая правка
     // его оркестратора рискует нулевым диффом трасс. Отсюда сознательное дублирование очереди
@@ -71,6 +72,13 @@ namespace Gpf.Lab
         // не гуманоида: живёт у оркестратора.
         private long _lastBodyBallCollisionTimeMs = long.MinValue / 2;
 
+        // Флаг «мяч в воротах» и его жизненный цикл — тоже матч-собственность (выставление —
+        // match.cpp:972-975, сброс — Match::ResetSituation / SetGoalScored(false)): живут здесь,
+        // ядро только читает Ball.BallIsInGoal. Счёт, судья и IsInPlay в Gpf.* не заводятся —
+        // это фаза 8.
+        private bool _ballIsInGoal;
+        private Vector3 _previousBallPos; // Match::previousBallPos (match.cpp:881)
+
         // Команда в «их» пространстве: вперёд (0,−1,0).
         private Vector3 _desiredDirection = new(0, -1, 0);
         private int _desiredVelocityId = 1;
@@ -117,8 +125,11 @@ namespace Gpf.Lab
             _humanoid.Setup(_collection, _selector);
             _humanoid.ResetSituation(StartPosition, 0f);
             _ball.ResetSituation(StartBallPosition);
-            // WoodworkEnabled остаётся включённым (значение по умолчанию Gpf.Ball): в отличие от
-            // ball_lab, ворота здесь есть. NettingEnabled заводит тикет 05.
+            // В отличие от ball_lab ворота здесь есть: WoodworkEnabled остаётся включённым
+            // (дефолт Gpf.Ball), сетка включается явно — её матч-вход Ball.BallIsInGoal кормит
+            // CheckForGoals ниже.
+            _ball.NettingEnabled = true;
+            _previousBallPos = _ball.Predict(0);
             _humanoid.SetBall(_ball);
             _humanoid.SetRng(_rng);
             _humanoid.SetDesignatedPossession(true);
@@ -226,7 +237,9 @@ namespace Gpf.Lab
 
             _humanoid.Tick(BuildCommandQueue());
             CheckBallCollisions();
+            _previousBallPos = _ball.Predict(0); // match.cpp:881 — до Ball::Process
             _ball.Process();
+            CheckForGoals(); // match.cpp:970-975 — после Ball::Process
 
             var anim = _collection.GetAnim(_humanoid.GetCurrentAnimId());
             _applier.Offsets = _humanoid.GetApplyOffsets();
@@ -404,6 +417,79 @@ namespace Gpf.Lab
             if (touched) _touches++;
         }
 
+        // Проверка обеих сторон, как в Match::Process (:972-975, стороны команд −1 и 1);
+        // флаг липкий до сброса — в матче его снимает kick-off (SetGoalScored(false)).
+        private void CheckForGoals()
+        {
+            if (CheckForGoal(-1) || CheckForGoal(1)) _ballIsInGoal = true;
+            _ball.BallIsInGoal = _ballIsInGoal;
+        }
+
+        // Match::CheckForGoal (match.cpp:1435-1466): Law 10 «весь мяч за линией» — плоскость
+        // створа на pitchHalfW + lineHalfW + 0.11 (ширина линии + радиус мяча), пересечение
+        // отрезка предыдущая→текущая позиция с двумя треугольниками створа. Габариты створа
+        // 3.7/2.5 в оригинале захардкожены литералами — переносятся литералами.
+        private bool CheckForGoal(int side)
+        {
+            if (Mathf.Abs(_ball.Predict(10).X) < Gpf.GpfPitch.PitchHalfW - 1.0f) return false; // :1436
+
+            Vector3 l0 = _previousBallPos; // :1439
+            Vector3 l1 = _ball.Predict(0); // :1440
+
+            float x = (Gpf.GpfPitch.PitchHalfW + Gpf.GpfPitch.LineHalfW + 0.11f) * side;
+            Vector3 normal = new Vector3(-side, 0, 0); // :1446, :1451
+
+            bool intersect = TriangleIntersectsLine( // goal1 (:1442-1446), запрос :1457
+                new Vector3(x, 3.7f, 0), new Vector3(x, -3.7f, 0), new Vector3(x, 3.7f, 2.5f),
+                normal, l0, l1);
+            if (!intersect)
+                intersect = TriangleIntersectsLine( // goal2 (:1447-1451), запрос :1459
+                    new Vector3(x, -3.7f, 0), new Vector3(x, -3.7f, 2.5f), new Vector3(x, 3.7f, 2.5f),
+                    normal, l0, l1);
+
+            // :1462-1463 — мяч мог «влететь» через боковую сетку: старт отрезка в поле, но за
+            // штангой — не гол
+            if (Mathf.Abs(_previousBallPos.Y) > 3.7f
+                && Mathf.Abs(_previousBallPos.X) > Gpf.GpfPitch.PitchHalfW - Gpf.GpfPitch.LineHalfW - 0.11f)
+                return false;
+
+            return intersect; // :1465
+        }
+
+        // Triangle::IntersectsLine (triangle.cpp:320-369): пересечение отрезка l0→l1 с
+        // треугольником. r строго внутри (0,1) — «hack to make edges look better» оригинала
+        // (:341-343); обе ветки параллельности возвращают false (:333-337).
+        private static bool TriangleIntersectsLine(Vector3 t0, Vector3 t1, Vector3 t2,
+            Vector3 normal, Vector3 l0, Vector3 l1)
+        {
+            Vector3 u = t1 - t0;   // :326
+            Vector3 v = t2 - t0;   // :327
+            Vector3 dir = l1 - l0; // :329
+            Vector3 w0 = l0 - t0;  // :330
+            float a = -normal.Dot(w0); // :331
+            float b = normal.Dot(dir); // :332
+            if (Mathf.Abs(b) < 0.000001f) return false; // :333-337 — луч параллелен плоскости
+
+            float r = a / b;                          // :340
+            if (r <= 0.0f || r >= 1.0f) return false; // :343
+
+            Vector3 intersect = l0 + dir * r; // :347
+
+            float uu = u.Dot(u);              // :351
+            float uv = u.Dot(v);              // :352
+            float vv = v.Dot(v);              // :353
+            Vector3 w = intersect - t0;       // :354
+            float wu = w.Dot(u);              // :355
+            float wv = w.Dot(v);              // :356
+            float d = uv * uv - uu * vv;      // :357
+
+            float s = (uv * wv - vv * wu) / d;         // :361
+            if (s < 0.0f || s > 1.0f) return false;    // :362
+            float t = (uv * wu - uu * wv) / d;         // :364
+            if (t < 0.0f || (s + t) > 1.0f) return false; // :365
+            return true; // :368
+        }
+
         public override void _PhysicsProcess(double delta)
         {
             PollDirectionInput();
@@ -438,6 +524,7 @@ namespace Gpf.Lab
                 + $"мяч: ({_ball.Predict(0).X:F1}, {_ball.Predict(0).Y:F1}, {_ball.Predict(0).Z:F2}) "
                 + $"v={_ball.GetMovement().Length():F2} м/с   коллизий тело-мяч: {_touches}\n"
                 + $"rng: геймплей {RngSeed}, презентация {_presentationSeed}\n"
+                + (_ballIsInGoal ? "ГОЛ — мяч в воротах (R — сброс)\n" : "")
                 + (_missingModels > 0 ? $"!! нет {_missingModels} моделей стадиона\n" : "")
                 + "стрелки — направление;  0/1/2/3 — стойка/дриблинг/бег/спринт;  "
                 + "W — пас,  S — удар;  R — сброс"
@@ -456,6 +543,11 @@ namespace Gpf.Lab
                 case Key.R:
                     _humanoid.ResetSituation(StartPosition, 0f);
                     _ball.ResetSituation(StartBallPosition);
+                    // Сброс флага «мяч в воротах» — зеркало Match::ResetSituation
+                    // (match.cpp:660): в матче это делает kick-off после гола.
+                    _ballIsInGoal = false;
+                    _ball.BallIsInGoal = false;
+                    _previousBallPos = _ball.Predict(0);
                     ResetActionBuffer();
                     _touches = 0;
                     break;

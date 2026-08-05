@@ -3,11 +3,11 @@ using System.Collections.Generic;
 
 namespace Gpf
 {
-    // Порт Ball (ball.cpp/ball.hpp) минус: сетка ворот (ball.cpp:331-408, решение роадмапа — сеткой
-    // занимается наш NetSim, ballTouchesNet не переносится), звук (:46-68, :324-327, :553-560),
+    // Порт Ball (ball.cpp/ball.hpp) минус: звук (:46-68, :324-327, :553-560),
     // сцена/geometry (:33-44, :74-84), Put/temporal smoothing (:587-600), debug-клавиша BACKSPACE
-    // (:564-569), привязки к Match (:99-102). Радиус мяча 0.11 — хардкод оригинала по всему коду
-    // (НЕ константа), переносится литералом.
+    // (:564-569), привязки к Match (:99-102; из них флаг «мяч в воротах» приходит полем
+    // BallIsInGoal от оркестратора — тикет 05 фазы 7). Радиус мяча 0.11 — хардкод оригинала по
+    // всему коду (НЕ константа), переносится литералом.
     public partial class Ball : RefCounted
     {
         // ball.cpp:23-29 — калиброванные константы, НЕ менять
@@ -25,6 +25,24 @@ namespace Gpf
         // ball.cpp:154 woodwork_enabled — у оригинала локальный bool true; вынесен в публичное
         // поле, чтобы лаба без ворот могла выключить штанги
         public bool WoodworkEnabled = true;
+
+        // ball.cpp:155 netting_enabled — у оригинала локальный bool true; вынесен в публичное
+        // поле и, В ОТЛИЧИЕ от WoodworkEnabled, ВЫКЛЮЧЕН по умолчанию: сетке нужен матч-вход
+        // BallIsInGoal, которого нет у существующих лаб (ball_lab с оракул-режимом не
+        // трогается — на нём стоит нулевой дифф трасс). Включает её только лаба с воротами
+        // (stadium_lab). Поведение там, где ворота есть, совпадает с оригиналом.
+        public bool NettingEnabled = false;
+
+        // Единственный матч-вход сетки — match->IsBallInGoal() (ball.cpp:335). Источник флага
+        // (Match::CheckForGoal, match.cpp:1435) и его жизненный цикл — матч-собственность:
+        // до фазы 8 живут в лаб-оркестраторе, ядро флаг только читает.
+        public bool BallIsInGoal = false;
+
+        // ball.hpp:117 ballTouchesNet, геттер ball.hpp:69; выставляется только первым шагом
+        // предсказания (predictTime_ms == 10, :363/:382/:405). В оригинале читается реплеем
+        // (match.cpp:1431), у нас — визуалом сетки лабы (тикет 06).
+        private bool _ballTouchesNet;
+        public bool BallTouchesNet() => _ballTouchesNet;
 
         // ball.hpp:34-41 BallSpatialInfo — возврат CalculatePrediction
         private readonly struct BallSpatialInfo
@@ -155,7 +173,7 @@ namespace Gpf
         // Порядок секций внутри шага — СВЯЩЕННЫЙ:
         // гравитация (:175) → drag (:180-183) → grassBias (:186-191) → отскок (:197-205)
         // → трение газона (:210-227) → штанги+перекладина (только firstTime, :240-328)
-        // → [сетка ВЫРЕЗАНА, :331-408] → вращение от качения + обратное влияние (:413-481)
+        // → сетка (только predictTime_ms <= 10, :331-408) → вращение от качения + обратное влияние (:413-481)
         // → магнус (:486-501) → интеграция позиции/ориентации (:506-514)
         // → кэш каждые 10 мс (:516-525) → снапшот нового состояния на 10 мс (:527-531).
         private BallSpatialInfo CalculatePrediction()
@@ -173,8 +191,7 @@ namespace Gpf
 
             bool dragEnabled = true;                 // :152
             bool groundFrictionEnabled = true;       // :153
-            // :154 woodwork_enabled — поле WoodworkEnabled класса
-            // :155 netting_enabled — вырезано вместе с сеткой
+            // :154-155 woodwork_enabled / netting_enabled — поля WoodworkEnabled / NettingEnabled класса
             bool groundRotationEffectsEnabled = true; // :156
             bool swerveEnabled = true;                // :157
 
@@ -182,7 +199,7 @@ namespace Gpf
 
             bool firstTime = true; // :163
 
-            // :165 ballTouchesNet — вырезан вместе с сеткой
+            _ballTouchesNet = false; // :165
 
             for (uint predictTimeMs = (uint)(int)(timeStep * 1000.0f);
                  predictTimeMs < GpfPitch.BallPredictionSizeMs;
@@ -251,11 +268,14 @@ namespace Gpf
                     momentumPredict.Y = xy.Y;                       // :226
                 }
 
-                // :229-236: netAbsorbInv (0.95 → pow(0.95, timeStep*100)), powFactor 2.6 и
-                // powerFac 1.8 питали только вырезанную сетку — НЕ переносятся (мёртвый код)
+                float netAbsorbInv = 0.95f; // :229
+                float powFactor = 2.6f;     // :230
+                float powerFac = 1.8f;      // :231 — «lol varnames» (комментарий оригинала)
                 float postAbsorbInv = 0.8f; // :232
                 float ballRadius = 0.11f;   // :233
                 float postRadius = 0.07f;   // :234
+
+                netAbsorbInv = Mathf.Pow(netAbsorbInv, timeStep * 100.0f); // :236
 
                 // штанги/перекладина (:238-328) — ТОЛЬКО на первом шаге (firstTime): на
                 // предсказание дальних отскоков от штанги оригинал забил, работает через
@@ -381,8 +401,100 @@ namespace Gpf
                 }
 
 
-                // СЕТКА ВЫРЕЗАНА (:331-408): решение роадмапа — сеткой занимается наш NetSim;
-                // ballTouchesNet не переносится
+                // сетка (:331-408) — только первый шаг предсказания (predictTime_ms <= 10):
+                // на предсказание траектории в сетке оригинал забил так же, как со штангами —
+                // механика живёт через пересчёт в Process() каждый тик
+
+                if (predictTimeMs <= 10 && NettingEnabled) // :333
+                {
+                    bool ballIsInGoal = BallIsInGoal;   // :335 — match->IsBallInGoal(), матч-вход
+                    int inGoal = ballIsInGoal ? 1 : -1; // :336
+
+                    bool behindBackline = Mathf.Abs(nextPos.X) > GpfPitch.PitchHalfW + 0.11f;                      // :338
+                    bool behindGoalBack = Mathf.Abs(nextPos.X) > GpfPitch.PitchHalfW + GpfPitch.GoalDepth + 0.11f; // :339
+                    bool beforeGoalBack = Mathf.Abs(nextPos.X) < GpfPitch.PitchHalfW + GpfPitch.GoalDepth - 0.11f; // :340
+                    bool belowGoalHeight = nextPos.Z < GpfPitch.GoalHeight + 0.11f;                // :341
+                    bool aboveGoalHeight = nextPos.Z > GpfPitch.GoalHeight - 0.11f;                // :342
+                    bool betweenGoalWidth = Mathf.Abs(nextPos.Y) < GpfPitch.GoalHalfWidth - 0.11f; // :343
+                    bool asideGoalWidth = Mathf.Abs(nextPos.Y) > GpfPitch.GoalHalfWidth + 0.11f;   // :344
+
+                    // :339, :342, :344 питают только закомментированные «внешние» ветки ниже
+                    _ = behindGoalBack;
+                    _ = aboveGoalHeight;
+                    _ = asideGoalWidth;
+
+
+                    // боковая сетка (:347-364)
+
+                    if (ballIsInGoal && !betweenGoalWidth && behindBackline) // :349
+                    {
+                        float netDist = Mathf.Abs(Mathf.Abs(nextPos.Y) - GpfPitch.GoalHalfWidth); // :352
+                        netDist = Mathf.Clamp(netDist, 0f, 1f);                                   // :353
+                        float power = Mathf.Pow(netDist, powFactor) *
+                                      -BluntMath.SignSide(nextPos.Y) * inGoal; // :354-355
+
+                        // сетка прибита к штангам — возле них ослабление (:357-359). КВИРК
+                        // оригинала: bias считается от МОМЕНТА (momentumPredict.coords[0]),
+                        // не от позиции — переносится как есть
+                        float woodworkTensionBiasInv = Mathf.Clamp(
+                            (Mathf.Abs(momentumPredict.X) - GpfPitch.PitchHalfW) * 2.0f, 0.0f, 1.0f); // :358
+                        float adaptedPowerFac = powerFac + (1.0f - woodworkTensionBiasInv) * 3.0f;    // :359
+
+                        momentumPredict.Y = momentumPredict.Y * netAbsorbInv
+                            + power * adaptedPowerFac * (100 * timeStep); // :361 — хвост оригинала закомментирован: + -momentumPredict.coords[1] * netDist
+
+                        if (predictTimeMs == 10) _ballTouchesNet = true; // :363
+                    }
+
+
+                    // задняя сетка (:367-383)
+
+                    // :369-371 — старая версия условия, в оригинале закомментирована; перенесена как есть:
+                    // if ((fabs(nextPos.coords[0]) > (pitchHalfW + 2.5) - 0.11 && ballIsInGoal)/* ||
+                    //     (fabs(nextPos.coords[0]) < (pitchHalfW + 2.5) + 0.11 && !ballIsInGoal) todo disabled: too hard to code :p */) {
+
+                    if (ballIsInGoal && !beforeGoalBack && behindBackline // :372
+                        /* || (!ballIsInGoal && !asideGoalWidth && behindBackline && !behindGoalBack
+                              && belowGoalHeight) ** todo disabled: too hard to code :p (:373) —
+                           «внешнее» касание закомментировано В ОРИГИНАЛЕ: мяч снаружи проходит
+                           сквозь сетку, bug-for-bug */)
+                    {
+                        float netDist = Mathf.Abs(
+                            Mathf.Abs(nextPos.X) - (GpfPitch.PitchHalfW + GpfPitch.GoalDepth)); // :376
+                        netDist = Mathf.Clamp(netDist, 0f, 1f);                                 // :377
+                        float power = Mathf.Pow(netDist, powFactor) *
+                                      -BluntMath.SignSide(nextPos.X) * inGoal; // :378-379
+                        momentumPredict.X = momentumPredict.X * netAbsorbInv
+                            + power * powerFac * (100 * timeStep); // :380 — БЕЗ ослабления у штанг
+
+                        if (predictTimeMs == 10) _ballTouchesNet = true; // :382
+                    }
+
+
+                    // верхняя сетка (:386-406)
+
+                    // :388-390 — старая версия условия, в оригинале закомментирована; перенесена как есть:
+                    // if (((nextPos.coords[2] > 2.5 - 0.11 && ballIsInGoal)/*( ||
+                    //      (nextPos.coords[2] < 2.5 + 0.11 && !ballIsInGoal) todo disabled: too hard to code :p */) &&
+                    //     fabs(nextPos.coords[0]) > pitchHalfW) {
+
+                    if (ballIsInGoal && !belowGoalHeight && behindBackline) // :392 — «todo: from above. so hard to code. wow.»
+                    {
+                        float netDist = Mathf.Abs(Mathf.Abs(nextPos.Z) - GpfPitch.GoalHeight); // :395
+                        netDist = Mathf.Clamp(netDist, 0f, 1f);                                // :396
+                        float power = Mathf.Pow(netDist, powFactor) * -inGoal;                 // :397
+
+                        // сетка прибита к перекладине (:399-401) — тот же квирк с моментом
+                        float woodworkTensionBiasInv = Mathf.Clamp(
+                            (Mathf.Abs(momentumPredict.X) - GpfPitch.PitchHalfW) * 2.0f, 0.0f, 1.0f); // :400
+                        float adaptedPowerFac = powerFac + (1.0f - woodworkTensionBiasInv) * 3.0f;    // :401
+
+                        momentumPredict.Z = momentumPredict.Z * netAbsorbInv
+                            + power * adaptedPowerFac * (100 * timeStep); // :403
+
+                        if (predictTimeMs == 10) _ballTouchesNet = true; // :405
+                    }
+                } // </goal collisions> (:408)
 
 
                 // вращение (:411-481)
@@ -570,7 +682,7 @@ namespace Gpf
             _previousPosition = focusPos + new Vector3(0, 0, 0.11f); // :611
             _positionBuffer = focusPos + new Vector3(0, 0, 0.11f);   // :612
             _orientationBuffer = Quaternion.Identity; // :613
-            // :614 ballTouchesNet — вырезан вместе с сеткой
+            _ballTouchesNet = false;                  // :614
         }
     }
 }
