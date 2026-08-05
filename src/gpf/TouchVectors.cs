@@ -710,7 +710,8 @@ namespace Gpf
                 ball.Touch(resultVector);                                      // :2037
                 ball.SetRotation(rng.Uniform(-30f, 30f), rng.Uniform(-30f, 30f),
                     rng.Uniform(-30f, 30f), 0.5f * bias);                      // :2038
-                // :2039 TriggerBallTouchSound — звук не переносим
+                ball.TriggerBallTouchSound(
+                    Mathf.Pow(BluntMath.NormalizedClamp(resultVector.Length(), 4.0f, 40.0f), 0.7f)); // :2039
 
                 lastBodyBallCollisionTimeMs = actualTimeMs;                    // :2041
                 return true;

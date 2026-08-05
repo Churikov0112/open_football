@@ -1749,7 +1749,8 @@ namespace Gpf
 
                 _ball.Touch(touchVec);                                                 // :381
                 _ball.SetRotation(xRot, yRot, 0, 0.2f * (1.0f - bumpyRideBias));       // :382 (0.9 в комм.)
-                // :383 TriggerBallTouchSound — звук не переносим
+                _ball.TriggerBallTouchSound(
+                    Mathf.Pow(BluntMath.NormalizedClamp(touchVec.Length(), 4.0f, 40.0f), 0.7f)); // :383
 
                 RegisterTouch(TouchVectors.GetTouchTypeForBodyPart(
                     _current.Anim.GetVariable("touch_bodypart")));                     // :385
@@ -1868,7 +1869,8 @@ namespace Gpf
                             + currentBallVec * bumpyRideBias;                          // :531
 
                         _ball.Touch(touchVec);                                         // :534
-                        // :535 TriggerBallTouchSound — звук не переносим
+                        _ball.TriggerBallTouchSound(
+                            Mathf.Pow(BluntMath.NormalizedClamp(touchVec.Length(), 4.0f, 40.0f), 0.7f)); // :535
 
                         float forwardness = 3.5f;                                      // :537
                         if (_current.FunctionType == AnimCollection.FnHighPass)
@@ -1909,7 +1911,8 @@ namespace Gpf
 
                         _ball.Touch(touchVec);                                         // :576
                         _ball.SetRotation(xRot, yRot, zRot, 0.7f * (1.0f - bumpyRideBias)); // :577
-                        // :578 TriggerBallTouchSound — звук не переносим
+                        _ball.TriggerBallTouchSound(
+                            Mathf.Pow(BluntMath.NormalizedClamp(touchVec.Length(), 4.0f, 40.0f), 0.7f)); // :578
 
                         RegisterTouch(TouchVectors.GetTouchTypeForBodyPart(
                             _current.Anim.GetVariable("touch_bodypart")));             // :580

@@ -89,6 +89,9 @@ namespace Gpf.Lab
         private readonly IngameCamera _ingameCamera = new();
         private long _goalScoredTimer;
 
+        // Звук (тикет 08): плееры лабы, подписанные на сигналы ядра.
+        private readonly MatchAudio _audio = new();
+
         // Команда в «их» пространстве: вперёд (0,−1,0).
         private Vector3 _desiredDirection = new(0, -1, 0);
         private int _desiredVelocityId = 1;
@@ -140,6 +143,12 @@ namespace Gpf.Lab
             // CheckForGoals ниже.
             _ball.NettingEnabled = true;
             _previousBallPos = _ball.Predict(0);
+
+            // Звук: ядро шлёт сигналы, плееры лабы их исполняют (ball.cpp:324-327, :553-560).
+            // Питч касания — из презентационного ГСЧ.
+            _audio.Setup(this);
+            _ball.BallTouchSound += gain => _audio.PlayBallTouch(gain, _presentationRng);
+            _ball.WoodworkHit += momentumLength => _audio.PlayWoodwork(momentumLength);
             _humanoid.SetBall(_ball);
             _humanoid.SetRng(_rng);
             _humanoid.SetDesignatedPossession(true);

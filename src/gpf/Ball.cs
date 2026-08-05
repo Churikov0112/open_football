@@ -38,6 +38,19 @@ namespace Gpf
         // до фазы 8 живут в лаб-оркестраторе, ядро флаг только читает.
         public bool BallIsInGoal = false;
 
+        // ЗВУК (тикет 08). Ядро отдаёт наружу ФАКТ и число, а плееры живут в лабе — тот же
+        // приём, что у TraceWriter: `Gpf.*` про аудио-узлы Godot и про конфиг не знает.
+        // Формулы финального гейна, порога слышимости и питча (ball.cpp:325-326, :554-556)
+        // считает плеер: им нужны `audio_volume` (конфиг матча) и презентационный ГСЧ.
+        [Signal] public delegate void BallTouchSoundEventHandler(float gain);
+        [Signal] public delegate void WoodworkHitEventHandler(float momentumLength);
+
+        // ball.cpp:553-560. Аргумент — гейн шва, как его считают вызывающие
+        // (pow(NormalizedClamp(|touchVec|, 4, 40), 0.7): humanoid.cpp:383, :535, :578,
+        // match.cpp:2039).
+        public void TriggerBallTouchSound(float gain)
+            => EmitSignal(SignalName.BallTouchSound, gain);
+
         // ball.hpp:117 ballTouchesNet, геттер ball.hpp:69; выставляется только первым шагом
         // предсказания (predictTime_ms == 10, :363/:382/:405). В оригинале читается реплеем
         // (match.cpp:1431), у нас — визуалом сетки лабы (тикет 06).
@@ -122,7 +135,14 @@ namespace Gpf
         {
             if (_positionBuffer.Z < 0.11f) _positionBuffer.Z = 0.11f; // :93
 
-            SetMomentum(target); // :95 (внутри — CalculatePrediction, :98)
+            SetMomentum(target); // :95 — внутри свой CalculatePrediction (:116)
+
+            // :97-98 — оригинал пересчитывает предсказание ЕЩЁ РАЗ, хотя SetMomentum это уже
+            // сделал. Пересчёт идемпотентен (пишутся только кэш предсказаний, ориентация и
+            // флаг касания сетки), поэтому на физику лишний прогон не влияет — но он второй
+            // раз проходит ветку штанги, а значит на касании у штанги звук дёргается дважды.
+            // Переносится как есть.
+            CalculatePrediction();
 
             // шов (:99-102): match->UpdateLatestMentalImageBallPredictions() и
             // UpdatePossessionStats обеих команд — слой матча/ИИ, не физика мяча
@@ -396,8 +416,11 @@ namespace Gpf
                             + (new Vector3(0, 1, 0) * momentumPredict.Y); // :321
                     }
 
-                    // шов (:324-327): звук удара о штангу вырезан — единственный потребитель woodwork
-                    _ = woodwork;
+                    // :324-327 — единственный потребитель woodwork: звук штанги. Сила берётся
+                    // ПОСЛЕ отражений; сигнал уходит из того же места, где оригинал делает
+                    // Poke, поэтому повторные CalculatePrediction за тик (Touch/SetMomentum/
+                    // SetRotation зовут его тоже) дают повторный звук — как в оригинале.
+                    if (woodwork) EmitSignal(SignalName.WoodworkHit, GetLength(momentumPredict));
                 }
 
 
