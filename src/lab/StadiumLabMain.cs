@@ -141,12 +141,59 @@ namespace Gpf.Lab
         private void LoadStadium()
         {
             // Порядок обращений к презентационному ГСЧ повторяет конструкцию матча оригинала:
-            // сначала щиты (RandomizeAdboards, match.cpp:182 — 23 броска), потом солнце
+            // щиты (RandomizeAdboards, match.cpp:182 — 23 броска) → бросок ширины полос покоса
+            // (GeneratePitch, :223 → proceduralpitch.cpp:455 — 1 бросок) → солнце
             // (SetRandomSunParams, :235 — 6 бросков).
             AddModel(StadiumGlb, StadiumAse, randomizeAdboards: true);
-            AddModel(PitchGlb, PitchAse);
+            Node3D? pitchNode = AddModel(PitchGlb, PitchAse);
+            GeneratePitchTextures(pitchNode);
             AddModel(GoalsGlb, GoalsAse);
             _ballNode = AddModel(BallGlb, BallAse) ?? FallbackBallMesh();
+        }
+
+        // Газон по формулам оригинала (тикет 04). Разрешения — release-ветка (match.cpp:222-223;
+        // dev-ветка :225 — 1024/512 диффуз — не переносится: эталон-exe собран Release).
+        //
+        // Шов подмены: Entry хранит ПУТИ, а генератор выдаёт картинки в памяти — поэтому текстуры
+        // ставятся ПОСЛЕ ApplyEntries прямо в готовые материалы четырёх квадрантов. Это зеркало
+        // оригинала: CreateChunk перезаписывает содержимое ресурсов pitch_*_0i.png, на которые
+        // материалы уже ссылаются (proceduralpitch.cpp:347-380).
+        private void GeneratePitchTextures(Node3D? pitchNode)
+        {
+            if (pitchNode == null) return;
+
+            ulong t0 = Time.GetTicksMsec();
+            ProceduralPitch.Result pitch = ProceduralPitch.GeneratePitch(
+                2048, 1024, 1024, 512, 2048, 1024, _presentationRng);
+            GD.Print($"[STADIUM LAB] газон: полосы ×{pitch.GrassNormalRepeatMultiplier}, "
+                + $"{Time.GetTicksMsec() - t0} мс");
+
+            ApplyPitchTextures(pitchNode, pitch);
+        }
+
+        private static void ApplyPitchTextures(Node3D pitchNode, ProceduralPitch.Result pitch)
+        {
+            foreach (Node child in pitchNode.GetChildren())
+                if (child is Node3D childNode) ApplyPitchTextures(childNode, pitch);
+
+            if (pitchNode is not MeshInstance3D mesh || mesh.Mesh == null) return;
+            for (int s = 0; s < mesh.Mesh.GetSurfaceCount(); s++)
+            {
+                // Материал квадранта назван по записи .ase: "pitch_01".."pitch_04".
+                if (mesh.GetSurfaceOverrideMaterial(s) is not StandardMaterial3D material) continue;
+                string name = material.ResourceName;
+                if (!name.StartsWith("pitch_0") || name.Length != 8) continue;
+                int chunk = name[7] - '1'; // "pitch_01" → 0
+                if (chunk < 0 || chunk > 3) continue;
+
+                material.AlbedoTexture = pitch.Diffuse[chunk];
+                material.NormalEnabled = true;
+                material.NormalTexture = pitch.Normal[chunk];
+                // Спекуляр сгенерирован (общий поток fastrandom — как в оригинале), но слота
+                // карты блика у StandardMaterial3D нет — то же ограничение, что у MAP_SHINE
+                // в AseMaterials.Build.
+                _ = pitch.Specular[chunk];
+            }
         }
 
         private Node3D? AddModel(string glbPath, string asePath, bool randomizeAdboards = false)
