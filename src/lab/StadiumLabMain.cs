@@ -27,7 +27,11 @@ namespace Gpf.Lab
         // презентационный код фазы: камера (2 числа на тик), звук (питч), солнце, бросок
         // ширины покоса, выбор адбордов. Геймплейный `_rng`, инжектированный в Humanoid и
         // TouchVectors, неприкосновенен — иначе нулевой дифф трасс умрёт без ошибки в логике.
-        private const ulong PresentationRngSeed = 20260805;
+        //
+        // Сид — ОТ ВРЕМЕНИ, как у оригинала вне оракул-режима (main.cpp:295 → randomseed() от
+        // std::time; там же fastrandomseed()). Иначе стадион и солнце были бы одинаковыми при
+        // каждом запуске, а межматчевая вариация оригинала — часть приёмки фазы.
+        // Печатается в консоль и в HUD: прогон при нужде воспроизводится подстановкой сида.
 
         // Радиус мяча 0.11 — хардкод оригинала по всему ball.cpp (не константа).
         private const float BallRadius = 0.11f;
@@ -46,7 +50,8 @@ namespace Gpf.Lab
         private readonly Gpf.HumanoidBase _humanoid = new();
         private readonly Gpf.Ball _ball = new();
         private readonly Gpf.GpfRng _rng = new(RngSeed);
-        private readonly Gpf.GpfRng _presentationRng = new(PresentationRngSeed);
+        private readonly ulong _presentationSeed = (ulong)Time.GetUnixTimeFromSystem();
+        private readonly Gpf.GpfRng _presentationRng = new(); // сидится в _Ready
         private readonly List<MeshInstance3D> _bodyParts = new();
 
         private Gpf.AnimCollection _collection = null!;
@@ -88,6 +93,7 @@ namespace Gpf.Lab
         public override void _Ready()
         {
             Engine.PhysicsTicksPerSecond = 100; // дисциплина ядра: тик = 10 мс
+            _presentationRng.Reseed(_presentationSeed);
 
             var builder = new Gpf.SkeletonBuilder();
             _gpfSpace = builder.BuildAxisWrapper();
@@ -104,7 +110,7 @@ namespace Gpf.Lab
             ulong t0 = Time.GetTicksMsec();
             _collection.Load("res://assets/gpf/animations", _skeleton);
             GD.Print($"[STADIUM LAB] collection: {_collection.GetAnimationCount()} anims, "
-                + $"{Time.GetTicksMsec() - t0} ms; rng {RngSeed} / презентация {PresentationRngSeed}");
+                + $"{Time.GetTicksMsec() - t0} ms; rng {RngSeed} / презентация {_presentationSeed}");
             _selector = new Gpf.AnimSelector();
             _selector.Setup(_collection);
 
@@ -123,13 +129,16 @@ namespace Gpf.Lab
         // поэтому встают без доворотов (тикет 02, прецедент — LabBody).
         private void LoadStadium()
         {
-            AddModel(StadiumGlb, StadiumAse);
+            // Порядок обращений к презентационному ГСЧ повторяет конструкцию матча оригинала:
+            // сначала щиты (RandomizeAdboards, match.cpp:182 — 23 броска), потом солнце
+            // (SetRandomSunParams, :235 — 6 бросков).
+            AddModel(StadiumGlb, StadiumAse, randomizeAdboards: true);
             AddModel(PitchGlb, PitchAse);
             AddModel(GoalsGlb, GoalsAse);
             _ballNode = AddModel(BallGlb, BallAse) ?? FallbackBallMesh();
         }
 
-        private Node3D? AddModel(string glbPath, string asePath)
+        private Node3D? AddModel(string glbPath, string asePath, bool randomizeAdboards = false)
         {
             if (!ResourceLoader.Exists(glbPath))
             {
@@ -140,9 +149,13 @@ namespace Gpf.Lab
             }
             var node = GD.Load<PackedScene>(glbPath).Instantiate<Node3D>();
             _gpfSpace.AddChild(node);
+
             // Карты и скаляры читаются из того же `.ase`, что и в оригинале: `.glb` несёт
-            // только геометрию и имена слотов.
-            AseMaterials.Apply(node, asePath);
+            // только геометрию и имена слотов. Подмена щитов вклинивается МЕЖДУ разбором и
+            // назначением — у оригинала она тоже правит материалы, а не готовые меши.
+            List<AseMaterials.Entry> entries = AseMaterials.Load(asePath);
+            if (randomizeAdboards) MatchPresentation.RandomizeAdboards(entries, _presentationRng);
+            AseMaterials.ApplyEntries(node, entries, asePath);
             return node;
         }
 
@@ -161,12 +174,14 @@ namespace Gpf.Lab
             return mesh;
         }
 
-        // ВРЕМЕННЫЕ свет и камера: солнце оригинала (SetRandomSunParams, match.cpp:493-524)
-        // ставит тикет 09, камеру матча (UpdateIngameCamera, :723) — тикет 07.
+        // Солнце — по формулам оригинала; камера пока ВРЕМЕННАЯ (настоящую, UpdateIngameCamera
+        // match.cpp:723, ставит тикет 07 — в тот же MatchPresentation).
         private void SetupPresentation()
         {
-            var light = new DirectionalLight3D { RotationDegrees = new Vector3(-55, 30, 0) };
-            AddChild(light);
+            // Под GpfSpace: SetRandomSunParams считает позицию в «их» осях.
+            var sun = new DirectionalLight3D { Name = "Sun" };
+            _gpfSpace.AddChild(sun);
+            MatchPresentation.SetRandomSunParams(sun, _presentationRng);
 
             _camera = new Camera3D
             {
@@ -422,7 +437,7 @@ namespace Gpf.Lab
                 + $"игрок: ({position.X:F1}, {position.Y:F1}) v={_humanoid.GetSpatialFloatVelocity():F2} м/с\n"
                 + $"мяч: ({_ball.Predict(0).X:F1}, {_ball.Predict(0).Y:F1}, {_ball.Predict(0).Z:F2}) "
                 + $"v={_ball.GetMovement().Length():F2} м/с   коллизий тело-мяч: {_touches}\n"
-                + $"rng: геймплей {RngSeed}, презентация {PresentationRngSeed}\n"
+                + $"rng: геймплей {RngSeed}, презентация {_presentationSeed}\n"
                 + (_missingModels > 0 ? $"!! нет {_missingModels} моделей стадиона\n" : "")
                 + "стрелки — направление;  0/1/2/3 — стойка/дриблинг/бег/спринт;  "
                 + "W — пас,  S — удар;  R — сброс"

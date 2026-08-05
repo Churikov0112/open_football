@@ -171,8 +171,13 @@ namespace Gpf.Lab
         // (surface override), а не в сам ресурс меша: меш импортирован и разделяется между
         // экземплярами сцены.
         public static int Apply(Node sceneRoot, string asePath)
+            => ApplyEntries(sceneRoot, Load(asePath), asePath);
+
+        // То же, но по УЖЕ разобранным записям: между разбором и назначением вклинивается
+        // подмена рекламных щитов (MatchPresentation.RandomizeAdboards) — в оригинале она тоже
+        // правит материалы до первого кадра, а не готовые меши.
+        public static int ApplyEntries(Node sceneRoot, List<Entry> entries, string asePath = "")
         {
-            List<Entry> entries = Load(asePath);
             if (entries.Count == 0) return 0;
 
             var built = new StandardMaterial3D?[entries.Count];
@@ -204,9 +209,13 @@ namespace Gpf.Lab
         // Мост для GDScript-проверок: статические методы через CSharpScript видны, а List<Entry>
         // и StandardMaterial3D-фабрика — нет.
         public static Godot.Collections.Array<Godot.Collections.Dictionary> Describe(string asePath)
+            => Describe(Load(asePath));
+
+        public static Godot.Collections.Array<Godot.Collections.Dictionary> Describe(
+            List<Entry> entries)
         {
             var array = new Godot.Collections.Array<Godot.Collections.Dictionary>();
-            foreach (var e in Load(asePath))
+            foreach (var e in entries)
             {
                 array.Add(new Godot.Collections.Dictionary
                 {
