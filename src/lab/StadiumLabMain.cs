@@ -596,13 +596,18 @@ namespace Gpf.Lab
             StepOneFrame();
         }
 
+        // Стрелки → «их» оси ПОД КАМЕРУ МАТЧА: она стоит с их −Y и смотрит в +Y
+        // (match.cpp:788 — смещение узла (0, −41.4…)), поэтому экранный «вверх» = их +Y,
+        // экранный «вправо» = их +X. Маппинг ball_lab/walk_lab тут не годится — их камеры
+        // смотрят с противоположной стороны, и с камерой матча он инвертировал обе оси
+        // (поймано глазной приёмкой фазы 7).
         private void PollDirectionInput()
         {
             Vector3 dir = Vector3.Zero;
-            if (Input.IsKeyPressed(Key.Up)) dir += new Vector3(0, -1, 0);
-            if (Input.IsKeyPressed(Key.Down)) dir += new Vector3(0, 1, 0);
-            if (Input.IsKeyPressed(Key.Left)) dir += new Vector3(1, 0, 0);
-            if (Input.IsKeyPressed(Key.Right)) dir += new Vector3(-1, 0, 0);
+            if (Input.IsKeyPressed(Key.Up)) dir += new Vector3(0, 1, 0);
+            if (Input.IsKeyPressed(Key.Down)) dir += new Vector3(0, -1, 0);
+            if (Input.IsKeyPressed(Key.Left)) dir += new Vector3(-1, 0, 0);
+            if (Input.IsKeyPressed(Key.Right)) dir += new Vector3(1, 0, 0);
             if (dir.Length() > 0.01f)
                 _desiredDirection = Gpf.BluntMath.GetNormalized(dir, _desiredDirection);
         }
