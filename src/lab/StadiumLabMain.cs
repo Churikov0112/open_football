@@ -298,6 +298,7 @@ namespace Gpf.Lab
             _desiredVelocityFloat = Gpf.Velo.EnumToFloatVelocity(_desiredVelocityId);
         }
 
+        public int GetCurrentAnimIndex() => _humanoid.GetCurrentAnimId();
         public Vector3 GetStatePosition() => _humanoid.GetSpatialPosition();
         public Vector3 GetBallPosition() => _ball.Predict(0);
         // Считаются ТОЛЬКО межтельные коллизии (match.cpp:2037), не касания тач-клипов:
