@@ -112,6 +112,7 @@ PAGES = {
     "TouchVectors.cs":         "порт-gameplayfootball",
     "Ball.cs":                 "порт-gameplayfootball",
     "GpfPitch.cs":             "порт-gameplayfootball",
+    "AiFunctions.cs":          "порт-gameplayfootball",
     "GpfRng.cs":               "порт-gameplayfootball",
     "BallLabMain.cs":          "порт-gameplayfootball",
     # --- фаза 7: стадион, газон, сетка, камера, звук ---

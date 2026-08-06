@@ -379,21 +379,68 @@ namespace Gpf.Lab
             Gpf.PlayerCommand? action = BuildActionCommand();
             if (action != null) queue.Add(action);
 
+            // --- ballcontrol: СЫРОЙ ВВОД (PlayerController::_BallControlCommand, :277-325) ---
+            // Магнит сюда НЕ лезет: именно эта команда рулит касанием, то есть тем, куда игрок
+            // толкнёт мяч. Подмена её автонаправлением убирает саму возможность повернуть.
+            Vector3 bcDirection = _desiredDirection;        // :291 inputDirection
+            float bcVelocity = _desiredVelocityFloat;       // :294 inputVelocityFloat
+
+            // «липкое направление бега» (:303-310): на скорости выше walk↔sprint поворот за один
+            // тик ограничен 0.125π — на бегу мяч уводится плавной дугой, а не рывком. Гейт
+            // оригинала — hasPossession && hasBestPossession (в лабе соперников нет, см. ниже).
+            if (_humanoid.GetHasPossession() && bcVelocity > Gpf.Velo.WalkSprintSwitch
+                && _humanoid.GetSpatialFloatVelocity() > Gpf.Velo.DribbleWalkSwitch)
+            {
+                Vector3 bodyDirection = _humanoid.GetSpatialDirectionVec();
+                float angle = Gpf.BluntMath.GetAngle2D(bcDirection, bodyDirection);
+                if (Mathf.Abs(angle) > 0.125f * Mathf.Pi && Mathf.Abs(angle) < 0.7f * Mathf.Pi)
+                    bcDirection = Gpf.BluntMath.GetRotated2D(bodyDirection,
+                        0.125f * Mathf.Pi * Mathf.Sign(angle));
+            }
+
+            // :318 — свой lookAt, не тот, что у движения
+            Vector3 bcLookAt = position + _humanoid.GetSpatialMovement() * 0.2f + bcDirection * 10.0f;
+
             queue.Add(new Gpf.PlayerCommand
             {
                 DesiredFunctionType = AnimCollection.FnBallControl,
                 UseDesiredMovement = true,
-                DesiredDirection = _desiredDirection,
-                DesiredVelocityFloat = _desiredVelocityFloat,
+                DesiredDirection = bcDirection,
+                DesiredVelocityFloat = bcVelocity,
                 UseDesiredLookAt = true,
-                DesiredLookAt = lookAt,
+                DesiredLookAt = bcLookAt,
             });
+
+            // --- movement: МАГНИТ ВЕДЕНИЯ (_MovementCommand, :478-483 и :590-601) ---
+            // Когда ballcontrol-клип не выбран, игрок с мячом бежит НЕ по стрелке: autoBias = 1.0
+            // замещает команду результатом AI_GetBallControlMovement — бег на мяч, скорость от
+            // дистанции до него, взгляд туда же. Без этого игрок уходит от мяча боком.
+            //
+            // СУРРОГАТ ЛАБЫ: у оригинала гейт `hasBestPossession = hasPossession &&
+            // possessionAmount >= 1.0` (:633); соперников тут нет, поэтому вторая половина всегда
+            // истинна и гейтом работает лаб-предикат владения. Фаза 8 подставит настоящий
+            // possessionAmount.
+            Vector3 moveDirection = _desiredDirection;
+            float moveVelocity = _desiredVelocityFloat;
+            if (_humanoid.GetHasPossession())
+            {
+                Gpf.AiFunctions.GetBallControlMovement(_ball, position,
+                    _humanoid.GetSpatialDirectionVec(), _desiredDirection, _desiredVelocityFloat,
+                    out Vector3 autoDirection, out float autoVelocity, out Vector3 autoLookAt);
+                Vector3 autoLookDirection =
+                    Gpf.BluntMath.GetNormalized(autoLookAt - position, Vector3.Zero); // :482
+                Gpf.AiFunctions.BlendAutoMovement(autoDirection, autoVelocity, autoLookDirection,
+                    manualDirection, _desiredVelocityFloat, autoBias: 1.0f,           // :483
+                    position, _desiredDirection,
+                    out moveDirection, out moveVelocity, out lookAt);
+            }
+
             queue.Add(new Gpf.PlayerCommand
             {
                 DesiredFunctionType = AnimCollection.FnMovement,
                 UseDesiredMovement = true,
-                DesiredDirection = _desiredDirection,
-                DesiredVelocityFloat = _desiredVelocityFloat,
+                DesiredDirection = moveDirection,
+                DesiredVelocityFloat = moveVelocity,
                 UseDesiredLookAt = true,
                 DesiredLookAt = lookAt,
             });

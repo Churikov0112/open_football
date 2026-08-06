@@ -270,6 +270,8 @@ namespace Gpf.Lab
 
             // BallControl (_BallControlCommand, playercontroller.cpp:277-320): в игре команда
             // ставится безусловно, «нужно ли вообще трогать мяч» решает NeedTouch внутри отбора.
+            // Направление тут — СЫРОЙ ВВОД (:291): именно оно рулит касанием, то есть тем, куда
+            // игрок толкнёт мяч. Магнит (ниже) сюда не лезет.
             queue.Add(new Gpf.PlayerCommand
             {
                 DesiredFunctionType = AnimCollection.FnBallControl,
@@ -279,12 +281,34 @@ namespace Gpf.Lab
                 UseDesiredLookAt = true,
                 DesiredLookAt = lookAt,
             });
+
+            // МАГНИТ ВЕДЕНИЯ (_MovementCommand, :478-483 и :590-601): игрок с мячом бежит НЕ по
+            // стрелке — autoBias = 1.0 замещает команду результатом AI_GetBallControlMovement
+            // (бег на мяч, скорость от дистанции до него). Гейт оригинала —
+            // `hasPossession && possessionAmount >= 1.0` (:633); соперников в лабе нет, поэтому
+            // работает лаб-предикат владения. В сценарии `walk_line` владения не возникает, и на
+            // трассу оракула эта ветка не влияет — проверено нулевым диффом.
+            Vector3 moveDirection = _desiredDirection;
+            float moveVelocity = desiredVelocityFloat;
+            if (_humanoid.GetHasPossession())
+            {
+                Gpf.AiFunctions.GetBallControlMovement(_ball, position,
+                    _humanoid.GetSpatialDirectionVec(), _desiredDirection, desiredVelocityFloat,
+                    out Vector3 autoDirection, out float autoVelocity, out Vector3 autoLookAt);
+                Vector3 autoLookDirection =
+                    Gpf.BluntMath.GetNormalized(autoLookAt - position, Vector3.Zero); // :482
+                Gpf.AiFunctions.BlendAutoMovement(autoDirection, autoVelocity, autoLookDirection,
+                    manualDirection, desiredVelocityFloat, autoBias: 1.0f,            // :483
+                    position, _desiredDirection,
+                    out moveDirection, out moveVelocity, out lookAt);
+            }
+
             queue.Add(new Gpf.PlayerCommand
             {
                 DesiredFunctionType = AnimCollection.FnMovement,
                 UseDesiredMovement = true,
-                DesiredDirection = _desiredDirection,
-                DesiredVelocityFloat = desiredVelocityFloat,
+                DesiredDirection = moveDirection,
+                DesiredVelocityFloat = moveVelocity,
                 UseDesiredLookAt = true,
                 DesiredLookAt = lookAt,
             });

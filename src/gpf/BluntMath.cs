@@ -27,6 +27,16 @@ namespace Gpf
             return newValue;
         }
 
+        // vector3.hpp:261-268 GetLength — КВИРК оригинала: длина меньше 1e-6 обнуляется. У `Ball`,
+        // `IngameCamera` и `GoalNetting` есть свои приватные копии (они старше этой), новые
+        // потребители берут отсюда.
+        public static float GetLength(Vector3 v)
+        {
+            float length = Mathf.Sqrt(Mathf.Pow(v.X, 2f) + Mathf.Pow(v.Y, 2f) + Mathf.Pow(v.Z, 2f));
+            if (length < 0.000001f) length = 0f;
+            return length;
+        }
+
         // bluntmath.cpp:61-63 (n >= 0 → 1)
         public static int SignSide(float n) => n >= 0 ? 1 : -1;
 
